@@ -1182,17 +1182,27 @@ Com base nas informações acima, identifique o mecanismo do erro e crie 2-3 fla
       inOrderFields: ['Frente', 'Verso', 'Contexto', 'Fonte', 'ErroIdentificado'],
       css: `.card {
   font-family: 'Segoe UI', system-ui, sans-serif;
-  max-width: 600px; margin: 0 auto; padding: 24px;
-  line-height: 1.6; color: #1a1a2e;
+  max-width: 620px; margin: 0 auto; padding: 28px;
+  line-height: 1.7; color: #e8e8e8; background: #1e1e2e;
 }
-.frente { font-size: 1.15em; }
-.verso { font-size: 1.1em; color: #2d6a4f; }
-.contexto { color: #6c757d; font-size: 0.82em; margin-bottom: 12px;
-  padding-bottom: 8px; border-bottom: 1px solid #eee; }
-.fonte { color: #adb5bd; font-size: 0.72em; margin-top: 18px; text-align: right; }
-.erro { background: #fff3cd; color: #856404; padding: 8px 12px; border-radius: 6px;
-  font-size: 0.85em; margin-top: 12px; }
-hr { border: none; border-top: 1px solid #dee2e6; margin: 16px 0; }`,
+.frente { font-size: 1.2em; color: #60cdff; font-weight: 500; }
+.verso { font-size: 1.1em; color: #7ee8a2; margin-top: 4px; }
+.contexto { color: #a0a0b8; font-size: 0.82em; margin-bottom: 14px;
+  padding-bottom: 10px; border-bottom: 1px solid #3a3a4e; letter-spacing: 0.3px; }
+.fonte { color: #787890; font-size: 0.72em; margin-top: 20px; text-align: right; }
+.erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
+  font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
+hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
+/* Modo claro */
+.card.night_mode_off, :root[class*="light"] .card {
+  color: #1a1a2e; background: #ffffff;
+}
+:root[class*="light"] .frente { color: #1a56db; }
+:root[class*="light"] .verso { color: #2d6a4f; }
+:root[class*="light"] .contexto { color: #6c757d; border-bottom-color: #eee; }
+:root[class*="light"] .fonte { color: #adb5bd; }
+:root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
+:root[class*="light"] hr { border-top-color: #dee2e6; }`,
       cardTemplates: [{
         Name: 'Card',
         Front: '<div class="card"><div class="contexto">{{Contexto}}</div><div class="frente">{{Frente}}</div></div>',
