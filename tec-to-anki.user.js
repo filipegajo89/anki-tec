@@ -31,10 +31,10 @@
   // ╚═══════════════════════════════════════════════════════════════╝
 
   const DEFAULTS = {
-    geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
+    geminiApiKey: '',
     geminiModel: 'gemini-2.5-flash',
     obsidianVault: 'Filipe - Obs',
-    obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
+    obsidianToken: '',
     obsidianPort: 27123,
     obsidianBasePath: 'TEC',
     obsidianMethod: 'rest', // 'rest', 'uri', 'clipboard'
