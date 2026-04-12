@@ -895,6 +895,234 @@
   };
 
   /**
+   * Robust detection of whether the current question was answered incorrectly.
+   * Checks Angular scope first, then CSS classes/styling, then DOM text.
+   * Returns { errou: boolean, method: string, debug: object }
+   */
+  function detectQuestionError() {
+    const result = { errou: false, method: 'none', debug: {} };
+
+    // ── 1. Angular scope (most reliable) ──
+    const ng = unsafeWindow?.angular;
+    if (ng) {
+      const anchor = document.querySelector('[tec-formatar-html]') ||
+                     document.querySelector('.questao-corpo') ||
+                     document.querySelector('[ng-controller]');
+      if (anchor) {
+        try {
+          const scope = ng.element(anchor).scope();
+          const vm = scope?.vm || scope?.$ctrl || scope;
+          const q = vm?.questao;
+
+          if (q) {
+            // Direct boolean
+            if (typeof q.errou === 'boolean') {
+              result.errou = q.errou; result.method = 'scope:questao.errou'; return result;
+            }
+            if (typeof q.acertou === 'boolean') {
+              result.errou = !q.acertou; result.method = 'scope:questao.acertou'; return result;
+            }
+            // Result string
+            if (q.resultado) {
+              result.errou = /err|incorr|wrong/i.test(String(q.resultado));
+              result.method = 'scope:questao.resultado'; return result;
+            }
+            // Compare correct vs selected answer
+            const correta = q.alternativaCorreta || q.gabarito || q.respostaCorreta;
+            const marcada = q.alternativaMarcada || q.alternativaSelecionada || q.respostaAluno;
+            if (correta && marcada) {
+              result.errou = String(correta).trim().toUpperCase() !== String(marcada).trim().toUpperCase();
+              result.method = 'scope:answer-compare'; return result;
+            }
+            // Check alternativas array
+            if (Array.isArray(q.alternativas) && q.alternativas.length > 0) {
+              const sel = q.alternativas.find(a => a.selecionada || a.marcada);
+              const cor = q.alternativas.find(a => a.correta || a.gabarito);
+              if (sel && cor && sel !== cor) {
+                result.errou = true; result.method = 'scope:alternativas-compare'; return result;
+              }
+              if (sel && cor && sel === cor) {
+                result.errou = false; result.method = 'scope:alternativas-compare'; return result;
+              }
+            }
+
+            // Collect debug info for any error-related keys
+            for (const k of Object.keys(q)) {
+              if (/errou|acert|result|corret|gabarit|marcad|selecion|respondid/i.test(k)) {
+                result.debug[`questao.${k}`] = q[k];
+              }
+            }
+          }
+
+          // Try vm-level properties
+          for (const obj of [vm, scope]) {
+            if (!obj) continue;
+            if (typeof obj.errou === 'boolean') {
+              result.errou = obj.errou; result.method = `scope:vm.errou`; return result;
+            }
+            if (typeof obj.acertou === 'boolean') {
+              result.errou = !obj.acertou; result.method = `scope:vm.acertou`; return result;
+            }
+          }
+        } catch (e) {
+          console.warn('detectQuestionError scope error:', e.message);
+        }
+      }
+    }
+
+    // ── 2. DOM text (multiple patterns) ──
+    const bodyText = document.body.innerText;
+    if (/Voc[êe]\s+errou/i.test(bodyText)) {
+      result.errou = true; result.method = 'dom:voce-errou'; return result;
+    }
+    if (/Voc[êe]\s+acertou/i.test(bodyText)) {
+      result.errou = false; result.method = 'dom:voce-acertou'; return result;
+    }
+    if (/Resposta\s+(incorreta|errada)/i.test(bodyText)) {
+      result.errou = true; result.method = 'dom:resposta-incorreta'; return result;
+    }
+    if (/Resposta\s+(correta|certa)/i.test(bodyText)) {
+      result.errou = false; result.method = 'dom:resposta-correta'; return result;
+    }
+
+    // ── 3. CSS classes on question or alternatives ──
+    const questionContainer = document.querySelector('[class*="questao"]');
+    if (questionContainer) {
+      const cls = questionContainer.className || '';
+      if (/errou|incorret|wrong/i.test(cls)) {
+        result.errou = true; result.method = 'dom:class-errou'; return result;
+      }
+      if (/acertou|corret|right/i.test(cls)) {
+        result.errou = false; result.method = 'dom:class-acertou'; return result;
+      }
+    }
+
+    // Check for wrong-answer styling on alternatives (red background, strikethrough, etc.)
+    const allAlts = document.querySelectorAll('[class*="alternativa"]');
+    let hasSelectedWrong = false, hasSelectedCorrect = false;
+    for (const alt of allAlts) {
+      const cls = (alt.className || '') + ' ' + (alt.querySelector('[class]')?.className || '');
+      const isSelected = /selecionad|selected|marcad|active|escolhid/i.test(cls);
+      const isWrong = /errad|incorr|wrong|vermelho|danger/i.test(cls);
+      const isCorrect = /corret|correct|gabarito|acert|sucesso|success/i.test(cls);
+      if (isSelected && isWrong) hasSelectedWrong = true;
+      if (isSelected && isCorrect) hasSelectedCorrect = true;
+    }
+    if (hasSelectedWrong) { result.errou = true; result.method = 'dom:alt-class-wrong'; return result; }
+    if (hasSelectedCorrect && !hasSelectedWrong) { result.errou = false; result.method = 'dom:alt-class-correct'; return result; }
+
+    // ── 4. Error icons (font-awesome, SVG, or Unicode) ──
+    const iconArea = document.querySelector('[class*="resultado"], [class*="gabarito"], [class*="resposta"], [class*="questao-header"]');
+    if (iconArea) {
+      const iconText = iconArea.textContent || '';
+      if (/[✗×❌✘]/.test(iconText) || iconArea.querySelector('.fa-times, .fa-times-circle, [class*="icon-err"]')) {
+        result.errou = true; result.method = 'dom:error-icon'; return result;
+      }
+      if (/[✓✔☑✅]/.test(iconText) || iconArea.querySelector('.fa-check, .fa-check-circle, [class*="icon-correct"]')) {
+        result.errou = false; result.method = 'dom:correct-icon'; return result;
+      }
+    }
+
+    console.warn('⚠️ detectQuestionError: Não conseguiu determinar se errou/acertou.', result.debug);
+    return result;
+  }
+
+  /**
+   * Detect total error count in the current caderno.
+   * Checks Angular scope, then DOM text with multiple patterns.
+   * Returns { totalErros: number, totalQuestoes: number, currentQ: number, method: string }
+   */
+  function detectCadernoErrors() {
+    let totalErros = 0, totalQuestoes = 0, currentQ = 0;
+    let method = 'none';
+
+    // ── 1. Angular scope for caderno/prova/resultado data ──
+    const ng = unsafeWindow?.angular;
+    if (ng) {
+      const anchors = document.querySelectorAll('[ng-controller], [class*="caderno"], [class*="prova"], [class*="resultado"]');
+      for (const anchor of anchors) {
+        try {
+          const scope = ng.element(anchor).scope();
+          const vm = scope?.vm || scope?.$ctrl || scope;
+
+          // Search common property paths
+          const candidates = [vm, vm?.caderno, vm?.prova, vm?.resultado, vm?.estatistica,
+                              vm?.estatisticas, vm?.desempenho, scope, scope?.caderno];
+          for (const obj of candidates) {
+            if (!obj) continue;
+            // Look for error count properties
+            for (const k of ['totalErros', 'qtdErros', 'erros', 'quantidadeErros',
+                              'respostasErradas', 'incorretas', 'numErros', 'totalIncorretas']) {
+              const val = obj[k];
+              if (typeof val === 'number' && val > 0) {
+                totalErros = val; method = `scope:${k}`; break;
+              }
+            }
+            if (totalErros > 0) break;
+            // Check for array of errors
+            for (const k of ['questoesErradas', 'erradas', 'idsErros', 'questoesIncorretas']) {
+              if (Array.isArray(obj[k]) && obj[k].length > 0) {
+                totalErros = obj[k].length; method = `scope:${k}.length`; break;
+              }
+            }
+            if (totalErros > 0) break;
+            // Total questions
+            for (const k of ['totalQuestoes', 'qtdQuestoes', 'quantidadeQuestoes', 'total']) {
+              if (typeof obj[k] === 'number' && obj[k] > 0) totalQuestoes = obj[k];
+            }
+          }
+          if (totalErros > 0) break;
+        } catch (_) { /* ignore */ }
+      }
+    }
+
+    // ── 2. DOM text patterns (multiple) ──
+    const bodyText = document.body.innerText;
+    if (!totalErros) {
+      const patterns = [
+        /(\d+)\s*Erros?\)?/i,
+        /Erros?:?\s*(\d+)/i,
+        /(\d+)\s*(?:quest[õo]es?\s+)?erradas?/i,
+        /(\d+)\s*incorretas?/i,
+        /(\d+)\s*respostas?\s+erradas?/i,
+      ];
+      for (const pat of patterns) {
+        const m = bodyText.match(pat);
+        if (m && parseInt(m[1]) > 0) {
+          totalErros = parseInt(m[1]); method = `dom:${pat.source}`; break;
+        }
+      }
+    }
+
+    // ── 3. Count DOM elements with error indicators ──
+    if (!totalErros) {
+      // Look for numbered question links/items with error styling
+      const errorItems = document.querySelectorAll(
+        '[class*="erro"]:not([class*="erros-total"]), ' +
+        '[class*="wrong"], [class*="incorr"], ' +
+        '.questao-errou, .questao-incorreta, ' +
+        '[class*="questao"][class*="danger"], ' +
+        '.resultado-item.erro, .resultado-item.errou'
+      );
+      if (errorItems.length > 0) {
+        totalErros = errorItems.length; method = `dom:error-elements(${errorItems.length})`;
+      }
+    }
+
+    // ── 4. Total questions + current question from DOM ──
+    if (!totalQuestoes) {
+      const questInfoMatch = bodyText.match(/Quest[ãa]o\s+(\d+)\s+de\s+(\d+)/i);
+      if (questInfoMatch) {
+        currentQ = parseInt(questInfoMatch[1]);
+        totalQuestoes = parseInt(questInfoMatch[2]);
+      }
+    }
+
+    console.log(`📊 detectCadernoErrors: totalErros=${totalErros}, totalQuestoes=${totalQuestoes}, method=${method}`);
+    return { totalErros, totalQuestoes, currentQ, method };
+  }
+
+  /**
    * Main extraction function — reads the current question from the DOM.
    * Handles both Certo/Errado (CESPE) and multiple choice (A-E) questions.
    */
@@ -1019,9 +1247,12 @@
     }
 
     // ── 6. Result (errou/acertou) and Gabarito ──
-    const errouMatch = bodyText.match(/Você errou/i);
-    const acertouMatch = bodyText.match(/Você acertou/i);
-    data.errou = !!errouMatch;
+    const errorDetection = detectQuestionError();
+    data.errou = errorDetection.errou;
+    console.log(`🔍 Detecção erro: errou=${errorDetection.errou}, método=${errorDetection.method}`);
+    if (Object.keys(errorDetection.debug).length > 0) {
+      console.log('🔍 Debug erro:', errorDetection.debug);
+    }
 
     const gabaritoMatch = bodyText.match(/Gabarito:\s*(.+?)(?:\.|,|\s|$)/i);
     if (gabaritoMatch) {
@@ -1886,23 +2117,27 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
   async function processBatchQuestions() {
     if (batchRunning) { showToast('Batch já em andamento...', 'warning'); return; }
 
-    // Detect if we're in a caderno/question list
-    const bodyText = document.body.innerText;
-    const errosMatch = bodyText.match(/(\d+)\s*Erros?\)?/i);
-    const totalErros = errosMatch ? parseInt(errosMatch[1]) : 0;
+    // Detect if we're in a caderno/question list using robust detection
+    const cadernoInfo = detectCadernoErrors();
+    let totalErros = cadernoInfo.totalErros;
+    const totalQuestoes = cadernoInfo.totalQuestoes;
+    const currentQNum = cadernoInfo.currentQ;
+    let scanMode = false; // true = scan all questions (no total known)
 
-    // Also get total questions info
-    const questInfoMatch = bodyText.match(/Quest[ãa]o\s+(\d+)\s+de\s+(\d+)/i);
-    const totalQuestoes = questInfoMatch ? parseInt(questInfoMatch[2]) : 0;
-    const currentQNum = questInfoMatch ? parseInt(questInfoMatch[1]) : 0;
-
-    if (!totalErros) {
-      showToast('Nenhum erro detectado neste caderno. Navegue até uma questão errada.', 'warning', 5000);
+    if (!totalErros && totalQuestoes > 0) {
+      // Can't detect total errors, but we're in a caderno — offer to scan all
+      if (!confirm(`Não foi possível detectar o total de erros automaticamente.\nCaderno com ${totalQuestoes} questões (questão ${currentQNum || '?'} atual).\n\n🔍 Deseja escanear TODAS as questões e processar as erradas?\n\n⚠️ Isso vai navegar por todas as ${totalQuestoes} questões.\nO script detecta erros individualmente em cada questão.`)) {
+        return;
+      }
+      scanMode = true;
+      totalErros = totalQuestoes; // Use total as upper bound
+    } else if (!totalErros) {
+      showToast('Nenhum erro detectado neste caderno. Use 🔍 Discovery Mode para debug.', 'warning', 5000);
       return;
-    }
-
-    if (!confirm(`Encontrados ${totalErros} erros neste caderno (${totalQuestoes} questões no total).\nVocê está na questão ${currentQNum} de ${totalQuestoes}.\n\nProcessar todas as questões erradas a partir da questão ATUAL?\n\n⚠️ Isso pode levar alguns minutos. Mantenha o Anki aberto.\n💡 O script vai navegar questão por questão (→) e processar só as erradas.\n🔑 Usa atalhos TEC: "o" para comentário, "→" para avançar.`)) {
-      return;
+    } else {
+      if (!confirm(`Encontrados ${totalErros} erros neste caderno (${totalQuestoes || '?'} questões no total).\nVocê está na questão ${currentQNum || '?'} de ${totalQuestoes || '?'}.\nDetecção: ${cadernoInfo.method}\n\nProcessar todas as questões erradas a partir da questão ATUAL?\n\n⚠️ Isso pode levar alguns minutos. Mantenha o Anki aberto.\n💡 O script vai navegar questão por questão (→) e processar só as erradas.`)) {
+        return;
+      }
     }
 
     batchRunning = true;
@@ -1944,8 +2179,11 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
         const qNumEl = document.getElementById('tec-batch-qnum');
         if (qNumEl) qNumEl.textContent = `${qNum}/${qTotal}`;
 
-        // Check if this is a wrong question
-        const isError = /Você errou/i.test(currentBody);
+        // Check if this is a wrong question (robust detection)
+        const errorCheck = detectQuestionError();
+        const isError = errorCheck.errou;
+        if (isError) console.log(`🔴 Q${currentId}: ERROU (${errorCheck.method})`);
+        else console.log(`🟢 Q${currentId}: acertou/não-respondida (${errorCheck.method})`);
 
         if (isError && !processedIds.has(currentId)) {
           processedIds.add(currentId);
@@ -1999,8 +2237,8 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
           if (skippedEl) skippedEl.textContent = skipped;
         }
 
-        // Check if we've processed all errors
-        if (processed >= totalErros) {
+        // Check if we've processed all errors (skip in scanMode — scan until end)
+        if (!scanMode && processed >= totalErros) {
           console.log('🎉 Batch: Todos os erros processados!');
           break;
         }
@@ -2087,6 +2325,59 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
       const text = el.innerText.trim();
       console.log(`  [tec-formatar-html="${attr}"] → ${text.length} chars | visible=${el.offsetParent !== null} | "${text.substring(0, 80)}..."`);
     });
+
+    console.log('\n=== Detecção de Erros (novo) ===');
+    const errorResult = detectQuestionError();
+    console.log('detectQuestionError():', errorResult);
+    const cadernoResult = detectCadernoErrors();
+    console.log('detectCadernoErrors():', cadernoResult);
+
+    console.log('\n=== Angular Scope - Propriedades de erro/resultado ===');
+    try {
+      const ngD = unsafeWindow?.angular;
+      if (ngD) {
+        const anchorD = document.querySelector('[tec-formatar-html]') ||
+                        document.querySelector('.questao-corpo') ||
+                        document.querySelector('[ng-controller]');
+        if (anchorD) {
+          const scopeD = ngD.element(anchorD).scope();
+          const vmD = scopeD?.vm || scopeD?.$ctrl || scopeD;
+          const qD = vmD?.questao;
+
+          if (qD) {
+            console.log('vm.questao keys:', Object.keys(qD));
+            // Dump all properties related to errors/results/answers
+            for (const k of Object.keys(qD)) {
+              if (/errou|acert|result|corret|gabarit|marcad|selecion|respondid|alternativ|resposta/i.test(k)) {
+                console.log(`  questao.${k} =`, qD[k]);
+              }
+            }
+          }
+
+          // Dump caderno-level data
+          for (const prop of ['caderno', 'prova', 'resultado', 'estatistica', 'estatisticas', 'desempenho']) {
+            const obj = vmD?.[prop];
+            if (obj && typeof obj === 'object') {
+              console.log(`\nvm.${prop} keys:`, Object.keys(obj));
+              for (const k of Object.keys(obj)) {
+                if (/erro|acert|total|qtd|quanti|incorr|corret|result/i.test(k)) {
+                  console.log(`  ${prop}.${k} =`, obj[k]);
+                }
+              }
+            }
+          }
+
+          // Dump top-level vm properties related to errors
+          console.log('\nvm keys (error-related):');
+          for (const k of Object.keys(vmD || {})) {
+            if (/erro|acert|result|caderno|prova|estat|desemp|total|qtd/i.test(k)) {
+              const val = vmD[k];
+              console.log(`  vm.${k} =`, typeof val === 'object' ? JSON.stringify(val)?.substring(0, 200) : val);
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn('Scope dump error:', e.message); }
 
     console.log('\n=== Botões/links com ng-click ===');
     document.querySelectorAll('[ng-click]').forEach(el => {
