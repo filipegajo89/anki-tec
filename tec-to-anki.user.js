@@ -501,9 +501,48 @@
       }
     }
 
+    // ── Strategy 1b (batch only): call exibirResolucao to load comment ──
+    // The comment is lazy-loaded — not in the scope yet until the user opens it.
+    // In batch mode, we safely call Angular methods to trigger the load.
+    if (batchMode && vm && scope) {
+      console.log('\n🔄 Batch Strategy 1b: chamando exibirResolucao para carregar comentário...');
+      const loadMethods = [
+        'exibirResolucao', 'alternarExibirResolucao',
+        'abrirComplemento', 'toggleTipoComentario'
+      ];
+      for (const name of loadMethods) {
+        if (typeof vm[name] === 'function') {
+          try {
+            console.log(`  🔧 Batch: vm.${name}()`);
+            const result = vm[name]();
+            if (result && typeof result.then === 'function') await result;
+            try { scope.$apply(); } catch (_) { /* may already be in digest */ }
+            await delay(2500);
+
+            // Re-read scope for comment
+            if (vm.questao) {
+              const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
+              for (const [key, val] of Object.entries(vm.questao)) {
+                if (typeof val === 'string' && val.length > 100 && key !== 'enunciado') {
+                  const plain = stripHtml(val);
+                  if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
+                    _capturedComment = plain;
+                    console.log(`✅ Comentário via batch ${name}(): vm.questao.${key} (${plain.length} chars)`);
+                    return true;
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`  ⚠️ Batch vm.${name}() error:`, err.message);
+          }
+        }
+      }
+    }
+
     // ── Strategies 2-4: only in interactive (non-batch) mode ──
     // In batch mode, skip these — they have side effects (XHR patching, clicks, key simulation)
-    // that interfere with SPA navigation. Strategy 1 (Angular scope) + 5 (DOM) are safe.
+    // that interfere with SPA navigation.
     if (!batchMode) {
 
     // ── Strategy 2: Call Angular controller methods ──
@@ -869,15 +908,42 @@
 
     const bodyText = document.body.innerText;
 
-    // ── 1. Question ID + Metadata ──
-    // Pattern: #NNNNNN BANCA - YYYY - CARGO (CONCURSO)
-    const metaRegex = /#(\d{5,})\s+(.+?)\s*[-–]\s*(\d{4})\s*[-–]\s*(.+?)(?:\s*×|\s*$)/m;
-    const metaMatch = bodyText.match(metaRegex);
-    if (metaMatch) {
-      data.id = metaMatch[1];
-      data.banca = metaMatch[2].trim();
-      data.ano = metaMatch[3];
-      data.cargo = metaMatch[4].trim();
+    // ── 0. Try Angular scope first (most reliable in caderno/batch) ──
+    const ng = unsafeWindow?.angular;
+    let _scope = null, _vm = null;
+    if (ng) {
+      const anchor = document.querySelector('[tec-formatar-html]') ||
+                     document.querySelector('.questao-corpo') ||
+                     document.querySelector('[ng-controller]');
+      if (anchor) {
+        try {
+          _scope = ng.element(anchor).scope();
+          _vm = _scope?.vm || _scope?.$ctrl || _scope;
+        } catch (_) { /* ignore */ }
+      }
+    }
+
+    if (_vm?.questao) {
+      const q = _vm.questao;
+      data.id = q.idQuestao ? String(q.idQuestao) : null;
+      data.banca = q.bancaSigla || '';
+      data.ano = q.concursoAno ? String(q.concursoAno) : '';
+      data.cargo = q.cargoSigla || '';
+      data.materia = q.nomeMateria || '';
+      data.assunto = q.nomeAssunto || '';
+      console.log(`📋 Angular scope: materia="${data.materia}", assunto="${data.assunto}", id=${data.id}`);
+    }
+
+    // ── 1. Question ID + Metadata (DOM fallback) ──
+    if (!data.id) {
+      const metaRegex = /#(\d{5,})\s+(.+?)\s*[-–]\s*(\d{4})\s*[-–]\s*(.+?)(?:\s*×|\s*$)/m;
+      const metaMatch = bodyText.match(metaRegex);
+      if (metaMatch) {
+        data.id = metaMatch[1];
+        if (!data.banca) data.banca = metaMatch[2].trim();
+        if (!data.ano) data.ano = metaMatch[3];
+        if (!data.cargo) data.cargo = metaMatch[4].trim();
+      }
     }
 
     // Fallback: try to get ID from any #NNNNN pattern
@@ -886,27 +952,31 @@
       if (idFallback) data.id = idFallback[1];
     }
 
-    // ── 2. Matéria ──
-    const materiaEl = trySelect(SEL.materia);
-    if (materiaEl) {
-      data.materia = materiaEl.textContent.trim();
-    } else {
-      const materiaMatch = bodyText.match(/Matéria:\s*(.+?)(?:\n|$)/);
-      if (materiaMatch) data.materia = materiaMatch[1].trim();
+    // ── 2. Matéria (DOM fallback) ──
+    if (!data.materia) {
+      const materiaEl = trySelect(SEL.materia);
+      if (materiaEl) {
+        data.materia = materiaEl.textContent.trim();
+      } else {
+        const materiaMatch = bodyText.match(/Matéria:\s*(.+?)(?:\n|$)/);
+        if (materiaMatch) data.materia = materiaMatch[1].trim();
+      }
     }
 
-    // ── 3. Assunto ──
-    // Try to expand "(Exibir)" if present
-    const exibirBtn = [...document.querySelectorAll('a, button, span')].find(
-      el => el.textContent.trim().match(/^\(?\s*Exibir\s*\)?$/i)
-    );
-    if (exibirBtn) {
-      try { exibirBtn.click(); } catch (_) { /* ignore */ }
-    }
+    // ── 3. Assunto (DOM fallback) ──
+    if (!data.assunto) {
+      // Try to expand "(Exibir)" if present
+      const exibirBtn = [...document.querySelectorAll('a, button, span')].find(
+        el => el.textContent.trim().match(/^\(?\s*Exibir\s*\)?$/i)
+      );
+      if (exibirBtn) {
+        try { exibirBtn.click(); } catch (_) { /* ignore */ }
+      }
 
-    const assuntoEl = trySelect(SEL.assunto);
-    if (assuntoEl) {
-      data.assunto = assuntoEl.textContent.replace(/Assunto:?\s*/i, '').replace(/\(?\s*Exibir\s*\)?/i, '').trim();
+      const assuntoEl = trySelect(SEL.assunto);
+      if (assuntoEl) {
+        data.assunto = assuntoEl.textContent.replace(/Assunto:?\s*/i, '').replace(/\(?\s*Exibir\s*\)?/i, '').trim();
+      }
     }
 
     // ── 4. Enunciado ──
