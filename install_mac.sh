@@ -171,6 +171,31 @@ echo -e "     ${CYAN}\"webCorsOriginList\": [\"*\"]${NC}"
 echo "  7. Clique OK e reinicie o Anki"
 wait_enter
 
+# Criar deck "Erros - Thais" automaticamente via AnkiConnect
+print_step "Criando deck 'Erros - Thais' no Anki..."
+echo "  (O Anki precisa estar aberto com AnkiConnect instalado)"
+
+DECK_CREATED=false
+for i in 1 2 3 4 5; do
+    RESPONSE=$(curl -s -X POST http://localhost:8765 \
+        -H 'Content-Type: application/json' \
+        -d '{"action": "createDeck", "version": 6, "params": {"deck": "Erros - Thais"}}' 2>/dev/null || true)
+    if echo "$RESPONSE" | grep -q '"result"'; then
+        DECK_CREATED=true
+        break
+    fi
+    echo "  Tentativa $i/5 — aguardando Anki..."
+    sleep 3
+done
+
+if $DECK_CREATED; then
+    print_ok "Deck 'Erros - Thais' criado no Anki!"
+else
+    print_warn "Não foi possível criar o deck agora."
+    echo "  Verifique se o Anki está aberto com AnkiConnect e rode:"
+    echo -e "  ${CYAN}curl -X POST http://localhost:8765 -d '{\"action\": \"createDeck\", \"version\": 6, \"params\": {\"deck\": \"Erros - Thais\"}}'${NC}"
+fi
+
 # ══════════════════════════════════════════════════════════════
 #  PASSO 5: OBSIDIAN
 # ══════════════════════════════════════════════════════════════
@@ -457,7 +482,7 @@ echo -e "     ${BOLD}Nome do Vault:${NC}     ${CYAN}$VAULT_NAME${NC}"
 echo -e "     ${BOLD}Token Obsidian:${NC}    ${CYAN}$OBS_TOKEN${NC}"
 echo -e "     ${BOLD}Porta Obsidian:${NC}    ${CYAN}27123${NC}"
 echo -e "     ${BOLD}Pasta Base:${NC}        ${CYAN}TEC${NC}"
-echo -e "     ${BOLD}Prefixo Deck:${NC}      ${CYAN}Meus Erros${NC} (ou o que preferir)"
+echo -e "     ${BOLD}Prefixo Deck:${NC}      ${CYAN}Erros - Thais${NC}"
 echo ""
 echo "  5. Clique '💾 Salvar'"
 wait_enter
