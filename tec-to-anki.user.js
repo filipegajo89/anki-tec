@@ -31,10 +31,10 @@
   // ╚═══════════════════════════════════════════════════════════════╝
 
   const DEFAULTS = {
-    geminiApiKey: '',
+    geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
     geminiModel: 'gemini-2.5-flash',
     obsidianVault: 'Filipe - Obs',
-    obsidianToken: '',
+    obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
     obsidianBasePath: 'TEC',
     obsidianMethod: 'rest', // 'rest', 'uri', 'clipboard'
@@ -385,55 +385,10 @@
    *  4. Direct TEC API call with question ID
    *  5. DOM fallback: look for tec-formatar-html with comment attr
    */
-  async function ensureCommentExpanded(batchMode = false) {
+  async function ensureCommentExpanded() {
     _capturedComment = '';
 
-    // ── Get Angular scope ──
-    const ng = unsafeWindow?.angular;
-    let scope = null;
-    let vm = null;
-
-    if (ng) {
-      const anchorEl = document.querySelector('[tec-formatar-html]') ||
-                       document.querySelector('.questao-corpo') ||
-                       document.querySelector('.questao-enunciado') ||
-                       document.querySelector('[ng-controller]');
-      if (anchorEl) {
-        try {
-          scope = ng.element(anchorEl).scope();
-          vm = scope?.vm || scope?.$ctrl || scope;
-        } catch (err) {
-          console.warn('⚠️ Angular scope error:', err.message);
-        }
-      }
-    }
-
-    // ── DIAGNOSTIC: dump Angular scope structure ──
-    if (vm) {
-      console.log('🔍 Angular Scope Diagnostic:');
-      const scopeKeys = Object.keys(scope || {}).filter(k => !k.startsWith('$') && !k.startsWith('_'));
-      console.log('  scope keys:', scopeKeys.join(', '));
-      const vmKeys = Object.keys(vm);
-      console.log('  vm keys:', vmKeys.join(', '));
-      const vmFuncs = vmKeys.filter(k => typeof vm[k] === 'function');
-      console.log('  vm functions:', vmFuncs.join(', '));
-      if (vm.questao) {
-        console.log('  vm.questao keys:', Object.keys(vm.questao).join(', '));
-        for (const [k, v] of Object.entries(vm.questao)) {
-          if (typeof v === 'string') {
-            console.log(`    .${k} (${v.length}): "${v.substring(0, 100)}${v.length > 100 ? '...' : ''}"`);
-          } else if (Array.isArray(v)) {
-            console.log(`    .${k}: Array[${v.length}]`);
-          } else if (v && typeof v === 'object') {
-            console.log(`    .${k}: {${Object.keys(v).slice(0, 10).join(', ')}}`);
-          } else if (typeof v !== 'function') {
-            console.log(`    .${k}: ${v}`);
-          }
-        }
-      }
-    } else {
-      console.warn('⚠️ Angular scope não encontrado via unsafeWindow');
-    }
+    const { scope, vm } = getAngularVm();
 
     // ── Strategy 1: Direct property read from Angular scope ──
     console.log('\n📖 Strategy 1: Leitura direta do Angular scope...');
@@ -490,7 +445,7 @@
         }
       }
 
-      // Check vm directly
+      // Check vm directly (string props)
       for (const prop of commentProps) {
         const val = vm[prop];
         if (typeof val === 'string' && val.length > 30) {
@@ -499,51 +454,19 @@
           return true;
         }
       }
-    }
 
-    // ── Strategy 1b (batch only): call exibirResolucao to load comment ──
-    // The comment is lazy-loaded — not in the scope yet until the user opens it.
-    // In batch mode, we safely call Angular methods to trigger the load.
-    if (batchMode && vm && scope) {
-      console.log('\n🔄 Batch Strategy 1b: chamando exibirResolucao para carregar comentário...');
-      const loadMethods = [
-        'exibirResolucao', 'alternarExibirResolucao',
-        'abrirComplemento', 'toggleTipoComentario'
-      ];
-      for (const name of loadMethods) {
-        if (typeof vm[name] === 'function') {
-          try {
-            console.log(`  🔧 Batch: vm.${name}()`);
-            const result = vm[name]();
-            if (result && typeof result.then === 'function') await result;
-            try { scope.$apply(); } catch (_) { /* may already be in digest */ }
-            await delay(2500);
-
-            // Re-read scope for comment
-            if (vm.questao) {
-              const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
-              for (const [key, val] of Object.entries(vm.questao)) {
-                if (typeof val === 'string' && val.length > 100 && key !== 'enunciado') {
-                  const plain = stripHtml(val);
-                  if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
-                    _capturedComment = plain;
-                    console.log(`✅ Comentário via batch ${name}(): vm.questao.${key} (${plain.length} chars)`);
-                    return true;
-                  }
-                }
-              }
-            }
-          } catch (err) {
-            console.warn(`  ⚠️ Batch vm.${name}() error:`, err.message);
+      // Check vm.comentario object (e.g. vm.comentario.textoComentario)
+      if (vm.comentario && typeof vm.comentario === 'object') {
+        for (const prop of commentProps) {
+          const val = vm.comentario[prop];
+          if (typeof val === 'string' && val.length > 30) {
+            _capturedComment = stripHtml(val);
+            console.log(`✅ Comentário via vm.comentario.${prop} (${_capturedComment.length} chars)`);
+            return true;
           }
         }
       }
     }
-
-    // ── Strategies 2-4: only in interactive (non-batch) mode ──
-    // In batch mode, skip these — they have side effects (XHR patching, clicks, key simulation)
-    // that interfere with SPA navigation.
-    if (!batchMode) {
 
     // ── Strategy 2: Call Angular controller methods ──
     console.log('\n🔧 Strategy 2: Chamando métodos Angular...');
@@ -616,7 +539,6 @@
 
     // ── Strategy 3: XHR interception + click "Ver resolução" ──
     console.log('\n📡 Strategy 3: XHR intercept + click...');
-    {
     let capturedXhrUrl = null;
     let capturedXhrResponse = null;
 
@@ -697,22 +619,19 @@
         }
       }
     }
-    } // end Strategy 3 block
 
-    // ── Strategy 4: Direct TEC API call ──
-    {
-    const questaoId = vm?.questao?.id ||
+    // ── Strategy 4: Direct TEC API call (known working endpoint) ──
+    const questaoId = vm?.questao?.idQuestao ||
+                      vm?.questao?.id ||
                       document.body.innerText.match(/#(\d{5,})/)?.[1] ||
                       window.location.pathname.match(/(\d{5,})/)?.[1];
 
     if (questaoId) {
       console.log(`\n📡 Strategy 4: API direta (questão #${questaoId})...`);
       const apiUrls = [
+        `https://www.tecconcursos.com.br/api/questoes/${questaoId}/comentario?tokenPreVisualizacao=`,
         `https://www.tecconcursos.com.br/api/questoes/${questaoId}/comentarios`,
         `https://www.tecconcursos.com.br/api/questoes/${questaoId}`,
-        `https://www.tecconcursos.com.br/api/questoes/comentarios/${questaoId}`,
-        `https://www.tecconcursos.com.br/api/comentarios/questao/${questaoId}`,
-        `https://www.tecconcursos.com.br/questoes/${questaoId}`,
       ];
 
       for (const url of apiUrls) {
@@ -762,11 +681,6 @@
         }
       }
     }
-    } // end Strategy 4 block
-
-    } else {
-      console.log('⏭️ Batch mode: pulando Strategies 2-4 (side effects) → direto para DOM fallback');
-    } // end if (!batchMode)
 
     // ── Strategy 5: DOM fallback ──
     console.log('\n🔍 Strategy 5: DOM fallback...');
@@ -895,236 +809,30 @@
   };
 
   /**
-   * Robust detection of whether the current question was answered incorrectly.
-   * Checks Angular scope first, then CSS classes/styling, then DOM text.
-   * Returns { errou: boolean, method: string, debug: object }
+   * Gets the Angular scope vm for the current question.
+   * Returns { scope, vm } or { scope: null, vm: null }.
    */
-  function detectQuestionError() {
-    const result = { errou: false, method: 'none', debug: {} };
-
-    // ── 1. Angular scope (most reliable) ──
+  function getAngularVm() {
     const ng = unsafeWindow?.angular;
-    if (ng) {
-      const anchor = document.querySelector('[tec-formatar-html]') ||
+    if (!ng) return { scope: null, vm: null };
+    const anchorEl = document.querySelector('[tec-formatar-html]') ||
                      document.querySelector('.questao-corpo') ||
+                     document.querySelector('.questao-enunciado') ||
                      document.querySelector('[ng-controller]');
-      if (anchor) {
-        try {
-          const scope = ng.element(anchor).scope();
-          const vm = scope?.vm || scope?.$ctrl || scope;
-          const q = vm?.questao;
-
-          if (q) {
-            // Direct boolean
-            if (typeof q.errou === 'boolean') {
-              result.errou = q.errou; result.method = 'scope:questao.errou'; return result;
-            }
-            if (typeof q.acertou === 'boolean') {
-              result.errou = !q.acertou; result.method = 'scope:questao.acertou'; return result;
-            }
-            // Result string
-            if (q.resultado) {
-              result.errou = /err|incorr|wrong/i.test(String(q.resultado));
-              result.method = 'scope:questao.resultado'; return result;
-            }
-            // Compare correct vs selected answer
-            const correta = q.alternativaCorreta || q.gabarito || q.respostaCorreta;
-            const marcada = q.alternativaMarcada || q.alternativaSelecionada || q.respostaAluno;
-            if (correta && marcada) {
-              result.errou = String(correta).trim().toUpperCase() !== String(marcada).trim().toUpperCase();
-              result.method = 'scope:answer-compare'; return result;
-            }
-            // Check alternativas array
-            if (Array.isArray(q.alternativas) && q.alternativas.length > 0) {
-              const sel = q.alternativas.find(a => a.selecionada || a.marcada);
-              const cor = q.alternativas.find(a => a.correta || a.gabarito);
-              if (sel && cor && sel !== cor) {
-                result.errou = true; result.method = 'scope:alternativas-compare'; return result;
-              }
-              if (sel && cor && sel === cor) {
-                result.errou = false; result.method = 'scope:alternativas-compare'; return result;
-              }
-            }
-
-            // Collect debug info for any error-related keys
-            for (const k of Object.keys(q)) {
-              if (/errou|acert|result|corret|gabarit|marcad|selecion|respondid/i.test(k)) {
-                result.debug[`questao.${k}`] = q[k];
-              }
-            }
-          }
-
-          // Try vm-level properties
-          for (const obj of [vm, scope]) {
-            if (!obj) continue;
-            if (typeof obj.errou === 'boolean') {
-              result.errou = obj.errou; result.method = `scope:vm.errou`; return result;
-            }
-            if (typeof obj.acertou === 'boolean') {
-              result.errou = !obj.acertou; result.method = `scope:vm.acertou`; return result;
-            }
-          }
-        } catch (e) {
-          console.warn('detectQuestionError scope error:', e.message);
-        }
-      }
+    if (!anchorEl) return { scope: null, vm: null };
+    try {
+      const scope = ng.element(anchorEl).scope();
+      const vm = scope?.vm || scope?.$ctrl || scope;
+      return { scope, vm };
+    } catch (_) {
+      return { scope: null, vm: null };
     }
-
-    // ── 2. DOM text (multiple patterns) ──
-    const bodyText = document.body.innerText;
-    if (/Voc[êe]\s+errou/i.test(bodyText)) {
-      result.errou = true; result.method = 'dom:voce-errou'; return result;
-    }
-    if (/Voc[êe]\s+acertou/i.test(bodyText)) {
-      result.errou = false; result.method = 'dom:voce-acertou'; return result;
-    }
-    if (/Resposta\s+(incorreta|errada)/i.test(bodyText)) {
-      result.errou = true; result.method = 'dom:resposta-incorreta'; return result;
-    }
-    if (/Resposta\s+(correta|certa)/i.test(bodyText)) {
-      result.errou = false; result.method = 'dom:resposta-correta'; return result;
-    }
-
-    // ── 3. CSS classes on question or alternatives ──
-    const questionContainer = document.querySelector('[class*="questao"]');
-    if (questionContainer) {
-      const cls = questionContainer.className || '';
-      if (/errou|incorret|wrong/i.test(cls)) {
-        result.errou = true; result.method = 'dom:class-errou'; return result;
-      }
-      if (/acertou|corret|right/i.test(cls)) {
-        result.errou = false; result.method = 'dom:class-acertou'; return result;
-      }
-    }
-
-    // Check for wrong-answer styling on alternatives (red background, strikethrough, etc.)
-    const allAlts = document.querySelectorAll('[class*="alternativa"]');
-    let hasSelectedWrong = false, hasSelectedCorrect = false;
-    for (const alt of allAlts) {
-      const cls = (alt.className || '') + ' ' + (alt.querySelector('[class]')?.className || '');
-      const isSelected = /selecionad|selected|marcad|active|escolhid/i.test(cls);
-      const isWrong = /errad|incorr|wrong|vermelho|danger/i.test(cls);
-      const isCorrect = /corret|correct|gabarito|acert|sucesso|success/i.test(cls);
-      if (isSelected && isWrong) hasSelectedWrong = true;
-      if (isSelected && isCorrect) hasSelectedCorrect = true;
-    }
-    if (hasSelectedWrong) { result.errou = true; result.method = 'dom:alt-class-wrong'; return result; }
-    if (hasSelectedCorrect && !hasSelectedWrong) { result.errou = false; result.method = 'dom:alt-class-correct'; return result; }
-
-    // ── 4. Error icons (font-awesome, SVG, or Unicode) ──
-    const iconArea = document.querySelector('[class*="resultado"], [class*="gabarito"], [class*="resposta"], [class*="questao-header"]');
-    if (iconArea) {
-      const iconText = iconArea.textContent || '';
-      if (/[✗×❌✘]/.test(iconText) || iconArea.querySelector('.fa-times, .fa-times-circle, [class*="icon-err"]')) {
-        result.errou = true; result.method = 'dom:error-icon'; return result;
-      }
-      if (/[✓✔☑✅]/.test(iconText) || iconArea.querySelector('.fa-check, .fa-check-circle, [class*="icon-correct"]')) {
-        result.errou = false; result.method = 'dom:correct-icon'; return result;
-      }
-    }
-
-    console.warn('⚠️ detectQuestionError: Não conseguiu determinar se errou/acertou.', result.debug);
-    return result;
   }
 
   /**
-   * Detect total error count in the current caderno.
-   * Checks Angular scope, then DOM text with multiple patterns.
-   * Returns { totalErros: number, totalQuestoes: number, currentQ: number, method: string }
-   */
-  function detectCadernoErrors() {
-    let totalErros = 0, totalQuestoes = 0, currentQ = 0;
-    let method = 'none';
-
-    // ── 1. Angular scope for caderno/prova/resultado data ──
-    const ng = unsafeWindow?.angular;
-    if (ng) {
-      const anchors = document.querySelectorAll('[ng-controller], [class*="caderno"], [class*="prova"], [class*="resultado"]');
-      for (const anchor of anchors) {
-        try {
-          const scope = ng.element(anchor).scope();
-          const vm = scope?.vm || scope?.$ctrl || scope;
-
-          // Search common property paths
-          const candidates = [vm, vm?.caderno, vm?.prova, vm?.resultado, vm?.estatistica,
-                              vm?.estatisticas, vm?.desempenho, scope, scope?.caderno];
-          for (const obj of candidates) {
-            if (!obj) continue;
-            // Look for error count properties
-            for (const k of ['totalErros', 'qtdErros', 'erros', 'quantidadeErros',
-                              'respostasErradas', 'incorretas', 'numErros', 'totalIncorretas']) {
-              const val = obj[k];
-              if (typeof val === 'number' && val > 0) {
-                totalErros = val; method = `scope:${k}`; break;
-              }
-            }
-            if (totalErros > 0) break;
-            // Check for array of errors
-            for (const k of ['questoesErradas', 'erradas', 'idsErros', 'questoesIncorretas']) {
-              if (Array.isArray(obj[k]) && obj[k].length > 0) {
-                totalErros = obj[k].length; method = `scope:${k}.length`; break;
-              }
-            }
-            if (totalErros > 0) break;
-            // Total questions
-            for (const k of ['totalQuestoes', 'qtdQuestoes', 'quantidadeQuestoes', 'total']) {
-              if (typeof obj[k] === 'number' && obj[k] > 0) totalQuestoes = obj[k];
-            }
-          }
-          if (totalErros > 0) break;
-        } catch (_) { /* ignore */ }
-      }
-    }
-
-    // ── 2. DOM text patterns (multiple) ──
-    const bodyText = document.body.innerText;
-    if (!totalErros) {
-      const patterns = [
-        /(\d+)\s*Erros?\)?/i,
-        /Erros?:?\s*(\d+)/i,
-        /(\d+)\s*(?:quest[õo]es?\s+)?erradas?/i,
-        /(\d+)\s*incorretas?/i,
-        /(\d+)\s*respostas?\s+erradas?/i,
-      ];
-      for (const pat of patterns) {
-        const m = bodyText.match(pat);
-        if (m && parseInt(m[1]) > 0) {
-          totalErros = parseInt(m[1]); method = `dom:${pat.source}`; break;
-        }
-      }
-    }
-
-    // ── 3. Count DOM elements with error indicators ──
-    if (!totalErros) {
-      // Look for numbered question links/items with error styling
-      const errorItems = document.querySelectorAll(
-        '[class*="erro"]:not([class*="erros-total"]), ' +
-        '[class*="wrong"], [class*="incorr"], ' +
-        '.questao-errou, .questao-incorreta, ' +
-        '[class*="questao"][class*="danger"], ' +
-        '.resultado-item.erro, .resultado-item.errou'
-      );
-      if (errorItems.length > 0) {
-        totalErros = errorItems.length; method = `dom:error-elements(${errorItems.length})`;
-      }
-    }
-
-    // ── 4. Total questions + current question from DOM ──
-    if (!totalQuestoes) {
-      const questInfoMatch = bodyText.match(/Quest[ãa]o\s+(\d+)\s+de\s+(\d+)/i);
-      if (questInfoMatch) {
-        currentQ = parseInt(questInfoMatch[1]);
-        totalQuestoes = parseInt(questInfoMatch[2]);
-      }
-    }
-
-    console.log(`📊 detectCadernoErrors: totalErros=${totalErros}, totalQuestoes=${totalQuestoes}, method=${method}`);
-    return { totalErros, totalQuestoes, currentQ, method };
-  }
-
-  /**
-   * Main extraction function — reads the current question from the DOM.
-   * Handles both Certo/Errado (CESPE) and multiple choice (A-E) questions.
+   * Main extraction function — reads the current question.
+   * Primary source: Angular scope (vm.questao) — always matches TEC exactly.
+   * Fallback: DOM scraping for anything Angular doesn't provide.
    */
   function extractQuestionData() {
     const data = {
@@ -1134,153 +842,140 @@
       errou: false, comentario: '', url: window.location.href,
     };
 
-    const bodyText = document.body.innerText;
+    // ── Try Angular scope first (most reliable) ──
+    const { vm } = getAngularVm();
+    const q = vm?.questao;
 
-    // ── 0. Try Angular scope first (most reliable in caderno/batch) ──
-    const ng = unsafeWindow?.angular;
-    let _scope = null, _vm = null;
-    if (ng) {
-      const anchor = document.querySelector('[tec-formatar-html]') ||
-                     document.querySelector('.questao-corpo') ||
-                     document.querySelector('[ng-controller]');
-      if (anchor) {
-        try {
-          _scope = ng.element(anchor).scope();
-          _vm = _scope?.vm || _scope?.$ctrl || _scope;
-        } catch (_) { /* ignore */ }
-      }
-    }
+    if (q) {
+      console.log('📋 Extração via Angular scope (vm.questao)');
 
-    if (_vm?.questao) {
-      const q = _vm.questao;
-      data.id = q.idQuestao ? String(q.idQuestao) : null;
+      // Metadata
+      data.id = String(q.idQuestao || '');
       data.banca = q.bancaSigla || '';
-      data.ano = q.concursoAno ? String(q.concursoAno) : '';
+      data.ano = String(q.concursoAno || '');
       data.cargo = q.cargoSigla || '';
       data.materia = q.nomeMateria || '';
       data.assunto = q.nomeAssunto || '';
-      console.log(`📋 Angular scope: materia="${data.materia}", assunto="${data.assunto}", id=${data.id}`);
-    }
 
-    // ── 1. Question ID + Metadata (DOM fallback) ──
-    if (!data.id) {
+      // Enunciado (Angular stores HTML, strip it for plain text)
+      data.enunciado = stripHtml(q.enunciado || '');
+
+      // Type
+      if (q.tipoQuestao === 'CERTO_ERRADO') {
+        data.tipo = 'certo_errado';
+      } else if (q.tipoQuestao === 'MULTIPLA_ESCOLHA') {
+        data.tipo = 'multipla_escolha';
+      }
+
+      // Alternatives
+      if (Array.isArray(q.alternativas)) {
+        const labels = data.tipo === 'certo_errado'
+          ? ['Certo', 'Errado']
+          : ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        q.alternativas.forEach((alt, i) => {
+          const texto = stripHtml(typeof alt === 'string' ? alt : (alt?.texto || alt?.descricao || ''));
+          const letra = labels[i] || String(i + 1);
+          const numAlt = i + 1; // 1-based
+          data.alternativas.push({
+            letra,
+            texto,
+            selecionada: q.alternativaSelecionada === numAlt,
+            correta: q.numeroAlternativaCorreta === numAlt,
+          });
+        });
+      }
+
+      // Result
+      data.errou = q.correcaoQuestao === false && q.alternativaSelecionada > 0;
+      data.gabarito = data.alternativas.find(a => a.correta)?.letra || '';
+      data.respostaAluno = data.alternativas.find(a => a.selecionada)?.letra || '';
+
+    } else {
+      // ── Fallback: DOM scraping ──
+      console.log('📋 Extração via DOM (Angular scope indisponível)');
+
+      const bodyText = document.body.innerText;
+
+      // 1. Question ID + Metadata
       const metaRegex = /#(\d{5,})\s+(.+?)\s*[-–]\s*(\d{4})\s*[-–]\s*(.+?)(?:\s*×|\s*$)/m;
       const metaMatch = bodyText.match(metaRegex);
       if (metaMatch) {
         data.id = metaMatch[1];
-        if (!data.banca) data.banca = metaMatch[2].trim();
-        if (!data.ano) data.ano = metaMatch[3];
-        if (!data.cargo) data.cargo = metaMatch[4].trim();
+        data.banca = metaMatch[2].trim();
+        data.ano = metaMatch[3];
+        data.cargo = metaMatch[4].trim();
       }
-    }
+      if (!data.id) {
+        const idFallback = bodyText.match(/#(\d{5,})/);
+        if (idFallback) data.id = idFallback[1];
+      }
 
-    // Fallback: try to get ID from any #NNNNN pattern
-    if (!data.id) {
-      const idFallback = bodyText.match(/#(\d{5,})/);
-      if (idFallback) data.id = idFallback[1];
-    }
-
-    // ── 2. Matéria (DOM fallback) ──
-    if (!data.materia) {
+      // 2. Matéria
       const materiaEl = trySelect(SEL.materia);
       if (materiaEl) {
         data.materia = materiaEl.textContent.trim();
-      } else {
-        const materiaMatch = bodyText.match(/Matéria:\s*(.+?)(?:\n|$)/);
-        if (materiaMatch) data.materia = materiaMatch[1].trim();
       }
-    }
 
-    // ── 3. Assunto (DOM fallback) ──
-    if (!data.assunto) {
-      // Try to expand "(Exibir)" if present
+      // 3. Assunto
       const exibirBtn = [...document.querySelectorAll('a, button, span')].find(
         el => el.textContent.trim().match(/^\(?\s*Exibir\s*\)?$/i)
       );
-      if (exibirBtn) {
-        try { exibirBtn.click(); } catch (_) { /* ignore */ }
-      }
+      if (exibirBtn) { try { exibirBtn.click(); } catch (_) {} }
 
       const assuntoEl = trySelect(SEL.assunto);
       if (assuntoEl) {
         data.assunto = assuntoEl.textContent.replace(/Assunto:?\s*/i, '').replace(/\(?\s*Exibir\s*\)?/i, '').trim();
       }
+
+      // 4. Enunciado
+      const enunciadoEl = trySelect(SEL.questionText);
+      if (enunciadoEl) {
+        data.enunciado = enunciadoEl.innerText.trim();
+      }
+
+      // 5. Alternativas
+      const altItems = trySelectAll(SEL.altItem);
+      if (altItems.length > 0) {
+        altItems.forEach(item => {
+          const letterEl = trySelect(SEL.altLetter.map(s => s), item) || item.querySelector('label');
+          const textEl = trySelect(SEL.altText.map(s => s), item) || item;
+          const letra = letterEl ? letterEl.textContent.trim().replace(/[).\s]/g, '') : '';
+          const texto = textEl ? textEl.innerText.trim() : item.innerText.trim();
+          if (!letra && !texto) return;
+
+          const classes = item.className + ' ' + (item.parentElement?.className || '');
+          const isSelected = /selecionad|selected|marcad|active|escolhid/i.test(classes);
+          const isCorrect = /corret|correct|gabarito|acert/i.test(classes);
+          data.alternativas.push({ letra, texto, selecionada: isSelected, correta: isCorrect });
+        });
+      }
+
+      // Detect type
+      if (data.alternativas.length === 2 &&
+          data.alternativas.some(a => /^(certo|c)$/i.test(a.texto || a.letra)) &&
+          data.alternativas.some(a => /^(errado|e)$/i.test(a.texto || a.letra))) {
+        data.tipo = 'certo_errado';
+      } else if (data.alternativas.length >= 3) {
+        data.tipo = 'multipla_escolha';
+      }
+
+      // 6. Result
+      data.errou = !!bodyText.match(/Você errou/i);
+      const gabaritoMatch = bodyText.match(/Gabarito:\s*(.+?)(?:\.|,|\s|$)/i);
+      if (gabaritoMatch) data.gabarito = gabaritoMatch[1].trim();
+      const selMatch = bodyText.match(/Você selecionou:\s*(.+?)(?:,|\.|$)/im);
+      if (selMatch) data.respostaAluno = selMatch[1].trim();
+      if (!data.gabarito) {
+        const correta = data.alternativas.find(a => a.correta);
+        if (correta) data.gabarito = correta.letra || correta.texto;
+      }
     }
 
-    // ── 4. Enunciado ──
-    const enunciadoEl = trySelect(SEL.questionText);
-    if (enunciadoEl) {
-      data.enunciado = enunciadoEl.innerText.trim();
-    }
-
-    // ── 5. Alternativas ──
-    const altItems = trySelectAll(SEL.altItem);
-    if (altItems.length > 0) {
-      altItems.forEach(item => {
-        const letterEl = trySelect(SEL.altLetter.map(s => s), item) || item.querySelector('label');
-        const textEl = trySelect(SEL.altText.map(s => s), item) || item;
-        const letra = letterEl ? letterEl.textContent.trim().replace(/[).\s]/g, '') : '';
-        const texto = textEl ? textEl.innerText.trim() : item.innerText.trim();
-        if (!letra && !texto) return;
-
-        // Detect selection state from CSS classes or styles
-        const classes = item.className + ' ' + (item.parentElement?.className || '');
-        const style = item.getAttribute('style') || '';
-        const isSelected = /selecionad|selected|marcad|active|escolhid/i.test(classes) ||
-                          /background.*#f[8-f].*[cd].*[cd]|background.*rgba?\(2[45]\d/i.test(style) ||
-                          item.querySelector('[class*="selecionad"], [class*="marcad"]') !== null;
-        const isCorrect = /corret|correct|gabarito|acert/i.test(classes) ||
-                         /background.*#[cd].*f.*[cd]|background.*rgba?\(\d+,\s*2[0-5]\d/i.test(style) ||
-                         item.querySelector('[class*="corret"], [class*="gabarito"]') !== null;
-
-        data.alternativas.push({ letra, texto, selecionada: isSelected, correta: isCorrect });
-      });
-    }
-
-    // Detect question type
-    if (data.alternativas.length === 2 &&
-        data.alternativas.some(a => /^(certo|c)$/i.test(a.texto || a.letra)) &&
-        data.alternativas.some(a => /^(errado|e)$/i.test(a.texto || a.letra))) {
-      data.tipo = 'certo_errado';
-    } else if (data.alternativas.length >= 3) {
-      data.tipo = 'multipla_escolha';
-    }
-
-    // ── 6. Result (errou/acertou) and Gabarito ──
-    const errorDetection = detectQuestionError();
-    data.errou = errorDetection.errou;
-    console.log(`🔍 Detecção erro: errou=${errorDetection.errou}, método=${errorDetection.method}`);
-    if (Object.keys(errorDetection.debug).length > 0) {
-      console.log('🔍 Debug erro:', errorDetection.debug);
-    }
-
-    const gabaritoMatch = bodyText.match(/Gabarito:\s*(.+?)(?:\.|,|\s|$)/i);
-    if (gabaritoMatch) {
-      data.gabarito = gabaritoMatch[1].trim();
-    }
-
-    // Detect what the user selected
-    const selMatch = bodyText.match(/Você selecionou:\s*(.+?)(?:,|\.|$)/im);
-    if (selMatch) {
-      data.respostaAluno = selMatch[1].trim();
-    } else {
-      const sel = data.alternativas.find(a => a.selecionada);
-      if (sel) data.respostaAluno = sel.letra || sel.texto;
-    }
-
-    // If we still don't have gabarito, try from alternatives
-    if (!data.gabarito) {
-      const correta = data.alternativas.find(a => a.correta);
-      if (correta) data.gabarito = correta.letra || correta.texto;
-    }
-
-    // ── 7. Comentário do Professor ──
-    // Use the comment captured by ensureCommentExpanded() via DOM-diff
+    // ── 7. Comentário do Professor (always from _capturedComment) ──
     if (_capturedComment && _capturedComment.length > 50) {
       data.comentario = _capturedComment;
-      console.log(`✅ Comentário extraído do DOM-diff (${_capturedComment.length} chars)`);
+      console.log(`✅ Comentário extraído (${_capturedComment.length} chars)`);
     } else {
-      // Fallback: try to find directly in DOM
       const tecElements = document.querySelectorAll('[tec-formatar-html]');
       const enunciadoText = data.enunciado || '';
       for (const el of tecElements) {
@@ -1288,14 +983,6 @@
         const text = el.innerText.trim();
         if (/coment/i.test(attr) && text.length > 50) {
           data.comentario = text;
-          console.log(`✅ Comentário via tec-formatar-html "${attr}" (${text.length} chars)`);
-          break;
-        }
-        if (text.length > 200 && text !== enunciadoText &&
-            !text.startsWith(enunciadoText.substring(0, 50) || '___') &&
-            !text.includes('Você errou') && !text.includes('Você acertou')) {
-          data.comentario = text;
-          console.log(`✅ Comentário via tec-formatar-html genérico (${text.length} chars)`);
           break;
         }
       }
@@ -1310,6 +997,7 @@
       data.url = `https://www.tecconcursos.com.br/questoes/${data.id}`;
     }
 
+    console.log(`📋 Dados extraídos: Q${data.id} | ${data.materia} > ${data.assunto} | ${data.tipo}`);
     return data;
   }
 
@@ -2096,48 +1784,146 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
 
   /**
    * Wait for TEC's SPA to finish transitioning to a new question.
-   * Detects when the question ID in the page changes.
+   * Uses Angular scope (vm.questao.idQuestao) as primary detection.
    */
   async function waitForQuestionChange(previousId, timeout = 10000) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
       await delay(600);
-      const bodyText = document.body.innerText;
-      const idMatch = bodyText.match(/#(\d{5,})/);
-      const currentId = idMatch ? idMatch[1] : null;
-      if (currentId && currentId !== previousId) {
-        // Wait a bit more for full render
+
+      // Primary: Angular scope
+      const { vm } = getAngularVm();
+      const angularId = vm?.questao?.idQuestao ? String(vm.questao.idQuestao) : null;
+      if (angularId && angularId !== previousId) {
         await delay(1000);
-        return currentId;
+        return angularId;
+      }
+
+      // Fallback: DOM text
+      const idMatch = document.body.innerText.match(/#(\d{5,})/);
+      const domId = idMatch ? idMatch[1] : null;
+      if (domId && domId !== previousId) {
+        await delay(1000);
+        return domId;
       }
     }
     return null; // Timeout — page didn't change
   }
 
+  /**
+   * Detect total errors in the caderno using multiple strategies.
+   * Returns { totalErros, totalQuestoes, currentQ, method }
+   */
+  function detectCadernoErrors() {
+    let totalErros = 0, totalQuestoes = 0, currentQ = 0;
+    let method = 'none';
+    const bodyText = document.body.innerText;
+
+    // ── 1. Angular scope — caderno/prova/estatistica ──
+    const { vm } = getAngularVm();
+    if (vm) {
+      const candidates = [vm, vm?.caderno, vm?.prova, vm?.resultado,
+        vm?.estatistica, vm?.estatisticas, vm?.desempenho];
+      for (const obj of candidates) {
+        if (!obj || typeof obj !== 'object') continue;
+        for (const k of ['totalErros', 'qtdErros', 'erros', 'quantidadeErros',
+          'respostasErradas', 'incorretas', 'numErros', 'totalIncorretas']) {
+          if (typeof obj[k] === 'number' && obj[k] > 0) {
+            totalErros = obj[k]; method = `scope:${k}`; break;
+          }
+        }
+        if (totalErros) break;
+        for (const k of ['questoesErradas', 'erradas', 'idsErros']) {
+          if (Array.isArray(obj[k]) && obj[k].length > 0) {
+            totalErros = obj[k].length; method = `scope:${k}.length`; break;
+          }
+        }
+        if (totalErros) break;
+        for (const k of ['totalQuestoes', 'qtdQuestoes', 'total']) {
+          if (typeof obj[k] === 'number' && obj[k] > 0) totalQuestoes = obj[k];
+        }
+      }
+    }
+
+    // ── 2. DOM text — tag visible on page ("4 Erros", "Erros: 4", etc.) ──
+    if (!totalErros) {
+      const patterns = [
+        /(\d+)\s*Erros?\)?/i,
+        /Erros?:?\s*(\d+)/i,
+        /(\d+)\s*(?:quest[õo]es?\s+)?erradas?/i,
+        /(\d+)\s*incorretas?/i,
+      ];
+      for (const pat of patterns) {
+        const m = bodyText.match(pat);
+        if (m && parseInt(m[1]) > 0) {
+          totalErros = parseInt(m[1]); method = `dom:text`; break;
+        }
+      }
+    }
+
+    // ── 3. Aba Estatísticas — look for the row "Erros   N" ──
+    if (!totalErros) {
+      // The Estatísticas tab content may already be in DOM (hidden or active)
+      const allText = document.body.innerText;
+      // Pattern: "↪ Erros" followed by a number (from the stats table)
+      const statsMatch = allText.match(/(?:↪|→|->)?\s*Erros\s+(\d+)/i) ||
+                         allText.match(/Erros\s+(\d+)\s/i);
+      if (statsMatch && parseInt(statsMatch[1]) > 0) {
+        totalErros = parseInt(statsMatch[1]); method = 'dom:stats-tab';
+      }
+    }
+
+    // ── 4. Question count ──
+    if (!totalQuestoes) {
+      const questInfoMatch = bodyText.match(/Quest[ãa]o\s+(\d+)\s+de\s+(\d+)/i);
+      if (questInfoMatch) {
+        currentQ = parseInt(questInfoMatch[1]);
+        totalQuestoes = parseInt(questInfoMatch[2]);
+      }
+    }
+
+    console.log(`📊 detectCadernoErrors: erros=${totalErros}, total=${totalQuestoes}, method=${method}`);
+    return { totalErros, totalQuestoes, currentQ, method };
+  }
+
   async function processBatchQuestions() {
     if (batchRunning) { showToast('Batch já em andamento...', 'warning'); return; }
 
-    // Detect if we're in a caderno/question list using robust detection
+    // ── Detect error count (multi-strategy) ──
     const cadernoInfo = detectCadernoErrors();
     let totalErros = cadernoInfo.totalErros;
     const totalQuestoes = cadernoInfo.totalQuestoes;
     const currentQNum = cadernoInfo.currentQ;
-    let scanMode = false; // true = scan all questions (no total known)
 
-    if (!totalErros && totalQuestoes > 0) {
-      // Can't detect total errors, but we're in a caderno — offer to scan all
-      if (!confirm(`Não foi possível detectar o total de erros automaticamente.\nCaderno com ${totalQuestoes} questões (questão ${currentQNum || '?'} atual).\n\n🔍 Deseja escanear TODAS as questões e processar as erradas?\n\n⚠️ Isso vai navegar por todas as ${totalQuestoes} questões.\nO script detecta erros individualmente em cada questão.`)) {
+    // ── Fallback: ask user to input manually ──
+    if (!totalErros) {
+      const input = prompt(
+        '⚠️ Não foi possível detectar automaticamente o total de erros.\n\n' +
+        'Isso pode acontecer quando as tags do caderno não estão visíveis.\n' +
+        '💡 Dica: veja na aba "Estatísticas" do caderno.\n\n' +
+        `Caderno com ${totalQuestoes || '?'} questões (questão ${currentQNum || '?'} atual).\n\n` +
+        'Digite o número de questões ERRADAS neste caderno:',
+        ''
+      );
+      if (input === null) return; // User cancelled
+      const parsed = parseInt(input.trim());
+      if (!parsed || parsed <= 0 || isNaN(parsed)) {
+        showToast('Número inválido. Batch cancelado.', 'warning', 4000);
         return;
       }
-      scanMode = true;
-      totalErros = totalQuestoes; // Use total as upper bound
-    } else if (!totalErros) {
-      showToast('Nenhum erro detectado neste caderno. Use 🔍 Discovery Mode para debug.', 'warning', 5000);
+      totalErros = parsed;
+      console.log(`📊 Total de erros informado manualmente: ${totalErros}`);
+    }
+
+    if (!confirm(
+      `${cadernoInfo.method !== 'none' ? `Detectados ${totalErros} erros (${cadernoInfo.method})` : `Total informado: ${totalErros} erros`}` +
+      ` neste caderno (${totalQuestoes || '?'} questões no total).\n` +
+      `Você está na questão ${currentQNum || '?'} de ${totalQuestoes || '?'}.\n\n` +
+      `Processar todas as questões erradas a partir da questão ATUAL?\n\n` +
+      `⚠️ Isso pode levar alguns minutos. Mantenha o Anki aberto.\n` +
+      `💡 O script vai navegar questão por questão (→) e processar só as erradas.`
+    )) {
       return;
-    } else {
-      if (!confirm(`Encontrados ${totalErros} erros neste caderno (${totalQuestoes || '?'} questões no total).\nVocê está na questão ${currentQNum || '?'} de ${totalQuestoes || '?'}.\nDetecção: ${cadernoInfo.method}\n\nProcessar todas as questões erradas a partir da questão ATUAL?\n\n⚠️ Isso pode levar alguns minutos. Mantenha o Anki aberto.\n💡 O script vai navegar questão por questão (→) e processar só as erradas.`)) {
-        return;
-      }
     }
 
     batchRunning = true;
@@ -2167,10 +1953,12 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
       const maxIterations = (totalQuestoes || totalErros * 3) + 5;
 
       for (let i = 0; i < maxIterations && batchRunning; i++) {
-        // Get current question ID
+        // Get current question ID (Angular scope first, then DOM)
+        const { vm: loopVm } = getAngularVm();
         const currentBody = document.body.innerText;
-        const currentIdMatch = currentBody.match(/#(\d{5,})/);
-        const currentId = currentIdMatch ? currentIdMatch[1] : `unknown_${i}`;
+        const currentId = loopVm?.questao?.idQuestao
+          ? String(loopVm.questao.idQuestao)
+          : (currentBody.match(/#(\d{5,})/)?.[1] || `unknown_${i}`);
 
         // Update progress display
         const qNumMatch = currentBody.match(/Quest[ãa]o\s+(\d+)\s+de\s+(\d+)/i);
@@ -2179,50 +1967,31 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
         const qNumEl = document.getElementById('tec-batch-qnum');
         if (qNumEl) qNumEl.textContent = `${qNum}/${qTotal}`;
 
-        // Check if this is a wrong question (robust detection)
-        const errorCheck = detectQuestionError();
-        const isError = errorCheck.errou;
-        if (isError) console.log(`🔴 Q${currentId}: ERROU (${errorCheck.method})`);
-        else console.log(`🟢 Q${currentId}: acertou/não-respondida (${errorCheck.method})`);
+        // Check if this is a wrong question (Angular scope is more reliable)
+        const { vm: batchVm } = getAngularVm();
+        const isError = (batchVm?.questao?.correcaoQuestao === false) || /Você errou/i.test(currentBody);
 
         if (isError && !processedIds.has(currentId)) {
           processedIds.add(currentId);
           console.log(`📝 Batch: Processando Q${currentId} (erro ${processed + 1}/${totalErros})`);
 
           try {
-            // Expand comment before extracting (batch mode = skip slow strategies)
-            await ensureCommentExpanded(true);
-            await delay(800);
+            // Expand comment before extracting
+            await ensureCommentExpanded();
+            await delay(500);
 
             const qData = extractQuestionData();
             if (qData.enunciado || qData.id) {
-              console.log(`📝 Batch Q${currentId}: enunciado=${(qData.enunciado||'').length}c, materia=${qData.materia}, assunto=${qData.assunto}, comentario=${(qData.comentario||'').length}c`);
               const aiResult = await callGemini(qData);
-              console.log(`🤖 Batch Q${currentId}: Gemini OK, ${aiResult?.cards?.length || 0} cards`);
-
-              const [ankiRes, obsRes] = await Promise.allSettled([
+              await Promise.allSettled([
                 getSetting('enableAnki') ? addCardsToAnki(aiResult, qData) : Promise.resolve(null),
                 getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
               ]);
-
-              // Log individual save results
-              if (ankiRes.status === 'rejected') {
-                console.warn(`⚠️ Batch Q${currentId}: Anki falhou:`, ankiRes.reason?.message || ankiRes.reason);
-              }
-              if (obsRes.status === 'rejected') {
-                console.warn(`⚠️ Batch Q${currentId}: Obsidian falhou:`, obsRes.reason?.message || obsRes.reason);
-              }
-
               processed++;
               console.log(`✅ Batch: Q${currentId} processada (${processed}/${totalErros})`);
-            } else {
-              console.warn(`⚠️ Batch Q${currentId}: Dados insuficientes — enunciado vazio e sem ID. Pulando.`);
-              errors++;
             }
           } catch (err) {
-            const errMsg = err?.message || err?.toString?.() || String(err);
-            console.error(`❌ Batch: Erro em Q${currentId}: [${err?.constructor?.name || 'Unknown'}] ${errMsg}`);
-            if (err?.stack) console.error(err.stack);
+            console.error(`❌ Batch: Erro em Q${currentId}:`, err);
             errors++;
           }
 
@@ -2237,28 +2006,22 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
           if (skippedEl) skippedEl.textContent = skipped;
         }
 
-        // Check if we've processed all errors (skip in scanMode — scan until end)
-        if (!scanMode && processed >= totalErros) {
+        // Check if we've processed all errors
+        if (processed >= totalErros) {
           console.log('🎉 Batch: Todos os erros processados!');
           break;
         }
-
-        // Blur focus so ArrowRight isn't captured by comment panel or input
-        try { document.activeElement?.blur(); } catch (_) { /* skip */ }
 
         // Navigate to next question using keyboard shortcut →
         navigateToNextQuestion();
 
         // Wait for the page to transition to the next question
-        const newId = await waitForQuestionChange(currentId, 12000);
+        const newId = await waitForQuestionChange(currentId, 10000);
         if (!newId) {
           // Page didn't change — we're probably at the last question
           console.log('📍 Batch: Página não mudou. Última questão do caderno.');
           break;
         }
-
-        // Extra settle time for SPA to fully render the new question
-        await delay(800);
       }
     } finally {
       progressToast.remove();
@@ -2325,59 +2088,6 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
       const text = el.innerText.trim();
       console.log(`  [tec-formatar-html="${attr}"] → ${text.length} chars | visible=${el.offsetParent !== null} | "${text.substring(0, 80)}..."`);
     });
-
-    console.log('\n=== Detecção de Erros (novo) ===');
-    const errorResult = detectQuestionError();
-    console.log('detectQuestionError():', errorResult);
-    const cadernoResult = detectCadernoErrors();
-    console.log('detectCadernoErrors():', cadernoResult);
-
-    console.log('\n=== Angular Scope - Propriedades de erro/resultado ===');
-    try {
-      const ngD = unsafeWindow?.angular;
-      if (ngD) {
-        const anchorD = document.querySelector('[tec-formatar-html]') ||
-                        document.querySelector('.questao-corpo') ||
-                        document.querySelector('[ng-controller]');
-        if (anchorD) {
-          const scopeD = ngD.element(anchorD).scope();
-          const vmD = scopeD?.vm || scopeD?.$ctrl || scopeD;
-          const qD = vmD?.questao;
-
-          if (qD) {
-            console.log('vm.questao keys:', Object.keys(qD));
-            // Dump all properties related to errors/results/answers
-            for (const k of Object.keys(qD)) {
-              if (/errou|acert|result|corret|gabarit|marcad|selecion|respondid|alternativ|resposta/i.test(k)) {
-                console.log(`  questao.${k} =`, qD[k]);
-              }
-            }
-          }
-
-          // Dump caderno-level data
-          for (const prop of ['caderno', 'prova', 'resultado', 'estatistica', 'estatisticas', 'desempenho']) {
-            const obj = vmD?.[prop];
-            if (obj && typeof obj === 'object') {
-              console.log(`\nvm.${prop} keys:`, Object.keys(obj));
-              for (const k of Object.keys(obj)) {
-                if (/erro|acert|total|qtd|quanti|incorr|corret|result/i.test(k)) {
-                  console.log(`  ${prop}.${k} =`, obj[k]);
-                }
-              }
-            }
-          }
-
-          // Dump top-level vm properties related to errors
-          console.log('\nvm keys (error-related):');
-          for (const k of Object.keys(vmD || {})) {
-            if (/erro|acert|result|caderno|prova|estat|desemp|total|qtd/i.test(k)) {
-              const val = vmD[k];
-              console.log(`  vm.${k} =`, typeof val === 'object' ? JSON.stringify(val)?.substring(0, 200) : val);
-            }
-          }
-        }
-      }
-    } catch (e) { console.warn('Scope dump error:', e.message); }
 
     console.log('\n=== Botões/links com ng-click ===');
     document.querySelectorAll('[ng-click]').forEach(el => {
