@@ -2027,11 +2027,23 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
       progressToast.remove();
       batchRunning = false;
       if (batchBtn) batchBtn.innerHTML = '📋 Erros';
-      showToast(
-        `Batch finalizado!<br>✅ ${processed} processadas | ❌ ${errors} erros | ⏭️ ${skipped} puladas (acertos)`,
-        processed > 0 ? 'success' : 'warning',
-        8000
-      );
+      // Persistent toast — stays until user clicks ✕
+      const type = processed > 0 ? 'success' : 'warning';
+      const icons = { success: '✅', warning: '⚠️' };
+      const finalToast = document.createElement('div');
+      finalToast.className = `tec-toast ${type}`;
+      finalToast.style.pointerEvents = 'auto';
+      finalToast.innerHTML = `
+        <span>${icons[type]}</span>
+        <span>Batch finalizado!<br>✅ ${processed} processadas | ❌ ${errors} erros | ⏭️ ${skipped} puladas (acertos)</span>
+        <button style="background:none;border:none;color:inherit;font-size:18px;cursor:pointer;margin-left:8px;padding:2px 6px;opacity:.7;line-height:1;" title="Fechar">✕</button>
+      `;
+      finalToast.querySelector('button').addEventListener('click', () => {
+        finalToast.style.opacity = '0';
+        finalToast.style.transition = 'opacity .3s';
+        setTimeout(() => finalToast.remove(), 300);
+      });
+      ensureToastContainer().appendChild(finalToast);
     }
   }
 
