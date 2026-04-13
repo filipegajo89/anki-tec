@@ -1130,14 +1130,26 @@ Com base nas informações acima, identifique o mecanismo do erro e crie 2-3 fla
       },
     };
 
-    const res = await gmFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      timeout: 45000,
-    });
+    const MAX_RETRIES = 3;
+    let res;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      res = await gmFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        timeout: 45000,
+      });
 
-    if (!res.ok) {
+      if (res.ok) break;
+
+      // Retry on 429 (rate limit) or 503 (overloaded)
+      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+        const waitSec = attempt * 5; // 5s, 10s
+        console.warn(`⚠️ Gemini ${res.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+
       const errText = await res.text();
       throw new Error(`Gemini API error (${res.status}): ${errText}`);
     }
