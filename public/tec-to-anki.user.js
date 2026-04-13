@@ -18,6 +18,7 @@
 // @connect      127.0.0.1
 // @connect      localhost
 // @connect      generativelanguage.googleapis.com
+// @connect      openrouter.ai
 // @connect      www.tecconcursos.com.br
 // @connect      tecconcursos.com.br
 // @run-at       document-idle
@@ -31,8 +32,11 @@
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
   const DEFAULTS = {
+    aiProvider: 'gemini', // 'gemini' or 'openrouter'
     geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
     geminiModel: 'gemini-2.5-flash',
+    openrouterApiKey: '',
+    openrouterModel: 'qwen/qwen3-235b-a22b-instruct-2507',
     obsidianVault: 'Filipe - Obs',
     obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
@@ -1161,6 +1165,102 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     return JSON.parse(text);
   }
 
+  // ── OpenRouter (OpenAI-compatible) ──────────────────────────────────
+
+  const OPENROUTER_MODELS = [
+    { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3 235B ($0.11/M tok \u2014 recomendado)' },
+    { id: 'openai/gpt-4o-mini',                  label: 'GPT-4o Mini ($0.39/M tok)' },
+    { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
+    { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
+    { id: 'anthropic/claude-3.5-haiku',          label: 'Claude 3.5 Haiku ($2.40/M tok)' },
+    { id: 'anthropic/claude-haiku-4.5',          label: 'Claude Haiku 4.5 ($3.00/M tok)' },
+  ];
+
+  async function callOpenRouter(questionData) {
+    const apiKey = getSetting('openrouterApiKey');
+    const model = getSetting('openrouterModel');
+    if (!apiKey) throw new Error('API key do OpenRouter n\u00E3o configurada. Abra as configura\u00E7\u00F5es (\u2699\uFE0F).');
+
+    const schemaDescription = `Responda SOMENTE com JSON v\u00E1lido neste formato exato (sem markdown, sem coment\u00E1rios):
+{
+  "materia": "string - mat\u00E9ria do edital",
+  "subtopico": "string - subt\u00F3pico espec\u00EDfico",
+  "erro_identificado": "string - descri\u00E7\u00E3o do mecanismo do erro do aluno",
+  "cards": [
+    { "frente": "string - pergunta do flashcard", "verso": "string - resposta (max 3 linhas)" }
+  ]
+}`;
+
+    const url = 'https://openrouter.ai/api/v1/chat/completions';
+    const body = {
+      model: model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
+        { role: 'user', content: buildGeminiPrompt(questionData) },
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    };
+
+    const MAX_RETRIES = 3;
+    let res;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      res = await gmFetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
+          'X-Title': 'TEC-to-Anki',
+        },
+        body: JSON.stringify(body),
+        timeout: 60000,
+      });
+
+      if (res.ok) break;
+
+      // Retry on 429 (rate limit) or 503 (overloaded)
+      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+        const waitSec = attempt * 5;
+        console.warn(`\u26A0\uFE0F OpenRouter ${res.status} \u2014 tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+
+      const errText = await res.text();
+      throw new Error(`OpenRouter API error (${res.status}): ${errText}`);
+    }
+
+    const json = await res.json();
+
+    // OpenRouter returns OpenAI-compatible format
+    const content = json?.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Resposta vazia do OpenRouter');
+
+    // Parse and validate structure
+    const parsed = JSON.parse(content);
+    if (!parsed.materia || !parsed.cards || !Array.isArray(parsed.cards)) {
+      throw new Error('Resposta do OpenRouter em formato inv\u00E1lido. Tente novamente.');
+    }
+    // Ensure every card has frente and verso
+    for (const card of parsed.cards) {
+      if (!card.frente || !card.verso) {
+        throw new Error('Um ou mais flashcards est\u00E3o incompletos na resposta da IA.');
+      }
+    }
+    return parsed;
+  }
+
+  // ── AI Dispatcher ───────────────────────────────────────────────────
+
+  async function callAI(questionData) {
+    const provider = getSetting('aiProvider');
+    if (provider === 'openrouter') {
+      return callOpenRouter(questionData);
+    }
+    return callGemini(questionData);
+  }
+
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                  7. ANKI CONNECT                             \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
@@ -1506,18 +1606,42 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         </div>
         <div class="tec-modal-body">
 
-          <h3>\uD83E\uDD16 Gemini AI</h3>
+          <h3>\uD83E\uDD16 Provedor de IA</h3>
           <div class="tec-field">
-            <label>API Key</label>
-            <input type="password" id="tec-cfg-gemini-key" value="${getSetting('geminiApiKey')}" placeholder="AIzaSy...">
-          </div>
-          <div class="tec-field">
-            <label>Modelo</label>
-            <select id="tec-cfg-gemini-model">
-              <option value="gemini-2.5-flash" ${getSetting('geminiModel') === 'gemini-2.5-flash' ? 'selected' : ''}>gemini-2.5-flash (recomendado)</option>
-              <option value="gemini-2.5-pro" ${getSetting('geminiModel') === 'gemini-2.5-pro' ? 'selected' : ''}>gemini-2.5-pro (mais preciso)</option>
-              <option value="gemini-2.5-flash-lite" ${getSetting('geminiModel') === 'gemini-2.5-flash-lite' ? 'selected' : ''}>gemini-2.5-flash-lite (mais r\u00E1pido)</option>
+            <label>Provedor</label>
+            <select id="tec-cfg-ai-provider">
+              <option value="gemini" ${getSetting('aiProvider') === 'gemini' ? 'selected' : ''}>Google Gemini (gratuito)</option>
+              <option value="openrouter" ${getSetting('aiProvider') === 'openrouter' ? 'selected' : ''}>OpenRouter (multi-modelo)</option>
             </select>
+          </div>
+
+          <div id="tec-cfg-gemini-section">
+            <div class="tec-field">
+              <label>Gemini API Key</label>
+              <input type="password" id="tec-cfg-gemini-key" value="${getSetting('geminiApiKey')}" placeholder="AIzaSy...">
+            </div>
+            <div class="tec-field">
+              <label>Modelo Gemini</label>
+              <select id="tec-cfg-gemini-model">
+                <option value="gemini-2.5-flash" ${getSetting('geminiModel') === 'gemini-2.5-flash' ? 'selected' : ''}>gemini-2.5-flash (recomendado)</option>
+                <option value="gemini-2.5-pro" ${getSetting('geminiModel') === 'gemini-2.5-pro' ? 'selected' : ''}>gemini-2.5-pro (mais preciso)</option>
+                <option value="gemini-2.5-flash-lite" ${getSetting('geminiModel') === 'gemini-2.5-flash-lite' ? 'selected' : ''}>gemini-2.5-flash-lite (mais r\u00E1pido)</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="tec-cfg-openrouter-section" style="display:none">
+            <div class="tec-field">
+              <label>OpenRouter API Key</label>
+              <input type="password" id="tec-cfg-openrouter-key" value="${getSetting('openrouterApiKey')}" placeholder="sk-or-v1-...">
+              <small style="color:#888;font-size:11px">Obtenha em <a href="https://openrouter.ai/keys" target="_blank" style="color:#60cdff">openrouter.ai/keys</a></small>
+            </div>
+            <div class="tec-field">
+              <label>Modelo OpenRouter</label>
+              <select id="tec-cfg-openrouter-model">
+                ${OPENROUTER_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('openrouterModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
+              </select>
+            </div>
           </div>
 
           <hr class="tec-divider">
@@ -1583,12 +1707,27 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       </div>
     `;
 
+    // Show/hide provider sections based on selection
+    const providerSelect = overlay.querySelector('#tec-cfg-ai-provider');
+    const geminiSection = overlay.querySelector('#tec-cfg-gemini-section');
+    const openrouterSection = overlay.querySelector('#tec-cfg-openrouter-section');
+    function toggleProviderSections() {
+      const isGemini = providerSelect.value === 'gemini';
+      geminiSection.style.display = isGemini ? '' : 'none';
+      openrouterSection.style.display = isGemini ? 'none' : '';
+    }
+    providerSelect.addEventListener('change', toggleProviderSections);
+    toggleProviderSections(); // set initial state
+
     overlay.addEventListener('click', async (e) => {
       const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
       if (action === 'close' || e.target === overlay) { overlay.remove(); }
       if (action === 'save') {
+        setSetting('aiProvider', overlay.querySelector('#tec-cfg-ai-provider').value);
         setSetting('geminiApiKey', overlay.querySelector('#tec-cfg-gemini-key').value);
         setSetting('geminiModel', overlay.querySelector('#tec-cfg-gemini-model').value);
+        setSetting('openrouterApiKey', overlay.querySelector('#tec-cfg-openrouter-key').value);
+        setSetting('openrouterModel', overlay.querySelector('#tec-cfg-openrouter-model').value);
         setSetting('obsidianMethod', overlay.querySelector('#tec-cfg-obs-method').value);
         setSetting('obsidianVault', overlay.querySelector('#tec-cfg-obs-vault').value);
         setSetting('obsidianToken', overlay.querySelector('#tec-cfg-obs-token').value);
@@ -1717,12 +1856,12 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       loadingToast.remove();
       loadingToast = showLoadingToast('\uD83E\uDD16 Gerando flashcards com IA...');
 
-      // Step 2: Generate flashcards with Gemini
+      // Step 2: Generate flashcards with AI (Gemini or OpenRouter)
       let aiResult = null;
       try {
-        aiResult = await callGemini(questionData);
+        aiResult = await callAI(questionData);
       } catch (err) {
-        console.error('Gemini error:', err);
+        console.error('AI error:', err);
         showToast(`Erro na IA: ${err.message}. Salvando sem flashcards.`, 'warning', 6000);
         aiResult = { materia: questionData.materia, subtopico: questionData.assunto, erro_identificado: '', cards: [] };
       }
@@ -2004,7 +2143,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
 
             const qData = extractQuestionData();
             if (qData.enunciado || qData.id) {
-              const aiResult = await callGemini(qData);
+              const aiResult = await callAI(qData);
               await Promise.allSettled([
                 getSetting('enableAnki') ? addCardsToAnki(aiResult, qData) : Promise.resolve(null),
                 getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
