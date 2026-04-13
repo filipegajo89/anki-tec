@@ -1244,6 +1244,12 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
       content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
     }
 
+    // Some models return extra text after (or before) the JSON object.
+    // Extract the first valid JSON object from the response.
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Resposta do OpenRouter n\u00E3o cont\u00E9m JSON v\u00E1lido.');
+    content = jsonMatch[0];
+
     // Parse and validate structure
     const parsed = JSON.parse(content);
     if (!parsed.materia || !parsed.cards || !Array.isArray(parsed.cards)) {
