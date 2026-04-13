@@ -1425,7 +1425,7 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
       overlay.innerHTML = `
         <div class="tec-modal">
           <div class="tec-modal-header">
-            <h2>📋 Questão #${questionData.id || '?'}</h2>
+            <h2>&#x1F4CB; Questão #${questionData.id || '?'}</h2>
             <button class="tec-modal-close" data-action="close">×</button>
           </div>
           <div class="tec-modal-body">
@@ -1460,7 +1460,7 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
           </div>
           <div class="tec-modal-footer">
             <button class="tec-btn tec-btn-cancel" data-action="cancel">Cancelar</button>
-            <button class="tec-btn tec-btn-save" data-action="save">💾 Salvar no Anki + Obsidian</button>
+            <button class="tec-btn tec-btn-save" data-action="save">&#x1F4BE; Salvar no Anki + Obsidian</button>
           </div>
         </div>
       `;
@@ -1489,7 +1489,7 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
     overlay.innerHTML = `
       <div class="tec-modal tec-settings" style="width:520px">
         <div class="tec-modal-header">
-          <h2>⚙️ Configurações — TEC→Anki+Obsidian</h2>
+          <h2>&#x2699;&#xFE0F; Configurações — TEC&#x2192;Anki+Obsidian</h2>
           <button class="tec-modal-close" data-action="close">×</button>
         </div>
         <div class="tec-modal-body">
@@ -1566,7 +1566,7 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
         <div class="tec-modal-footer">
           <button class="tec-btn tec-btn-cancel" data-action="test" style="background:#e8f4f8;color:#2196f3">🔌 Testar Conexões</button>
           <button class="tec-btn tec-btn-cancel" data-action="close">Cancelar</button>
-          <button class="tec-btn tec-btn-save" data-action="save">💾 Salvar</button>
+          <button class="tec-btn tec-btn-save" data-action="save">&#x1F4BE; Salvar</button>
         </div>
       </div>
     `;
@@ -1621,12 +1621,12 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
     toolbar.id = 'tec-anki-toolbar';
     toolbar.innerHTML = `
       <button class="tec-btn-primary" id="tec-btn-save" title="Salvar questão atual (Shift+Enter)">
-        📋 Salvar
+        &#x1F4CB; Salvar
       </button>
       <button class="tec-btn-batch" id="tec-btn-batch" title="Processar todos os erros do caderno">
-        📋 Erros
+        &#x1F4CB; Erros
       </button>
-      <button class="tec-btn-icon" id="tec-btn-settings" title="Configurações">⚙️</button>
+      <button class="tec-btn-icon" id="tec-btn-settings" title="Configurações">&#x2699;&#xFE0F;</button>
       <div class="tec-status-dot" id="tec-status-dot" title="Status das conexões"></div>
     `;
 
@@ -1765,7 +1765,7 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
       showToast(`Erro: ${err.message}`, 'error', 8000);
     } finally {
       if (loadingToast) loadingToast.remove();
-      if (saveBtn) saveBtn.innerHTML = '📋 Salvar';
+      if (saveBtn) saveBtn.innerHTML = '&#x1F4CB; Salvar';
       isProcessing = false;
     }
   }
@@ -2036,7 +2036,7 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
     } finally {
       progressToast.remove();
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '📋 Erros';
+      if (batchBtn) batchBtn.innerHTML = '&#x1F4CB; Erros';
       // Persistent toast — stays until user clicks ✕
       const type = processed > 0 ? 'success' : 'warning';
       const icons = { success: '✅', warning: '⚠️' };
