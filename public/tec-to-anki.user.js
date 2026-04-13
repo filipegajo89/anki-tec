@@ -36,7 +36,7 @@
     geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
     geminiModel: 'gemini-2.5-flash',
     openrouterApiKey: '',
-    openrouterModel: 'qwen/qwen3-235b-a22b-instruct-2507',
+    openrouterModel: 'qwen/qwen3-235b-a22b-2507',
     obsidianVault: 'Filipe - Obs',
     obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
@@ -1169,7 +1169,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 
   const OPENROUTER_MODELS = [
     { id: 'google/gemma-4-31b-it:free',          label: '\u2B50 Gemma 4 31B (GRATUITO)' },
-    { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3 235B ($0.11/M tok \u2014 recomendado)' },
+    { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok \u2014 recomendado)' },
     { id: 'openai/gpt-4o-mini',                  label: 'GPT-4o Mini ($0.39/M tok)' },
     { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
     { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
@@ -1203,7 +1203,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
       response_format: { type: 'json_object' },
     };
 
-    const MAX_RETRIES = 3;
+    const MAX_RETRIES = 5;
     let res;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       res = await gmFetch(url, {
@@ -1220,9 +1220,9 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 
       if (res.ok) break;
 
-      // Retry on 429 (rate limit) or 503 (overloaded)
+      // Retry on 429 (rate limit) or 503 (overloaded) with progressive backoff
       if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
-        const waitSec = attempt * 5;
+        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5; // longer waits for rate limits
         console.warn(`\u26A0\uFE0F OpenRouter ${res.status} \u2014 tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
         await new Promise(r => setTimeout(r, waitSec * 1000));
         continue;
@@ -1235,8 +1235,14 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const json = await res.json();
 
     // OpenRouter returns OpenAI-compatible format
-    const content = json?.choices?.[0]?.message?.content;
+    let content = json?.choices?.[0]?.message?.content;
     if (!content) throw new Error('Resposta vazia do OpenRouter');
+
+    // Strip markdown code fences if model wrapped JSON in ```json ... ```
+    content = content.trim();
+    if (content.startsWith('```')) {
+      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+    }
 
     // Parse and validate structure
     const parsed = JSON.parse(content);
