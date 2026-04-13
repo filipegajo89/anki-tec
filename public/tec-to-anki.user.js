@@ -1168,6 +1168,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   // ── OpenRouter (OpenAI-compatible) ──────────────────────────────────
 
   const OPENROUTER_MODELS = [
+    { id: 'google/gemma-4-31b-it:free',          label: '\u2B50 Gemma 4 31B (GRATUITO)' },
     { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3 235B ($0.11/M tok \u2014 recomendado)' },
     { id: 'openai/gpt-4o-mini',                  label: 'GPT-4o Mini ($0.39/M tok)' },
     { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
