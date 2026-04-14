@@ -1059,12 +1059,23 @@ Se o item generalizou uma regra que tem exceções, o card deve testar a regra v
 
 ## Palavras-chave consagradas
 
-Para cada card, inclua no campo "palavras_chave" as expressões-gatilho que bancas usam recorrentemente ao cobrar aquele conceito. São termos que ajudam o aluno a RECONHECER o tema rapidamente em enunciados longos.
+Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que identificam o conceito/instituto jurídico abordado. São os termos consagrados na lei, doutrina ou jurisprudência que funcionam como "impressão digital" daquele conceito — quando o aluno vê essas palavras num enunciado longo, deve imediatamente reconhecer de qual instituto se trata.
 
-Exemplos de palavras-chave: "vedado", "salvo disposição em contrário", "independentemente de", "a qualquer tempo", "exclusivamente", "desde que", "sem prejuízo de", "ressalvado", "de ofício", "em caráter irrecorrível", etc.
+### O que SÃO palavras-chave (exemplos por conceito):
+- Capacidade contributiva → "circunstâncias pessoais", "capacidade econômica real", "será pessoal sempre que possível"
+- Princípio da legalidade tributária → "somente a lei pode", "instituir ou aumentar tributo", "vedado à União, Estados..."
+- Imunidade recíproca → "vedado cobrar impostos", "patrimônio, renda ou serviços uns dos outros"
+- Devido processo legal → "contraditório e ampla defesa", "privado de seus bens", "sem o devido processo"
+- Ato administrativo vinculado → "a Administração DEVE", "preenchidos os requisitos", "direito subjetivo"
 
-- Liste 2-5 palavras/expressões por card (as mais relevantes para aquele conceito específico)
-- Se não houver palavras-chave consagradas óbvias para o conceito, deixe o campo vazio ("")`;
+### O que NÃO são palavras-chave:
+- Palavras genéricas do tema: "STF", "imposto de renda", "deduções", "tributo"
+- Nomes de institutos: o nome do conceito em si não é palavra-chave, são as expressões que SINALIZAM ele
+
+### Regras:
+- Liste 2-5 expressões por card (as mais recorrentes em provas para aquele conceito)
+- Priorize trechos literais de artigos de lei ou súmulas
+- Se não houver expressões canônicas claras para o conceito, deixe o campo vazio ("")`;
 
   const RESPONSE_SCHEMA = {
     type: 'object',
@@ -1079,7 +1090,7 @@ Exemplos de palavras-chave: "vedado", "salvo disposição em contrário", "indep
           properties: {
             frente: { type: 'string', description: 'Pergunta do flashcard (frente)' },
             verso: { type: 'string', description: 'Resposta do flashcard (verso, max 3 linhas)' },
-            palavras_chave: { type: 'string', description: 'Palavras-chave consagradas de bancas para este conceito, separadas por " | " (ex: "vedado | salvo | independentemente de"). Vazio se não houver.' },
+            palavras_chave: { type: 'string', description: 'Expressões canônicas da lei/doutrina que identificam este conceito jurídico, separadas por " | " (ex: "circunstâncias pessoais | capacidade econômica real | será pessoal sempre que possível"). Vazio se não houver.' },
           },
           required: ['frente', 'verso', 'palavras_chave'],
         },

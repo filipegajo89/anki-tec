@@ -1063,12 +1063,23 @@ Se o item generalizou uma regra que tem exce\u00E7\u00F5es, o card deve testar a
 
 ## Palavras-chave consagradas
 
-Para cada card, inclua no campo "palavras_chave" as express\u00F5es-gatilho que bancas usam recorrentemente ao cobrar aquele conceito. S\u00E3o termos que ajudam o aluno a RECONHECER o tema rapidamente em enunciados longos.
+Para cada card, inclua no campo "palavras_chave" as EXPRESS\u00D5ES CAN\u00D4NICAS que identificam o conceito/instituto jur\u00EDdico abordado. S\u00E3o os termos consagrados na lei, doutrina ou jurisprud\u00EAncia que funcionam como "impress\u00E3o digital" daquele conceito \u2014 quando o aluno v\u00EA essas palavras num enunciado longo, deve imediatamente reconhecer de qual instituto se trata.
 
-Exemplos de palavras-chave: "vedado", "salvo disposi\u00E7\u00E3o em contr\u00E1rio", "independentemente de", "a qualquer tempo", "exclusivamente", "desde que", "sem preju\u00EDzo de", "ressalvado", "de of\u00EDcio", "em car\u00E1ter irrecorr\u00EDvel", etc.
+### O que S\u00C3O palavras-chave (exemplos por conceito):
+- Capacidade contributiva \u2192 "circunst\u00E2ncias pessoais", "capacidade econ\u00F4mica real", "ser\u00E1 pessoal sempre que poss\u00EDvel"
+- Princ\u00EDpio da legalidade tribut\u00E1ria \u2192 "somente a lei pode", "instituir ou aumentar tributo", "vedado \u00E0 Uni\u00E3o, Estados..."
+- Imunidade rec\u00EDproca \u2192 "vedado cobrar impostos", "patrim\u00F4nio, renda ou servi\u00E7os uns dos outros"
+- Devido processo legal \u2192 "contradit\u00F3rio e ampla defesa", "privado de seus bens", "sem o devido processo"
+- Ato administrativo vinculado \u2192 "a Administra\u00E7\u00E3o DEVE", "preenchidos os requisitos", "direito subjetivo"
 
-- Liste 2-5 palavras/express\u00F5es por card (as mais relevantes para aquele conceito espec\u00EDfico)
-- Se n\u00E3o houver palavras-chave consagradas \u00F3bvias para o conceito, deixe o campo vazio ("")`;
+### O que N\u00C3O s\u00E3o palavras-chave:
+- Palavras gen\u00E9ricas do tema: "STF", "imposto de renda", "dedu\u00E7\u00F5es", "tributo"
+- Nomes de institutos: o nome do conceito em si n\u00E3o \u00E9 palavra-chave, s\u00E3o as express\u00F5es que SINALIZAM ele
+
+### Regras:
+- Liste 2-5 express\u00F5es por card (as mais recorrentes em provas para aquele conceito)
+- Priorize trechos literais de artigos de lei ou s\u00FAmulas
+- Se n\u00E3o houver express\u00F5es can\u00F4nicas claras para o conceito, deixe o campo vazio ("")`;
 
   const RESPONSE_SCHEMA = {
     type: 'object',
@@ -1083,7 +1094,7 @@ Exemplos de palavras-chave: "vedado", "salvo disposi\u00E7\u00E3o em contr\u00E1
           properties: {
             frente: { type: 'string', description: 'Pergunta do flashcard (frente)' },
             verso: { type: 'string', description: 'Resposta do flashcard (verso, max 3 linhas)' },
-            palavras_chave: { type: 'string', description: 'Palavras-chave consagradas de bancas para este conceito, separadas por " | " (ex: "vedado | salvo | independentemente de"). Vazio se n\u00E3o houver.' },
+            palavras_chave: { type: 'string', description: 'Express\u00F5es can\u00F4nicas da lei/doutrina que identificam este conceito jur\u00EDdico, separadas por " | " (ex: "circunst\u00E2ncias pessoais | capacidade econ\u00F4mica real | ser\u00E1 pessoal sempre que poss\u00EDvel"). Vazio se n\u00E3o houver.' },
           },
           required: ['frente', 'verso', 'palavras_chave'],
         },
@@ -1198,7 +1209,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   "subtopico": "string - subt\u00F3pico espec\u00EDfico",
   "erro_identificado": "string - descri\u00E7\u00E3o do mecanismo do erro do aluno",
   "cards": [
-    { "frente": "string - pergunta do flashcard", "verso": "string - resposta (max 3 linhas)", "palavras_chave": "string - express\u00F5es-gatilho de bancas separadas por | (ex: vedado | salvo | exclusivamente). Vazio se n\u00E3o houver" }
+    { "frente": "string - pergunta do flashcard", "verso": "string - resposta (max 3 linhas)", "palavras_chave": "string - express\u00F5es can\u00F4nicas da lei/doutrina que identificam o conceito jur\u00EDdico, separadas por | (ex: circunst\u00E2ncias pessoais | capacidade econ\u00F4mica real). Vazio se n\u00E3o houver" }
   ]
 }`;
 
