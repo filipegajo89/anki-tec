@@ -1055,7 +1055,16 @@ Se o item generalizou uma regra que tem exceções, o card deve testar a regra v
 - Gere 2 cards por padrão. Só gere 3 se houver uma distinção conceitual importante a mais
 - materia: nome oficial como em editais (Direito Constitucional, Direito Tributário, etc.)
 - ATENÇÃO na classificação de matéria: classifique pelo CONTEÚDO TÉCNICO do tema
-- subtopico: específico (ex: "Aplicabilidade das Normas - Art. 5º §1º CF", não "Normas")`;
+- subtopico: específico (ex: "Aplicabilidade das Normas - Art. 5º §1º CF", não "Normas")
+
+## Palavras-chave consagradas
+
+Para cada card, inclua no campo "palavras_chave" as expressões-gatilho que bancas usam recorrentemente ao cobrar aquele conceito. São termos que ajudam o aluno a RECONHECER o tema rapidamente em enunciados longos.
+
+Exemplos de palavras-chave: "vedado", "salvo disposição em contrário", "independentemente de", "a qualquer tempo", "exclusivamente", "desde que", "sem prejuízo de", "ressalvado", "de ofício", "em caráter irrecorrível", etc.
+
+- Liste 2-5 palavras/expressões por card (as mais relevantes para aquele conceito específico)
+- Se não houver palavras-chave consagradas óbvias para o conceito, deixe o campo vazio ("")`;
 
   const RESPONSE_SCHEMA = {
     type: 'object',
@@ -1070,8 +1079,9 @@ Se o item generalizou uma regra que tem exceções, o card deve testar a regra v
           properties: {
             frente: { type: 'string', description: 'Pergunta do flashcard (frente)' },
             verso: { type: 'string', description: 'Resposta do flashcard (verso, max 3 linhas)' },
+            palavras_chave: { type: 'string', description: 'Palavras-chave consagradas de bancas para este conceito, separadas por " | " (ex: "vedado | salvo | independentemente de"). Vazio se não houver.' },
           },
-          required: ['frente', 'verso'],
+          required: ['frente', 'verso', 'palavras_chave'],
         },
       },
     },
@@ -1187,11 +1197,21 @@ Com base nas informações acima, identifique o mecanismo do erro e crie 2-3 fla
   async function ensureAnkiModel() {
     const modelName = getSetting('ankiModelName');
     const models = await ankiInvoke('modelNames');
-    if (models.includes(modelName)) return;
+    if (models.includes(modelName)) {
+      // Migrate: add PalavrasChave field if missing
+      try {
+        const fields = await ankiInvoke('modelFieldNames', { modelName });
+        if (!fields.includes('PalavrasChave')) {
+          await ankiInvoke('modelFieldAdd', { modelName, fieldName: 'PalavrasChave', index: 2 });
+          console.log('[TEC→Anki] Campo PalavrasChave adicionado ao modelo existente');
+        }
+      } catch (e) { console.warn('[TEC→Anki] Não foi possível migrar campo PalavrasChave:', e); }
+      return;
+    }
 
     await ankiInvoke('createModel', {
       modelName,
-      inOrderFields: ['Frente', 'Verso', 'Contexto', 'Fonte', 'ErroIdentificado'],
+      inOrderFields: ['Frente', 'Verso', 'PalavrasChave', 'Contexto', 'Fonte', 'ErroIdentificado'],
       css: `.card {
   font-family: 'Segoe UI', system-ui, sans-serif;
   max-width: 620px; margin: 0 auto; padding: 28px;
@@ -1199,6 +1219,9 @@ Com base nas informações acima, identifique o mecanismo do erro e crie 2-3 fla
 }
 .frente { font-size: 1.2em; color: #60cdff; font-weight: 500; }
 .verso { font-size: 1.1em; color: #7ee8a2; margin-top: 4px; }
+.palavras-chave { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.palavras-chave .kw { background: #2a2a4a; color: #c4b5fd; padding: 2px 10px;
+  border-radius: 12px; font-size: 0.78em; border: 1px solid #4a4a6a; letter-spacing: 0.3px; }
 .contexto { color: #a0a0b8; font-size: 0.82em; margin-bottom: 14px;
   padding-bottom: 10px; border-bottom: 1px solid #3a3a4e; letter-spacing: 0.3px; }
 .fonte { color: #787890; font-size: 0.72em; margin-top: 20px; text-align: right; }
@@ -1211,6 +1234,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 }
 :root[class*="light"] .frente { color: #1a56db; }
 :root[class*="light"] .verso { color: #2d6a4f; }
+:root[class*="light"] .palavras-chave .kw { background: #f3f0ff; color: #6d28d9; border-color: #ddd6fe; }
 :root[class*="light"] .contexto { color: #6c757d; border-bottom-color: #eee; }
 :root[class*="light"] .fonte { color: #adb5bd; }
 :root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
@@ -1223,6 +1247,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 <div class="frente">{{Frente}}</div>
 <hr>
 <div class="verso">{{Verso}}</div>
+{{#PalavrasChave}}<div class="palavras-chave">🔑 {{#PalavrasChave}}{{PalavrasChave}}{{/PalavrasChave}}</div>{{/PalavrasChave}}
 {{#ErroIdentificado}}<div class="erro">💡 {{ErroIdentificado}}</div>{{/ErroIdentificado}}
 <div class="fonte">{{Fonte}}</div>
 </div>`,
@@ -1265,6 +1290,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       fields: {
         Frente: card.frente,
         Verso: card.verso,
+        PalavrasChave: (card.palavras_chave || '').split(/\s*\|\s*/).filter(Boolean).map(kw => `<span class="kw">${kw.trim()}</span>`).join(' '),
         Contexto: contexto,
         Fonte: fonte,
         ErroIdentificado: aiResult.erro_identificado || '',
@@ -1321,7 +1347,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
     }).join('\n');
 
     const cardsTable = (aiResult?.cards || []).map((c, i) =>
-      `| ${i + 1} | ${c.frente} | ${c.verso} |`
+      `| ${i + 1} | ${c.frente} | ${c.verso} | ${c.palavras_chave || ''} |`
     ).join('\n');
 
     const comentario = cleanText(questionData.comentario) || '_Não disponível_';
@@ -1361,9 +1387,9 @@ ${comentario}
 ${erroId}
 
 ## 📝 Flashcards Gerados
-| # | Frente | Verso |
-|---|--------|-------|
-${cardsTable || '| - | _Nenhum_ | - |'}
+| # | Frente | Verso | Palavras-chave |
+|---|--------|-------|----------------|
+${cardsTable || '| - | _Nenhum_ | - | - |'}
 
 ---
 _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
@@ -1431,6 +1457,7 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
           <div class="card-num">Card ${i + 1}</div>
           <div class="card-front">🔹 ${c.frente}</div>
           <div class="card-back">💡 ${c.verso}</div>
+          ${c.palavras_chave ? `<div class="card-kw" style="font-size:11px;color:#c4b5fd;margin-top:4px">🔑 ${c.palavras_chave}</div>` : ''}
         </div>
       `).join('');
 

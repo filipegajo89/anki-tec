@@ -1059,7 +1059,16 @@ Se o item generalizou uma regra que tem exce\u00E7\u00F5es, o card deve testar a
 - Gere 2 cards por padr\u00E3o. S\u00F3 gere 3 se houver uma distin\u00E7\u00E3o conceitual importante a mais
 - materia: nome oficial como em editais (Direito Constitucional, Direito Tribut\u00E1rio, etc.)
 - ATEN\u00C7\u00C3O na classifica\u00E7\u00E3o de mat\u00E9ria: classifique pelo CONTE\u00DADO T\u00C9CNICO do tema
-- subtopico: espec\u00EDfico (ex: "Aplicabilidade das Normas - Art. 5\u00BA \u00A71\u00BA CF", n\u00E3o "Normas")`;
+- subtopico: espec\u00EDfico (ex: "Aplicabilidade das Normas - Art. 5\u00BA \u00A71\u00BA CF", n\u00E3o "Normas")
+
+## Palavras-chave consagradas
+
+Para cada card, inclua no campo "palavras_chave" as express\u00F5es-gatilho que bancas usam recorrentemente ao cobrar aquele conceito. S\u00E3o termos que ajudam o aluno a RECONHECER o tema rapidamente em enunciados longos.
+
+Exemplos de palavras-chave: "vedado", "salvo disposi\u00E7\u00E3o em contr\u00E1rio", "independentemente de", "a qualquer tempo", "exclusivamente", "desde que", "sem preju\u00EDzo de", "ressalvado", "de of\u00EDcio", "em car\u00E1ter irrecorr\u00EDvel", etc.
+
+- Liste 2-5 palavras/express\u00F5es por card (as mais relevantes para aquele conceito espec\u00EDfico)
+- Se n\u00E3o houver palavras-chave consagradas \u00F3bvias para o conceito, deixe o campo vazio ("")`;
 
   const RESPONSE_SCHEMA = {
     type: 'object',
@@ -1074,8 +1083,9 @@ Se o item generalizou uma regra que tem exce\u00E7\u00F5es, o card deve testar a
           properties: {
             frente: { type: 'string', description: 'Pergunta do flashcard (frente)' },
             verso: { type: 'string', description: 'Resposta do flashcard (verso, max 3 linhas)' },
+            palavras_chave: { type: 'string', description: 'Palavras-chave consagradas de bancas para este conceito, separadas por " | " (ex: "vedado | salvo | independentemente de"). Vazio se n\u00E3o houver.' },
           },
-          required: ['frente', 'verso'],
+          required: ['frente', 'verso', 'palavras_chave'],
         },
       },
     },
@@ -1188,7 +1198,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   "subtopico": "string - subt\u00F3pico espec\u00EDfico",
   "erro_identificado": "string - descri\u00E7\u00E3o do mecanismo do erro do aluno",
   "cards": [
-    { "frente": "string - pergunta do flashcard", "verso": "string - resposta (max 3 linhas)" }
+    { "frente": "string - pergunta do flashcard", "verso": "string - resposta (max 3 linhas)", "palavras_chave": "string - express\u00F5es-gatilho de bancas separadas por | (ex: vedado | salvo | exclusivamente). Vazio se n\u00E3o houver" }
   ]
 }`;
 
@@ -1300,11 +1310,21 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   async function ensureAnkiModel() {
     const modelName = getSetting('ankiModelName');
     const models = await ankiInvoke('modelNames');
-    if (models.includes(modelName)) return;
+    if (models.includes(modelName)) {
+      // Migrate: add PalavrasChave field if missing
+      try {
+        const fields = await ankiInvoke('modelFieldNames', { modelName });
+        if (!fields.includes('PalavrasChave')) {
+          await ankiInvoke('modelFieldAdd', { modelName, fieldName: 'PalavrasChave', index: 2 });
+          console.log('[TEC\u2192Anki] Campo PalavrasChave adicionado ao modelo existente');
+        }
+      } catch (e) { console.warn('[TEC\u2192Anki] N\u00E3o foi poss\u00EDvel migrar campo PalavrasChave:', e); }
+      return;
+    }
 
     await ankiInvoke('createModel', {
       modelName,
-      inOrderFields: ['Frente', 'Verso', 'Contexto', 'Fonte', 'ErroIdentificado'],
+      inOrderFields: ['Frente', 'Verso', 'PalavrasChave', 'Contexto', 'Fonte', 'ErroIdentificado'],
       css: `.card {
   font-family: 'Segoe UI', system-ui, sans-serif;
   max-width: 620px; margin: 0 auto; padding: 28px;
@@ -1312,6 +1332,9 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 }
 .frente { font-size: 1.2em; color: #60cdff; font-weight: 500; }
 .verso { font-size: 1.1em; color: #7ee8a2; margin-top: 4px; }
+.palavras-chave { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.palavras-chave .kw { background: #2a2a4a; color: #c4b5fd; padding: 2px 10px;
+  border-radius: 12px; font-size: 0.78em; border: 1px solid #4a4a6a; letter-spacing: 0.3px; }
 .contexto { color: #a0a0b8; font-size: 0.82em; margin-bottom: 14px;
   padding-bottom: 10px; border-bottom: 1px solid #3a3a4e; letter-spacing: 0.3px; }
 .fonte { color: #787890; font-size: 0.72em; margin-top: 20px; text-align: right; }
@@ -1324,6 +1347,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 }
 :root[class*="light"] .frente { color: #1a56db; }
 :root[class*="light"] .verso { color: #2d6a4f; }
+:root[class*="light"] .palavras-chave .kw { background: #f3f0ff; color: #6d28d9; border-color: #ddd6fe; }
 :root[class*="light"] .contexto { color: #6c757d; border-bottom-color: #eee; }
 :root[class*="light"] .fonte { color: #adb5bd; }
 :root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
@@ -1336,6 +1360,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 <div class="frente">{{Frente}}</div>
 <hr>
 <div class="verso">{{Verso}}</div>
+{{#PalavrasChave}}<div class="palavras-chave">\uD83D\uDD11 {{#PalavrasChave}}{{PalavrasChave}}{{/PalavrasChave}}</div>{{/PalavrasChave}}
 {{#ErroIdentificado}}<div class="erro">\uD83D\uDCA1 {{ErroIdentificado}}</div>{{/ErroIdentificado}}
 <div class="fonte">{{Fonte}}</div>
 </div>`,
@@ -1378,6 +1403,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       fields: {
         Frente: card.frente,
         Verso: card.verso,
+        PalavrasChave: (card.palavras_chave || '').split(/\s*\|\s*/).filter(Boolean).map(kw => `<span class="kw">${kw.trim()}</span>`).join(' '),
         Contexto: contexto,
         Fonte: fonte,
         ErroIdentificado: aiResult.erro_identificado || '',
@@ -1434,7 +1460,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
     }).join('\n');
 
     const cardsTable = (aiResult?.cards || []).map((c, i) =>
-      `| ${i + 1} | ${c.frente} | ${c.verso} |`
+      `| ${i + 1} | ${c.frente} | ${c.verso} | ${c.palavras_chave || ''} |`
     ).join('\n');
 
     const comentario = cleanText(questionData.comentario) || '_N\u00E3o dispon\u00EDvel_';
@@ -1474,9 +1500,9 @@ ${comentario}
 ${erroId}
 
 ## \uD83D\uDCDD Flashcards Gerados
-| # | Frente | Verso |
-|---|--------|-------|
-${cardsTable || '| - | _Nenhum_ | - |'}
+| # | Frente | Verso | Palavras-chave |
+|---|--------|-------|----------------|
+${cardsTable || '| - | _Nenhum_ | - | - |'}
 
 ---
 _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
@@ -1544,6 +1570,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
           <div class="card-num">Card ${i + 1}</div>
           <div class="card-front">\uD83D\uDD39 ${c.frente}</div>
           <div class="card-back">\uD83D\uDCA1 ${c.verso}</div>
+          ${c.palavras_chave ? `<div class="card-kw" style="font-size:11px;color:#c4b5fd;margin-top:4px">\uD83D\uDD11 ${c.palavras_chave}</div>` : ''}
         </div>
       `).join('');
 
