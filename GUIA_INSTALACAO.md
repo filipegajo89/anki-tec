@@ -10,7 +10,7 @@
 
 1. **Você resolve questões** no TEC Concursos normalmente
 2. **O script detecta** as questões que você **errou**
-3. **A IA (Gemini)** analisa seu erro e cria **flashcards cirúrgicos**
+3. **A IA (Gemini ou OpenRouter)** analisa seu erro e cria **flashcards cirúrgicos**
 4. **Os flashcards vão para o Anki** automaticamente, organizados por matéria
 5. **Uma nota detalhada** é salva no Obsidian com enunciado, comentário do professor e análise da IA
 6. **Bônus:** Você pode gerar **podcasts** a partir das suas notas de erro usando NotebookLM + Claude
@@ -27,8 +27,11 @@
 | AnkiConnect | Plugin que permite o script enviar cards pro Anki | ✅ Sim |
 | Obsidian | App de anotações | ⭐ Recomendado |
 | Obsidian Local REST API | Plugin que permite o script salvar notas | ⭐ Recomendado |
-| Chave API do Gemini | IA que gera os flashcards | ✅ Sim |
+| Chave API do Gemini | IA que gera os flashcards (gratuita) | ✅ Sim* |
+| Chave API do OpenRouter | IA alternativa (multi-modelo) | 🔄 Alternativa* |
 | Claude Desktop + MCPs | Gerar podcasts dos seus erros | 🎧 Opcional |
+
+> \* Você precisa de **pelo menos uma**: Gemini (gratuito) **ou** OpenRouter (tem opção gratuita e pagas baratas).
 
 ---
 
@@ -188,9 +191,18 @@ Este plugin permite que o script salve notas automaticamente no Obsidian.
 
 ---
 
-## Passo 7: Obter a chave API do Gemini (IA do Google)
+## Passo 7: Obter a chave de IA (Gemini ou OpenRouter)
 
-A chave API é gratuita e permite que o script use a IA do Google para analisar seus erros.
+O script usa inteligência artificial para analisar seus erros e gerar flashcards. Você tem **duas opções** de provedor de IA:
+
+| Provedor | Preço | Vantagem |
+|----------|-------|----------|
+| **Google Gemini** | 🆓 Gratuito | Mais fácil de configurar, sem custo |
+| **OpenRouter** | 🆓 Tem modelo gratuito + pagos baratos | Mais modelos, mais estável, alternativa se Gemini der erro 503 |
+
+> 💡 Você pode configurar **os dois** e alternar nas configurações do script. Recomendamos começar pelo Gemini (grátis) e usar o OpenRouter como alternativa.
+
+### Opção A: Chave API do Gemini (gratuita — recomendada para começar)
 
 1. Abra o Chrome e vá em: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 2. Faça login com sua **conta Google**
@@ -200,12 +212,30 @@ A chave API é gratuita e permite que o script use a IA do Google para analisar 
 6. **Copie a chave** (clique no ícone de copiar ao lado dela)
 
 > ⚠️ **GUARDE ESSA CHAVE EM UM LUGAR SEGURO!**  
-> Não compartilhe com ninguém e não publique na internet.  
-> Se alguém usar sua chave, o Google pode bloquear.
+> Não compartilhe com ninguém e não publique na internet.
 
-> 📝 **Anote a chave API** — você vai usar ela no Passo 8.
+> 📝 **Anote a chave API do Gemini** — você vai usar ela no Passo 8.
 
-✅ **Chave API do Gemini obtida!**
+### Opção B: Chave API do OpenRouter (alternativa multi-modelo)
+
+O OpenRouter é um serviço que dá acesso a **vários modelos de IA** por uma única API. Tem um modelo **totalmente gratuito** (Gemma 4 31B) e outros muito baratos.
+
+1. Abra o Chrome e vá em: [openrouter.ai/keys](https://openrouter.ai/keys)
+2. Clique em **"Create Account"** (crie uma conta — pode usar login com Google)
+3. Após criar a conta, clique em **"Create Key"**
+4. Dê um nome para a chave (ex: "TEC Anki")
+5. A chave será gerada — começa com **`sk-or-v1-...`**
+6. **Copie a chave** (ela só aparece uma vez!)
+
+> 💰 **Sobre custos do OpenRouter:**
+> - **Gemma 4 31B**: 🆓 totalmente gratuito (tem limite de uso por hora)
+> - **Qwen3 235B**: ~R$ 0,0005 por questão (praticamente grátis)
+> - **GPT-4o Mini**: ~R$ 0,002 por questão
+> - Você pode adicionar créditos em [openrouter.ai/credits](https://openrouter.ai/credits) — US$ 5 dura meses de uso
+
+> 📝 **Anote a chave API do OpenRouter** — você vai usar ela no Passo 8.
+
+✅ **Chave de IA obtida!**
 
 ---
 
@@ -241,8 +271,11 @@ No painel que abriu, preencha:
 
 | Campo | O que colocar |
 |-------|---------------|
-| **Gemini API Key** | Cole a chave API que você copiou no Passo 7 (`AIzaSy...`) |
+| **Provedor** | Escolha `Google Gemini` ou `OpenRouter` |
+| **Gemini API Key** | Cole a chave do Gemini (`AIzaSy...`) — se escolheu Gemini |
 | **Modelo Gemini** | Deixe em `gemini-2.5-flash` (padrão) |
+| **OpenRouter API Key** | Cole a chave do OpenRouter (`sk-or-v1-...`) — se escolheu OpenRouter |
+| **Modelo OpenRouter** | Escolha o modelo (⭐ Gemma 4 31B é gratuito, Qwen3 235B é o melhor custo-benefício) |
 | **Método Obsidian** | Escolha `REST API (automático)` |
 | **Nome do Vault** | O nome do vault que você criou no Passo 5 (ex: `Meu Estudo`) |
 | **Token Obsidian** | Cole a API Key do plugin Local REST API (Passo 6) |
@@ -576,7 +609,10 @@ Abra o arquivo com um editor de texto (Bloco de Notas no Windows, TextEdit no Ma
 **Sim!** Nas configurações do script (⚙️), desmarque "Salvar no Obsidian". O script vai gerar flashcards e enviar só para o Anki.
 
 ### A chave API do Gemini é paga?
-**Não!** O uso gratuito do Gemini é suficiente. A Google oferece uma cota generosa grátis. Você só pagaria se fizesse centenas de milhares de requisições.
+**Não!** O uso gratuito do Gemini é suficiente. A Google oferece uma cota generosa grátis.
+
+### E o OpenRouter, é pago?
+Tem opção **gratuita** (modelo Gemma 4 31B do Google) e modelos pagos muito baratos. O Qwen3 235B custa cerca de R$ 0,0005 por questão — com R$ 25 (~US$ 5) você processa milhares de questões. Você pode usar o OpenRouter como alternativa se o Gemini apresentar erros 503 (sobrecarga).
 
 ### Como atualizar o script?
 Se houver uma versão nova:
@@ -604,6 +640,9 @@ Rode `nlm login` no Terminal/PowerShell novamente. Demora 30 segundos.
 | "Failed to connect to AnkiConnect" | Abra o Anki. Ele precisa estar aberto. |
 | "API key do Gemini não configurada" | Clique em ⚙️ na barra flutuante e cole sua chave API. |
 | "Gemini API error 403" | Sua chave foi bloqueada. Gere uma nova em [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
+| "Gemini API error 503" | Servidores do Google sobrecarregados. Aguarde ou troque para OpenRouter em ⚙️. |
+| "OpenRouter API error 429" | Limite de uso do modelo gratuito atingido. Aguarde alguns minutos ou troque para um modelo pago. |
+| "API key do OpenRouter não configurada" | Clique em ⚙️, selecione OpenRouter como provedor e cole sua chave. |
 | "Obsidian REST API error" | Abra o Obsidian. Verifique se o plugin Local REST API está ativo. |
 | Barra flutuante não aparece | Verifique: Tampermonkey → o script está ativo (✅)? Você está no tecconcursos.com.br? |
 | "Nenhum erro detectado" no batch | O caderno precisa ter questões erradas. O script pode pedir para digitar manualmente. Veja a aba "Estatísticas". |

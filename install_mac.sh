@@ -25,7 +25,7 @@
 #   👤 Instalar Tampermonkey no Chrome (o script abre o link)
 #   👤 Instalar AnkiConnect no Anki (o script mostra o código)
 #   👤 Instalar Local REST API no Obsidian (o script guia)
-#   👤 Gerar chave API do Gemini (o script abre o link)
+#   👤 Gerar chave de IA: Gemini (grátis) e/ou OpenRouter (tem modelo grátis)
 #   👤 Instalar o script TEC no Tampermonkey
 #   👤 Configurar o script (⚙️) com suas credenciais
 
@@ -450,10 +450,11 @@ wait_enter
 #  PASSO 12: CHAVE API GEMINI + CONFIGURAÇÃO FINAL
 # ══════════════════════════════════════════════════════════════
 
-print_header "PASSO 12/12 — Chave API Gemini e Configuração Final"
+print_header "PASSO 12/12 — Chaves de IA e Configuração Final"
 
-print_manual "Gere sua chave API do Gemini:"
+print_manual "Escolha seu provedor de IA (pode usar os dois!):"
 echo ""
+echo -e "  ${BOLD}Opção A — Gemini (gratuito, recomendado para começar):${NC}"
 echo "  Abrindo o Google AI Studio..."
 sleep 1
 open "https://aistudio.google.com/apikey" 2>/dev/null || true
@@ -463,7 +464,21 @@ echo "  2. Clique em '${BOLD}Criar chave de API${NC}'"
 echo "  3. Copie a chave (começa com AIzaSy...)"
 echo ""
 read -p "  Cole a chave API do Gemini aqui (ou ENTER para pular): " GEMINI_KEY
-GEMINI_KEY=${GEMINI_KEY:-"COLE_SUA_CHAVE_AQUI"}
+GEMINI_KEY=${GEMINI_KEY:-""}
+
+echo ""
+echo -e "  ${BOLD}Opção B — OpenRouter (alternativa multi-modelo):${NC}"
+echo "  Tem modelo gratuito (Gemma 4 31B) e pagos muito baratos."
+echo "  Abrindo o OpenRouter..."
+sleep 1
+open "https://openrouter.ai/keys" 2>/dev/null || true
+echo ""
+echo "  1. Crie uma conta (pode usar login com Google)"
+echo "  2. Clique em '${BOLD}Create Key${NC}'"
+echo "  3. Copie a chave (começa com sk-or-v1-...)"
+echo ""
+read -p "  Cole a chave API do OpenRouter aqui (ou ENTER para pular): " OPENROUTER_KEY
+OPENROUTER_KEY=${OPENROUTER_KEY:-""}
 
 echo ""
 echo -e "${YELLOW}╭─────────────────────────────────────────────────────╮${NC}"
@@ -477,7 +492,17 @@ echo "  2. Navegue até qualquer questão"
 echo "  3. Clique no botão ⚙️ na barra flutuante (canto inferior direito)"
 echo "  4. Preencha:"
 echo ""
+echo -e "     ${BOLD}Provedor:${NC}          ${CYAN}Google Gemini ou OpenRouter${NC}"
+if [[ -n "$GEMINI_KEY" ]]; then
 echo -e "     ${BOLD}Gemini API Key:${NC}    ${CYAN}$GEMINI_KEY${NC}"
+else
+echo -e "     ${BOLD}Gemini API Key:${NC}    ${YELLOW}(não informada — configure depois se quiser)${NC}"
+fi
+if [[ -n "$OPENROUTER_KEY" ]]; then
+echo -e "     ${BOLD}OpenRouter Key:${NC}    ${CYAN}$OPENROUTER_KEY${NC}"
+else
+echo -e "     ${BOLD}OpenRouter Key:${NC}    ${YELLOW}(não informada — configure depois se quiser)${NC}"
+fi
 echo -e "     ${BOLD}Nome do Vault:${NC}     ${CYAN}$VAULT_NAME${NC}"
 echo -e "     ${BOLD}Token Obsidian:${NC}    ${CYAN}$OBS_TOKEN${NC}"
 echo -e "     ${BOLD}Porta Obsidian:${NC}    ${CYAN}27123${NC}"

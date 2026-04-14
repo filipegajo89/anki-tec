@@ -80,8 +80,11 @@ No Obsidian:
 4. Instale e ative
 5. Nas configurações do plugin, copie a **API Key**
 
-### 5. Chave API do Gemini
+### 5. Chave de IA (Gemini ou OpenRouter)
 
+Você precisa de **pelo menos uma** chave de IA. Pode configurar as duas e alternar.
+
+**Opção A — Gemini (gratuito):**
 O script abre o Google AI Studio automaticamente.
 
 1. Faça login com sua conta Google
@@ -90,13 +93,24 @@ O script abre o Google AI Studio automaticamente.
 
 > ⚠️ **IMPORTANTE:** A chave é gratuita, mas guarde-a em segredo!
 
+**Opção B — OpenRouter (alternativa multi-modelo):**
+Use como alternativa se o Gemini der erros 503, ou se preferir outros modelos.
+
+1. Vá em [openrouter.ai/keys](https://openrouter.ai/keys)
+2. Crie uma conta (pode usar login com Google)
+3. Clique em **"Create Key"** e copie a chave (`sk-or-v1-...`)
+4. Tem modelo **gratuito** (Gemma 4 31B) e pagos muito baratos (Qwen3 235B ~R$ 0,0005/questão)
+
 ### 6. Configurar o Script
 
 No TEC Concursos (qualquer página de questão):
 
 1. Clique no botão ⚙️ na barra flutuante (canto inferior direito)
 2. Preencha:
-   - **Gemini API Key**: sua chave do passo 5
+   - **Provedor**: escolha `Google Gemini` ou `OpenRouter`
+   - **Gemini API Key**: sua chave do Gemini (se escolheu Gemini)
+   - **OpenRouter API Key**: sua chave do OpenRouter (se escolheu OpenRouter)
+   - **Modelo OpenRouter**: ⭐ Gemma 4 31B (gratuito) ou Qwen3 235B (recomendado)
    - **Nome do Vault**: nome do seu vault do Obsidian
    - **Token Obsidian**: API Key do passo 4
    - **Porta Obsidian**: `27123`
@@ -139,6 +153,8 @@ No TEC Concursos (qualquer página de questão):
 | "Erro de conexão com Anki" | Verifique se AnkiConnect está instalado (código `2055492159`) |
 | "Erro de conexão com Obsidian" | Verifique se o plugin Local REST API está ativo |
 | "Erro de API Gemini" | Verifique se a chave está correta em ⚙️ |
+| "Gemini erro 503" | Servidores sobrecarregados. Troque para OpenRouter em ⚙️ ou aguarde |
+| "OpenRouter erro 429" | Limite do modelo gratuito. Aguarde minutos ou troque para modelo pago |
 | "O script não aparece no TEC" | Verifique se o Tampermonkey está ativo (ícone no Chrome) |
 | "Homebrew pede senha" | É normal! Digite sua senha do Mac (não aparece na tela enquanto digita) |
 | "nlm login falhou" | Rode `nlm login` no Terminal novamente |
@@ -171,7 +187,7 @@ uv tool upgrade notebooklm-mcp-cli
 ## ❓ FAQ
 
 **P: Preciso pagar alguma coisa?**
-R: Não! Todos os programas são gratuitos. A API do Gemini tem cota gratuita generosa.
+R: Não! Todos os programas são gratuitos. A API do Gemini tem cota gratuita generosa. O OpenRouter também tem modelo gratuito (Gemma 4 31B) e pagos muito baratos.
 
 **P: Funciona offline?**
 R: O Anki e Obsidian funcionam offline, mas a geração de flashcards e podcasts precisa de internet.

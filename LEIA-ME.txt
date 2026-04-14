@@ -59,7 +59,9 @@ O script avisa e abre os links quando necessario:
   2. Instalar o script TEC no Tampermonkey
   3. Instalar AnkiConnect no Anki (codigo: 2055492159)
   4. Instalar Local REST API no Obsidian (plugin)
-  5. Gerar chave API do Gemini (gratuita)
+  5. Gerar chave de IA:
+     - Opcao A: Gemini (gratuita) em aistudio.google.com/apikey
+     - Opcao B: OpenRouter (tem modelo gratis) em openrouter.ai/keys
   6. Configurar o script (botao engrenagem no TEC)
 
 
@@ -89,7 +91,9 @@ PROBLEMAS COMUNS
 
   * "O script nao aparece no TEC"
     → Verifique se o Tampermonkey esta ativo no Chrome
-
+  * "Gemini erro 503"
+    -> Servidores sobrecarregados. Troque para OpenRouter
+       nas configuracoes (engrenagem) ou aguarde
   * "nlm login falhou"
     → Abra o Terminal e rode: nlm login
 
@@ -97,6 +101,7 @@ PROBLEMAS COMUNS
 LINKS UTEIS
 =============
 
-  Repositorio: https://github.com/filipegajo89/anki-tec
+  Repositorio:  https://github.com/filipegajo89/anki-tec
   Tampermonkey: https://chrome.google.com/webstore/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo
   Gemini API:   https://aistudio.google.com/apikey
+  OpenRouter:   https://openrouter.ai/keys

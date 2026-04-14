@@ -435,10 +435,11 @@ Wait-Enter
 #  PASSO 12: CHAVE API GEMINI + CONFIGURAÇÃO FINAL
 # ══════════════════════════════════════════════════════════════
 
-Write-Header "PASSO 12/12 — Chave API Gemini e Configuração Final"
+Write-Header "PASSO 12/12 — Chaves de IA e Configuração Final"
 
-Write-Manual "Gere sua chave API do Gemini:"
+Write-Manual "Escolha seu provedor de IA (pode usar os dois!):"
 Write-Host ""
+Write-Host "  Opção A — Gemini (gratuito, recomendado para começar):" -ForegroundColor White
 Write-Host "  Abrindo o Google AI Studio..."
 Start-Sleep -Seconds 1
 Start-Process "https://aistudio.google.com/apikey"
@@ -448,7 +449,19 @@ Write-Host "  2. Clique em 'Criar chave de API'"
 Write-Host "  3. Copie a chave (começa com AIzaSy...)"
 Write-Host ""
 $geminiKey = Read-Host "  Cole a chave API do Gemini aqui (ou ENTER para pular)"
-if (-not $geminiKey) { $geminiKey = "COLE_SUA_CHAVE_AQUI" }
+
+Write-Host ""
+Write-Host "  Opção B — OpenRouter (alternativa multi-modelo):" -ForegroundColor White
+Write-Host "  Tem modelo gratuito (Gemma 4 31B) e pagos muito baratos."
+Write-Host "  Abrindo o OpenRouter..."
+Start-Sleep -Seconds 1
+Start-Process "https://openrouter.ai/keys"
+Write-Host ""
+Write-Host "  1. Crie uma conta (pode usar login com Google)"
+Write-Host "  2. Clique em 'Create Key'"
+Write-Host "  3. Copie a chave (começa com sk-or-v1-...)"
+Write-Host ""
+$openrouterKey = Read-Host "  Cole a chave API do OpenRouter aqui (ou ENTER para pular)"
 
 Write-Host ""
 Write-Host "╭─────────────────────────────────────────────────────╮" -ForegroundColor Yellow
@@ -462,7 +475,17 @@ Write-Host "  2. Navegue até qualquer questão"
 Write-Host "  3. Clique no botão ⚙️ na barra flutuante"
 Write-Host "  4. Preencha:"
 Write-Host ""
-Write-Host "     Gemini API Key:    " -NoNewline; Write-Host $geminiKey -ForegroundColor Cyan
+Write-Host "     Provedor:          " -NoNewline; Write-Host "Google Gemini ou OpenRouter" -ForegroundColor Cyan
+if ($geminiKey) {
+    Write-Host "     Gemini API Key:    " -NoNewline; Write-Host $geminiKey -ForegroundColor Cyan
+} else {
+    Write-Host "     Gemini API Key:    " -NoNewline; Write-Host "(não informada — configure depois se quiser)" -ForegroundColor Yellow
+}
+if ($openrouterKey) {
+    Write-Host "     OpenRouter Key:    " -NoNewline; Write-Host $openrouterKey -ForegroundColor Cyan
+} else {
+    Write-Host "     OpenRouter Key:    " -NoNewline; Write-Host "(não informada — configure depois se quiser)" -ForegroundColor Yellow
+}
 Write-Host "     Nome do Vault:     " -NoNewline; Write-Host $vaultName -ForegroundColor Cyan
 Write-Host "     Token Obsidian:    " -NoNewline; Write-Host $obsToken -ForegroundColor Cyan
 Write-Host "     Porta Obsidian:    " -NoNewline; Write-Host "27123" -ForegroundColor Cyan
