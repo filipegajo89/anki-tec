@@ -1090,6 +1090,26 @@ Identifique com precis\u00E3o:
 - ATEN\u00C7\u00C3O na classifica\u00E7\u00E3o de mat\u00E9ria: classifique pelo CONTE\u00DADO T\u00C9CNICO do tema
 - subtopico: espec\u00EDfico (ex: "Aplicabilidade das Normas - Art. 5\u00BA \u00A71\u00BA CF", n\u00E3o "Normas")
 
+## Formata\u00E7\u00E3o HTML dos campos frente e verso
+
+Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos cards. Isso \u00E9 FUNDAMENTAL para facilitar a memoriza\u00E7\u00E3o.
+
+### Tags dispon\u00EDveis (use sempre que aplic\u00E1vel):
+
+- **<b>texto</b>** \u2192 para termos jur\u00EDdicos centrais, nomes de princ\u00EDpios, institutos (ex: <b>legalidade tribut\u00E1ria</b>)
+- **<span class="neg">texto</span>** \u2192 para NEGA\u00C7\u00D5ES, exce\u00E7\u00F5es, veda\u00E7\u00F5es, alertas (ex: <span class="neg">N\u00C3O exige lei para altera\u00E7\u00E3o de prazo</span>)
+- **<mark>texto</mark>** \u2192 para palavras-chave cr\u00EDticas dentro da frase que o aluno deve gravar (ex: a legalidade \u00E9 sobre a <mark>forma</mark>; a anterioridade \u00E9 sobre o <mark>tempo</mark>)
+- **<ul><li>texto</li></ul>** \u2192 para listas enumerativas (ex: atos que exigem lei: institui\u00E7\u00E3o, aumento, majora\u00E7\u00E3o de al\u00EDquota, altera\u00E7\u00E3o de base de c\u00E1lculo)
+- **<span class="ref">texto</span>** \u2192 para refer\u00EAncias legais e artigos (ex: <span class="ref">CF art. 150, I</span>)
+
+### Regras de formata\u00E7\u00E3o:
+- Use <b> em TODA men\u00E7\u00E3o a conceitos jur\u00EDdicos importantes no verso
+- Use <span class="neg"> SEMPRE que houver nega\u00E7\u00E3o, veda\u00E7\u00E3o, exce\u00E7\u00E3o ou contraste ("N\u00C3O", "vedado", "salvo", "exceto")
+- Use <mark> com modera\u00E7\u00E3o (1-3 palavras por card) apenas nas palavras que s\u00E3o o N\u00DACLEO da distin\u00E7\u00E3o
+- Na FRENTE do card, use <b> para o termo central da pergunta e <mark> para destaques pontuais
+- Listas com <ul><li> s\u00E3o prefer\u00EDveis a texto corrido quando h\u00E1 3+ itens
+- NUNCA use tags de formata\u00E7\u00E3o no campo palavras_chave (\u00E9 plain text)
+
 ## Palavras-chave consagradas
 
 Para cada card, inclua no campo "palavras_chave" as EXPRESS\u00D5ES CAN\u00D4NICAS que identificam o conceito/instituto jur\u00EDdico abordado. S\u00E3o os termos consagrados na lei, doutrina ou jurisprud\u00EAncia que funcionam como "impress\u00E3o digital" daquele conceito \u2014 quando o aluno v\u00EA essas palavras num enunciado longo, deve imediatamente reconhecer de qual instituto se trata.
@@ -1371,7 +1391,15 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   line-height: 1.7; color: #e8e8e8; background: #1e1e2e;
 }
 .frente { font-size: 1.2em; color: #60cdff; font-weight: 500; }
-.verso { font-size: 1.1em; color: #7ee8a2; margin-top: 4px; }
+.verso { font-size: 1.05em; color: #d4d4d4; margin-top: 4px; line-height: 1.8; }
+.verso b { color: #7ee8a2; font-weight: 600; }
+.verso .neg { color: #ff6b6b; font-weight: 700; }
+.verso mark { background: rgba(255, 230, 0, 0.25); color: #ffe066; padding: 1px 4px; border-radius: 3px; }
+.verso .ref { color: #a0a0b8; font-style: italic; font-size: 0.9em; }
+.verso ul { margin: 6px 0 6px 18px; padding: 0; }
+.verso li { margin-bottom: 2px; }
+.frente b { color: #60cdff; }
+.frente mark { background: rgba(255, 230, 0, 0.2); color: #ffe066; padding: 1px 4px; border-radius: 3px; }
 .palavras-chave { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .palavras-chave .kw { background: #2a2a4a; color: #c4b5fd; padding: 2px 10px;
   border-radius: 12px; font-size: 0.78em; border: 1px solid #4a4a6a; letter-spacing: 0.3px; }
@@ -1386,7 +1414,12 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
   color: #1a1a2e; background: #ffffff;
 }
 :root[class*="light"] .frente { color: #1a56db; }
-:root[class*="light"] .verso { color: #2d6a4f; }
+:root[class*="light"] .verso { color: #2d2d2d; }
+:root[class*="light"] .verso b { color: #2d6a4f; }
+:root[class*="light"] .verso .neg { color: #d32f2f; }
+:root[class*="light"] .verso mark { background: #fff59d; color: #1a1a2e; }
+:root[class*="light"] .verso .ref { color: #6c757d; }
+:root[class*="light"] .frente mark { background: #fff59d; color: #1a1a2e; }
 :root[class*="light"] .palavras-chave .kw { background: #f3f0ff; color: #6d28d9; border-color: #ddd6fe; }
 :root[class*="light"] .contexto { color: #6c757d; border-bottom-color: #eee; }
 :root[class*="light"] .fonte { color: #adb5bd; }

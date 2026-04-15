@@ -1086,6 +1086,26 @@ Identifique com precisão:
 - ATENÇÃO na classificação de matéria: classifique pelo CONTEÚDO TÉCNICO do tema
 - subtopico: específico (ex: "Aplicabilidade das Normas - Art. 5º §1º CF", não "Normas")
 
+## Formatação HTML dos campos frente e verso
+
+Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos cards. Isso é FUNDAMENTAL para facilitar a memorização.
+
+### Tags disponíveis (use sempre que aplicável):
+
+- **<b>texto</b>** → para termos jurídicos centrais, nomes de princípios, institutos (ex: <b>legalidade tributária</b>)
+- **<span class="neg">texto</span>** → para NEGAÇÕES, exceções, vedações, alertas (ex: <span class="neg">NÃO exige lei para alteração de prazo</span>)
+- **<mark>texto</mark>** → para palavras-chave críticas dentro da frase que o aluno deve gravar (ex: a legalidade é sobre a <mark>forma</mark>; a anterioridade é sobre o <mark>tempo</mark>)
+- **<ul><li>texto</li></ul>** → para listas enumerativas (ex: atos que exigem lei: instituição, aumento, majoração de alíquota, alteração de base de cálculo)
+- **<span class="ref">texto</span>** → para referências legais e artigos (ex: <span class="ref">CF art. 150, I</span>)
+
+### Regras de formatação:
+- Use <b> em TODA menção a conceitos jurídicos importantes no verso
+- Use <span class="neg"> SEMPRE que houver negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto")
+- Use <mark> com moderação (1-3 palavras por card) apenas nas palavras que são o NÚCLEO da distinção
+- Na FRENTE do card, use <b> para o termo central da pergunta e <mark> para destaques pontuais
+- Listas com <ul><li> são preferíveis a texto corrido quando há 3+ itens
+- NUNCA use tags de formatação no campo palavras_chave (é plain text)
+
 ## Palavras-chave consagradas
 
 Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que identificam o conceito/instituto jurídico abordado. São os termos consagrados na lei, doutrina ou jurisprudência que funcionam como "impressão digital" daquele conceito — quando o aluno vê essas palavras num enunciado longo, deve imediatamente reconhecer de qual instituto se trata.
@@ -1258,7 +1278,15 @@ Com base nas informações acima, identifique o mecanismo do erro e crie 2-3 fla
   line-height: 1.7; color: #e8e8e8; background: #1e1e2e;
 }
 .frente { font-size: 1.2em; color: #60cdff; font-weight: 500; }
-.verso { font-size: 1.1em; color: #7ee8a2; margin-top: 4px; }
+.verso { font-size: 1.05em; color: #d4d4d4; margin-top: 4px; line-height: 1.8; }
+.verso b { color: #7ee8a2; font-weight: 600; }
+.verso .neg { color: #ff6b6b; font-weight: 700; }
+.verso mark { background: rgba(255, 230, 0, 0.25); color: #ffe066; padding: 1px 4px; border-radius: 3px; }
+.verso .ref { color: #a0a0b8; font-style: italic; font-size: 0.9em; }
+.verso ul { margin: 6px 0 6px 18px; padding: 0; }
+.verso li { margin-bottom: 2px; }
+.frente b { color: #60cdff; }
+.frente mark { background: rgba(255, 230, 0, 0.2); color: #ffe066; padding: 1px 4px; border-radius: 3px; }
 .palavras-chave { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .palavras-chave .kw { background: #2a2a4a; color: #c4b5fd; padding: 2px 10px;
   border-radius: 12px; font-size: 0.78em; border: 1px solid #4a4a6a; letter-spacing: 0.3px; }
@@ -1273,7 +1301,12 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
   color: #1a1a2e; background: #ffffff;
 }
 :root[class*="light"] .frente { color: #1a56db; }
-:root[class*="light"] .verso { color: #2d6a4f; }
+:root[class*="light"] .verso { color: #2d2d2d; }
+:root[class*="light"] .verso b { color: #2d6a4f; }
+:root[class*="light"] .verso .neg { color: #d32f2f; }
+:root[class*="light"] .verso mark { background: #fff59d; color: #1a1a2e; }
+:root[class*="light"] .verso .ref { color: #6c757d; }
+:root[class*="light"] .frente mark { background: #fff59d; color: #1a1a2e; }
 :root[class*="light"] .palavras-chave .kw { background: #f3f0ff; color: #6d28d9; border-color: #ddd6fe; }
 :root[class*="light"] .contexto { color: #6c757d; border-bottom-color: #eee; }
 :root[class*="light"] .fonte { color: #adb5bd; }
