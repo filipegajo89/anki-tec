@@ -1005,22 +1005,30 @@
   // ║                   6. GEMINI API                              ║
   // ╚═══════════════════════════════════════════════════════════════╝
 
-  const SYSTEM_PROMPT = `Você é um especialista em concursos públicos e criação de flashcards para Anki. Receba os dados de uma questão e crie flashcards cirúrgicos que atacam exatamente a CONFUSÃO que levou ao erro.
+  const SYSTEM_PROMPT = `Você é um especialista em concursos públicos e criação de flashcards para Anki. Receba os dados de uma questão e crie flashcards cirúrgicos conforme o cenário (questão errada OU acertada).
 
 ## O que fazer
 
 1. Leia os dados da questão fornecidos
-2. Identifique com precisão:
-   - Qual alternativa o aluno marcou (a errada)
-   - Qual o gabarito correto
-   - POR QUE o aluno errou: qual confusão, troca, ou lacuna específica causou o erro
-3. Crie 2-3 flashcards que corrigem EXATAMENTE essa confusão
+2. Verifique se o aluno ERROU ou ACERTOU a questão
+3. Siga as instruções do cenário correspondente abaixo
 
-## REGRA DE OURO: foque no MECANISMO DO ERRO, não no tema geral
+---
+
+## CENÁRIO 1: QUESTÃO ERRADA
+
+Identifique com precisão:
+- Qual alternativa o aluno marcou (a errada)
+- Qual o gabarito correto
+- POR QUE o aluno errou: qual confusão, troca, ou lacuna específica causou o erro
+
+Crie 2-3 flashcards que corrigem EXATAMENTE essa confusão.
+
+### REGRA DE OURO: foque no MECANISMO DO ERRO, não no tema geral
 
 O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR a confusão específica que fez o aluno errar.
 
-### Exemplos de erros comuns em concursos e como abordar:
+### Exemplos de erros comuns e como abordar:
 
 **Erro por TROCA/INVERSÃO de conceitos:**
 Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Faça cards comparativos.
@@ -1037,15 +1045,36 @@ Se um item parece certo mas tem uma palavra que o torna errado, o card deve foca
 **Erro por GENERALIZAÇÃO (como "toda norma...", "sempre...", "nunca..."):**
 Se o item generalizou uma regra que tem exceções, o card deve testar a regra vs exceção.
 
-## Tipos de cards a criar (em ordem de prioridade)
+### Tipos de cards para questão ERRADA (em ordem de prioridade):
 
-1. **Card da distinção (OBRIGATÓRIO):** Pergunta que força o aluno a distinguir os conceitos que ele CONFUNDIU. Deve confrontar diretamente os elementos trocados/confundidos.
+1. **Card da distinção (OBRIGATÓRIO):** Pergunta que força o aluno a distinguir os conceitos que ele CONFUNDIU.
 2. **Card da regra correta:** Pergunta direta sobre o artigo, súmula ou regra que fundamenta a resposta correta.
 3. **Card da armadilha (se relevante):** "Verdadeiro ou falso" usando a mesma construção enganosa da banca.
 
-## Regras para os flashcards
+**No campo "erro_identificado":** descreva o mecanismo do erro (ex: "Confundiu competência da União com a dos Estados").
 
-- O PRIMEIRO card SEMPRE deve atacar a confusão/troca/lacuna que causou o erro
+---
+
+## CENÁRIO 2: QUESTÃO ACERTADA
+
+Quando o aluno ACERTA mas pede cards, é porque NÃO teve certeza da resposta. O objetivo é BLINDAR esse conhecimento.
+
+Identifique com precisão:
+- Qual a PEGADINHA ou NUANCE da questão (o que a tornava difícil)
+- Qual o detalhe sutil que a banca explorou para confundir
+- Quais alternativas eram mais "sedutoras" e por quê
+
+### Tipos de cards para questão ACERTADA (em ordem de prioridade):
+
+1. **Card da pegadinha (OBRIGATÓRIO):** Exponha a armadilha da banca. Se havia uma alternativa que PARECIA certa mas não era, o card deve testar por que ela está errada.
+2. **Card da nuance:** Teste a distinção sutil que tornava a questão difícil. Se havia exceção, condição, ou detalhe de redação que mudava tudo, foque nisso.
+3. **Card de reforço (se relevante):** Pergunta que consolida a regra central com suas exceções ou condições.
+
+**No campo "erro_identificado":** descreva a pegadinha/nuance da questão (ex: "A alternativa B parecia correta por usar 'sempre que possível', mas o art. X não admite exceção neste caso").
+
+## Regras gerais para os flashcards
+
+- O PRIMEIRO card SEMPRE deve atacar o ponto central: a confusão (se errou) ou a pegadinha/nuance (se acertou)
 - Perguntas no presente, ativas: "Qual...", "Quais...", "Verdadeiro ou falso:..."
 - Use perguntas COMPARATIVAS quando o erro envolver troca de conceitos
 - Respostas CONCISAS — máximo 3 linhas. Se precisar de lista, use bullets curtos
@@ -1082,7 +1111,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
     properties: {
       materia: { type: 'string', description: 'Matéria do edital' },
       subtopico: { type: 'string', description: 'Subtópico específico' },
-      erro_identificado: { type: 'string', description: 'Descrição do mecanismo do erro do aluno' },
+      erro_identificado: { type: 'string', description: 'Se errou: descrição do mecanismo do erro. Se acertou: descrição da pegadinha/nuance que tornava a questão difícil.' },
       cards: {
         type: 'array',
         items: {
@@ -1394,7 +1423,7 @@ ${altsMarkdown || '_Não extraídas_'}
 ## Comentário do Professor
 ${comentario}
 
-## 🎯 Erro Identificado (IA)
+## ${questionData.errou ? '🎯 Erro Identificado (IA)' : '🔍 Pegadinha/Nuance Identificada (IA)'}
 ${erroId}
 
 ## 📝 Flashcards Gerados
@@ -1494,7 +1523,7 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
             </div>
 
             <div class="tec-section">
-              <h3>🎯 Erro Identificado pela IA</h3>
+              <h3>${questionData.errou ? '🎯 Erro Identificado pela IA' : '🔍 Pegadinha/Nuance Identificada pela IA'}</h3>
               <div class="content">${aiResult?.erro_identificado || '<em>Não gerado</em>'}</div>
             </div>
 

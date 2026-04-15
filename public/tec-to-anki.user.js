@@ -1009,22 +1009,30 @@
   // \u2551                   6. GEMINI API                              \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SYSTEM_PROMPT = `Voc\u00EA \u00E9 um especialista em concursos p\u00FAblicos e cria\u00E7\u00E3o de flashcards para Anki. Receba os dados de uma quest\u00E3o e crie flashcards cir\u00FArgicos que atacam exatamente a CONFUS\u00C3O que levou ao erro.
+  const SYSTEM_PROMPT = `Voc\u00EA \u00E9 um especialista em concursos p\u00FAblicos e cria\u00E7\u00E3o de flashcards para Anki. Receba os dados de uma quest\u00E3o e crie flashcards cir\u00FArgicos conforme o cen\u00E1rio (quest\u00E3o errada OU acertada).
 
 ## O que fazer
 
 1. Leia os dados da quest\u00E3o fornecidos
-2. Identifique com precis\u00E3o:
-   - Qual alternativa o aluno marcou (a errada)
-   - Qual o gabarito correto
-   - POR QUE o aluno errou: qual confus\u00E3o, troca, ou lacuna espec\u00EDfica causou o erro
-3. Crie 2-3 flashcards que corrigem EXATAMENTE essa confus\u00E3o
+2. Verifique se o aluno ERROU ou ACERTOU a quest\u00E3o
+3. Siga as instru\u00E7\u00F5es do cen\u00E1rio correspondente abaixo
 
-## REGRA DE OURO: foque no MECANISMO DO ERRO, n\u00E3o no tema geral
+---
+
+## CEN\u00C1RIO 1: QUEST\u00C3O ERRADA
+
+Identifique com precis\u00E3o:
+- Qual alternativa o aluno marcou (a errada)
+- Qual o gabarito correto
+- POR QUE o aluno errou: qual confus\u00E3o, troca, ou lacuna espec\u00EDfica causou o erro
+
+Crie 2-3 flashcards que corrigem EXATAMENTE essa confus\u00E3o.
+
+### REGRA DE OURO: foque no MECANISMO DO ERRO, n\u00E3o no tema geral
 
 O objetivo N\u00C3O \u00E9 ensinar o assunto de forma gen\u00E9rica. \u00C9 CORRIGIR a confus\u00E3o espec\u00EDfica que fez o aluno errar.
 
-### Exemplos de erros comuns em concursos e como abordar:
+### Exemplos de erros comuns e como abordar:
 
 **Erro por TROCA/INVERS\u00C3O de conceitos:**
 Se a banca trocou as descri\u00E7\u00F5es de dois institutos, o card deve for\u00E7ar o aluno a DISTINGUIR X de Y. Fa\u00E7a cards comparativos.
@@ -1041,15 +1049,36 @@ Se um item parece certo mas tem uma palavra que o torna errado, o card deve foca
 **Erro por GENERALIZA\u00C7\u00C3O (como "toda norma...", "sempre...", "nunca..."):**
 Se o item generalizou uma regra que tem exce\u00E7\u00F5es, o card deve testar a regra vs exce\u00E7\u00E3o.
 
-## Tipos de cards a criar (em ordem de prioridade)
+### Tipos de cards para quest\u00E3o ERRADA (em ordem de prioridade):
 
-1. **Card da distin\u00E7\u00E3o (OBRIGAT\u00D3RIO):** Pergunta que for\u00E7a o aluno a distinguir os conceitos que ele CONFUNDIU. Deve confrontar diretamente os elementos trocados/confundidos.
+1. **Card da distin\u00E7\u00E3o (OBRIGAT\u00D3RIO):** Pergunta que for\u00E7a o aluno a distinguir os conceitos que ele CONFUNDIU.
 2. **Card da regra correta:** Pergunta direta sobre o artigo, s\u00FAmula ou regra que fundamenta a resposta correta.
 3. **Card da armadilha (se relevante):** "Verdadeiro ou falso" usando a mesma constru\u00E7\u00E3o enganosa da banca.
 
-## Regras para os flashcards
+**No campo "erro_identificado":** descreva o mecanismo do erro (ex: "Confundiu compet\u00EAncia da Uni\u00E3o com a dos Estados").
 
-- O PRIMEIRO card SEMPRE deve atacar a confus\u00E3o/troca/lacuna que causou o erro
+---
+
+## CEN\u00C1RIO 2: QUEST\u00C3O ACERTADA
+
+Quando o aluno ACERTA mas pede cards, \u00E9 porque N\u00C3O teve certeza da resposta. O objetivo \u00E9 BLINDAR esse conhecimento.
+
+Identifique com precis\u00E3o:
+- Qual a PEGADINHA ou NUANCE da quest\u00E3o (o que a tornava dif\u00EDcil)
+- Qual o detalhe sutil que a banca explorou para confundir
+- Quais alternativas eram mais "sedutoras" e por qu\u00EA
+
+### Tipos de cards para quest\u00E3o ACERTADA (em ordem de prioridade):
+
+1. **Card da pegadinha (OBRIGAT\u00D3RIO):** Exponha a armadilha da banca. Se havia uma alternativa que PARECIA certa mas n\u00E3o era, o card deve testar por que ela est\u00E1 errada.
+2. **Card da nuance:** Teste a distin\u00E7\u00E3o sutil que tornava a quest\u00E3o dif\u00EDcil. Se havia exce\u00E7\u00E3o, condi\u00E7\u00E3o, ou detalhe de reda\u00E7\u00E3o que mudava tudo, foque nisso.
+3. **Card de refor\u00E7o (se relevante):** Pergunta que consolida a regra central com suas exce\u00E7\u00F5es ou condi\u00E7\u00F5es.
+
+**No campo "erro_identificado":** descreva a pegadinha/nuance da quest\u00E3o (ex: "A alternativa B parecia correta por usar 'sempre que poss\u00EDvel', mas o art. X n\u00E3o admite exce\u00E7\u00E3o neste caso").
+
+## Regras gerais para os flashcards
+
+- O PRIMEIRO card SEMPRE deve atacar o ponto central: a confus\u00E3o (se errou) ou a pegadinha/nuance (se acertou)
 - Perguntas no presente, ativas: "Qual...", "Quais...", "Verdadeiro ou falso:..."
 - Use perguntas COMPARATIVAS quando o erro envolver troca de conceitos
 - Respostas CONCISAS \u2014 m\u00E1ximo 3 linhas. Se precisar de lista, use bullets curtos
@@ -1086,7 +1115,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESS\u00D5ES CAN\u00D4NIC
     properties: {
       materia: { type: 'string', description: 'Mat\u00E9ria do edital' },
       subtopico: { type: 'string', description: 'Subt\u00F3pico espec\u00EDfico' },
-      erro_identificado: { type: 'string', description: 'Descri\u00E7\u00E3o do mecanismo do erro do aluno' },
+      erro_identificado: { type: 'string', description: 'Se errou: descri\u00E7\u00E3o do mecanismo do erro. Se acertou: descri\u00E7\u00E3o da pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil.' },
       cards: {
         type: 'array',
         items: {
@@ -1207,7 +1236,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 {
   "materia": "string - mat\u00E9ria do edital",
   "subtopico": "string - subt\u00F3pico espec\u00EDfico",
-  "erro_identificado": "string - descri\u00E7\u00E3o do mecanismo do erro do aluno",
+  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil",
   "cards": [
     { "frente": "string - pergunta do flashcard", "verso": "string - resposta (max 3 linhas)", "palavras_chave": "string - express\u00F5es can\u00F4nicas da lei/doutrina que identificam o conceito jur\u00EDdico, separadas por | (ex: circunst\u00E2ncias pessoais | capacidade econ\u00F4mica real). Vazio se n\u00E3o houver" }
   ]
@@ -1507,7 +1536,7 @@ ${altsMarkdown || '_N\u00E3o extra\u00EDdas_'}
 ## Coment\u00E1rio do Professor
 ${comentario}
 
-## \uD83C\uDFAF Erro Identificado (IA)
+## ${questionData.errou ? '\uD83C\uDFAF Erro Identificado (IA)' : '\uD83D\uDD0D Pegadinha/Nuance Identificada (IA)'}
 ${erroId}
 
 ## \uD83D\uDCDD Flashcards Gerados
@@ -1607,7 +1636,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             </div>
 
             <div class="tec-section">
-              <h3>\uD83C\uDFAF Erro Identificado pela IA</h3>
+              <h3>${questionData.errou ? '\uD83C\uDFAF Erro Identificado pela IA' : '\uD83D\uDD0D Pegadinha/Nuance Identificada pela IA'}</h3>
               <div class="content">${aiResult?.erro_identificado || '<em>N\u00E3o gerado</em>'}</div>
             </div>
 
