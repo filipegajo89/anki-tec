@@ -1752,22 +1752,25 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
     updateStatusDot();
 
     // Make toolbar draggable
-    let isDragging = false, startX, startY, origX, origY;
-    toolbar.addEventListener('mousedown', (e) => {
-      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
-      isDragging = true;
-      startX = e.clientX; startY = e.clientY;
-      const rect = toolbar.getBoundingClientRect();
-      origX = rect.left; origY = rect.top;
-      e.preventDefault();
-    });
-    document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
+    let startX, startY, origX, origY;
+    function onDragMove(e) {
       toolbar.style.right = 'auto'; toolbar.style.bottom = 'auto';
       toolbar.style.left = (origX + e.clientX - startX) + 'px';
       toolbar.style.top = (origY + e.clientY - startY) + 'px';
+    }
+    function onDragEnd() {
+      document.removeEventListener('mousemove', onDragMove);
+      document.removeEventListener('mouseup', onDragEnd);
+    }
+    toolbar.addEventListener('mousedown', (e) => {
+      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+      startX = e.clientX; startY = e.clientY;
+      const rect = toolbar.getBoundingClientRect();
+      origX = rect.left; origY = rect.top;
+      document.addEventListener('mousemove', onDragMove);
+      document.addEventListener('mouseup', onDragEnd);
+      e.preventDefault();
     });
-    document.addEventListener('mouseup', () => { isDragging = false; });
   }
 
   async function updateStatusDot() {
@@ -2267,15 +2270,18 @@ _Gerado em ${todayISO()} via TEC→Anki+Obsidian_
     // Show confirmation toast on load
     showToast('TEC→Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o botão 📋', 'success', 4000);
 
-    // Check connections periodically
+    // Check connections periodically (every 2 min is plenty)
     updateStatusDot();
-    setInterval(updateStatusDot, 60000);
+    setInterval(updateStatusDot, 120000);
 
-    // Re-inject toolbar on SPA navigation (AngularJS)
+    // Re-inject toolbar on SPA navigation (AngularJS) — debounced
+    let _reinjectTimer = null;
     const observer = new MutationObserver(() => {
-      if (!document.getElementById('tec-anki-toolbar')) {
-        injectToolbar();
-      }
+      if (_reinjectTimer) return;
+      _reinjectTimer = setTimeout(() => {
+        _reinjectTimer = null;
+        if (!document.getElementById('tec-anki-toolbar')) injectToolbar();
+      }, 500);
     });
     observer.observe(document.body, { childList: true, subtree: false });
   }
