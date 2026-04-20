@@ -1239,6 +1239,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 
   const OPENROUTER_MODELS = [
     { id: 'google/gemma-4-31b-it:free',          label: '\u2B50 Gemma 4 31B (GRATUITO)' },
+    { id: 'moonshotai/kimi-k2.5',                 label: '\uD83E\uDDE0 Kimi K2.5 Thinking ($0.44/M tok)' },
     { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok \u2014 recomendado)' },
     { id: 'openai/gpt-4o-mini',                  label: 'GPT-4o Mini ($0.39/M tok)' },
     { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
@@ -1272,6 +1273,11 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
       temperature: 0.3,
       response_format: { type: 'json_object' },
     };
+
+    // Enable thinking/reasoning for models that support it
+    if (model.includes('kimi-k2')) {
+      body.reasoning = { effort: 'high' };
+    }
 
     const MAX_RETRIES = 5;
     let res;
