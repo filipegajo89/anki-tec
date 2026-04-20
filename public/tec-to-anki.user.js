@@ -349,12 +349,16 @@
   // Module-level variable to store the captured comment text
   let _capturedComment = '';
 
-  /** Strip HTML tags and return plain text */
+  /** Strip HTML tags and return plain text (regex-based, no DOM) */
   function stripHtml(html) {
     if (!html) return '';
-    const div = document.createElement('div');
-    div.innerHTML = html;
-    return div.textContent.trim();
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   /** Try to extract a comment string from a JSON object (API response) */
@@ -399,7 +403,6 @@
     const { scope, vm } = getAngularVm();
 
     // \u2500\u2500 Strategy 1: Direct property read from Angular scope \u2500\u2500
-    console.log('\n\uD83D\uDCD6 Strategy 1: Leitura direta do Angular scope...');
     if (vm) {
       const commentProps = [
         'comentario', 'textoComentario', 'comentarioProfessor', 'comentarioTexto',
@@ -418,8 +421,7 @@
             const plain = stripHtml(val);
             if (plain !== stripHtml(enunciado) && !plain.startsWith(stripHtml(enunciado).substring(0, 50))) {
               _capturedComment = plain;
-              console.log(`\u2705 Coment\u00E1rio via vm.questao.${prop} (${plain.length} chars)`);
-              return true;
+                  return true;
             }
           }
         }
@@ -430,10 +432,8 @@
             const plain = stripHtml(val);
             const enunciadoPlain = stripHtml(enunciado);
             if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
-              console.log(`\uD83D\uDD0E Poss\u00EDvel coment\u00E1rio em vm.questao.${key} (${plain.length} chars): "${plain.substring(0, 100)}..."`);
-              _capturedComment = plain;
-              console.log(`\u2705 Coment\u00E1rio via vm.questao.${key} (${plain.length} chars)`);
-              return true;
+                  _capturedComment = plain;
+                  return true;
             }
           }
         }
@@ -445,8 +445,7 @@
               const nested = val[prop];
               if (typeof nested === 'string' && nested.length > 30) {
                 _capturedComment = stripHtml(nested);
-                console.log(`\u2705 Coment\u00E1rio via vm.questao.${key}.${prop} (${_capturedComment.length} chars)`);
-                return true;
+                      return true;
               }
             }
           }
@@ -458,7 +457,6 @@
         const val = vm[prop];
         if (typeof val === 'string' && val.length > 30) {
           _capturedComment = stripHtml(val);
-          console.log(`\u2705 Coment\u00E1rio via vm.${prop} (${_capturedComment.length} chars)`);
           return true;
         }
       }
@@ -469,15 +467,13 @@
           const val = vm.comentario[prop];
           if (typeof val === 'string' && val.length > 30) {
             _capturedComment = stripHtml(val);
-            console.log(`\u2705 Coment\u00E1rio via vm.comentario.${prop} (${_capturedComment.length} chars)`);
-            return true;
+              return true;
           }
         }
       }
     }
 
     // \u2500\u2500 Strategy 2: Call Angular controller methods \u2500\u2500
-    console.log('\n\uD83D\uDD27 Strategy 2: Chamando m\u00E9todos Angular...');
     if (vm) {
       const methodNames = [
         'mostrarComentario', 'abrirComentario', 'toggleComentario', 'verComentario',
@@ -488,14 +484,13 @@
 
       for (const name of methodNames) {
         if (typeof vm[name] === 'function') {
-          console.log(`  \uD83D\uDD27 Calling vm.${name}()...`);
-          try {
+              try {
             const result = vm[name]();
             if (result && typeof result.then === 'function') {
               await result;
             }
             try { scope.$apply(); } catch (_) { /* may already be in digest */ }
-            await delay(2000);
+            await delay(800);
 
             // Re-check scope for new comment data
             if (vm.questao) {
@@ -505,8 +500,7 @@
                   const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
                   if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
                     _capturedComment = plain;
-                    console.log(`\u2705 Coment\u00E1rio after ${name}(): vm.questao.${key} (${plain.length} chars)`);
-                    return true;
+                              return true;
                   }
                 }
               }
@@ -520,8 +514,7 @@
       // Also try on scope directly
       for (const name of methodNames) {
         if (scope && typeof scope[name] === 'function' && typeof vm[name] !== 'function') {
-          console.log(`  \uD83D\uDD27 Calling scope.${name}()...`);
-          try {
+              try {
             scope[name]();
             try { scope.$apply(); } catch (_) {}
             await delay(2000);
@@ -532,8 +525,7 @@
                   const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
                   if (plain !== enunciadoPlain) {
                     _capturedComment = plain;
-                    console.log(`\u2705 Coment\u00E1rio after scope.${name}(): .${key} (${plain.length} chars)`);
-                    return true;
+                              return true;
                   }
                 }
               }
@@ -546,67 +538,59 @@
     }
 
     // \u2500\u2500 Strategy 3: XHR interception + click "Ver resolu\u00E7\u00E3o" \u2500\u2500
-    console.log('\n\uD83D\uDCE1 Strategy 3: XHR intercept + click...');
     let capturedXhrUrl = null;
     let capturedXhrResponse = null;
 
     const origOpen = unsafeWindow.XMLHttpRequest.prototype.open;
     const origSend = unsafeWindow.XMLHttpRequest.prototype.send;
 
-    unsafeWindow.XMLHttpRequest.prototype.open = function(method, url, ...args) {
-      this._tecUrl = url;
-      return origOpen.apply(this, [method, url, ...args]);
-    };
-    unsafeWindow.XMLHttpRequest.prototype.send = function(...args) {
-      const self = this;
-      this.addEventListener('load', function() {
-        if (self._tecUrl) {
-          console.log(`  \uD83D\uDCE1 XHR: ${self._tecUrl} (${self.status}) [${(self.responseText||'').length} chars]`);
-          if (/coment|resoluc|questao|questoes/i.test(self._tecUrl) && self.responseText?.length > 50) {
-            capturedXhrUrl = self._tecUrl;
-            capturedXhrResponse = self.responseText;
-          }
-        }
+    try {
+      if (!origOpen._tecPatched) {
+        const patchedOpen = function(method, url, ...args) {
+          this._tecUrl = url;
+          return origOpen.apply(this, [method, url, ...args]);
+        };
+        patchedOpen._tecPatched = true;
+        unsafeWindow.XMLHttpRequest.prototype.open = patchedOpen;
+
+        unsafeWindow.XMLHttpRequest.prototype.send = function(...args) {
+          const self = this;
+          this.addEventListener('load', function() {
+            if (self._tecUrl && /coment|resoluc|questao|questoes/i.test(self._tecUrl) && self.responseText?.length > 50) {
+              capturedXhrUrl = self._tecUrl;
+              capturedXhrResponse = self.responseText;
+            }
+          });
+          return origSend.apply(this, args);
+        };
+      }
+
+      const resolucaoLinks = [...document.querySelectorAll('a, button, span')].filter(el => {
+        const txt = el.textContent.trim();
+        return /ver resolu[\u00E7c]/i.test(txt) && txt.length < 40;
       });
-      return origSend.apply(this, args);
-    };
+      for (const link of resolucaoLinks) { realClick(link); }
+      try { document.activeElement?.blur(); } catch (_) {}
+      document.body.focus();
+      simulateKey('o', 79);
 
-    // Click "Ver resolu\u00E7\u00E3o" links
-    const resolucaoLinks = [...document.querySelectorAll('a, button, span')].filter(el => {
-      const txt = el.textContent.trim();
-      return /ver resolu[\u00E7c]/i.test(txt) && txt.length < 40;
-    });
-    console.log(`  Links "Ver resolu\u00E7\u00E3o": ${resolucaoLinks.length}`);
-
-    for (const link of resolucaoLinks) {
-      console.log(`  Clicando: "${link.textContent.trim()}" <${link.tagName}>`);
-      realClick(link);
+      await delay(2000);
+    } finally {
+      unsafeWindow.XMLHttpRequest.prototype.open = origOpen;
+      unsafeWindow.XMLHttpRequest.prototype.send = origSend;
     }
-    // Also keyboard shortcut
-    try { document.activeElement?.blur(); } catch (_) {}
-    document.body.focus();
-    simulateKey('o', 79);
-
-    await delay(4000);
-
-    // Restore XHR originals
-    unsafeWindow.XMLHttpRequest.prototype.open = origOpen;
-    unsafeWindow.XMLHttpRequest.prototype.send = origSend;
 
     if (capturedXhrResponse) {
-      console.log(`  \uD83D\uDCE1 XHR capturado: ${capturedXhrResponse.length} chars de ${capturedXhrUrl}`);
       try {
         const data = JSON.parse(capturedXhrResponse);
         const text = extractCommentFromJson(data);
         if (text && text.length > 30) {
           _capturedComment = text;
-          console.log(`\u2705 Coment\u00E1rio via XHR JSON (${text.length} chars)`);
           return true;
         }
       } catch {
         if (capturedXhrResponse.length > 50 && !capturedXhrResponse.startsWith('<!')) {
           _capturedComment = stripHtml(capturedXhrResponse);
-          console.log(`\u2705 Coment\u00E1rio via XHR raw (${_capturedComment.length} chars)`);
           return true;
         }
       }
@@ -621,8 +605,7 @@
           const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
           if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
             _capturedComment = plain;
-            console.log(`\u2705 Coment\u00E1rio via scope re-check: .${key} (${plain.length} chars)`);
-            return true;
+              return true;
           }
         }
       }
@@ -644,8 +627,7 @@
 
       for (const url of apiUrls) {
         try {
-          console.log(`  \uD83D\uDCE1 GET ${url}`);
-          const resp = await gmFetch(url, {
+              const resp = await gmFetch(url, {
             method: 'GET',
             headers: {
               'Accept': 'application/json, text/html',
@@ -654,16 +636,13 @@
           });
           if (resp.ok) {
             const text = await resp.text();
-            console.log(`    \u2705 ${resp.status} \u2014 ${text.length} chars`);
-            if (text.length > 50) {
+              if (text.length > 50) {
               try {
                 const data = JSON.parse(text);
-                console.log(`    JSON keys: ${Object.keys(data).join(', ')}`);
-                const comment = extractCommentFromJson(data);
+                      const comment = extractCommentFromJson(data);
                 if (comment && comment.length > 30) {
                   _capturedComment = comment;
-                  console.log(`\u2705 Coment\u00E1rio via API (${comment.length} chars)`);
-                  return true;
+                          return true;
                 }
               } catch {
                 // Maybe HTML \u2014 try parsing for comment section
@@ -674,24 +653,20 @@
                   for (const cel of commentEls) {
                     if (cel.textContent.trim().length > 30) {
                       _capturedComment = cel.textContent.trim();
-                      console.log(`\u2705 Coment\u00E1rio via API HTML (${_capturedComment.length} chars)`);
-                      return true;
+                                  return true;
                     }
                   }
                 }
               }
             }
           } else {
-            console.log(`    \u274C ${resp.status}`);
-          }
+            }
         } catch (err) {
-          console.log(`    \u274C ${err.message}`);
         }
       }
     }
 
     // \u2500\u2500 Strategy 5: DOM fallback \u2500\u2500
-    console.log('\n\uD83D\uDD0D Strategy 5: DOM fallback...');
     const tecElements = document.querySelectorAll('[tec-formatar-html]');
     const enunciadoText = vm?.questao?.enunciado ||
                           document.querySelector('.questao-enunciado-texto')?.innerText?.trim() || '';
@@ -704,7 +679,6 @@
       if (/coment/i.test(attr) && text.length > 30) {
         if (text !== enunciadoPlain && !text.startsWith(enunciadoPlain.substring(0, 50))) {
           _capturedComment = text;
-          console.log(`\u2705 Coment\u00E1rio via DOM [${attr}] (${text.length} chars)`);
           return true;
         }
       }
@@ -2725,7 +2699,6 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
 
         if (isError && !processedIds.has(currentId)) {
           processedIds.add(currentId);
-          console.log(`\uD83D\uDCDD Batch: Processando Q${currentId} (erro ${processed + 1}/${totalErros})`);
 
           try {
             // Expand comment before extracting
@@ -2740,8 +2713,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
                 getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
               ]);
               processed++;
-              console.log(`\u2705 Batch: Q${currentId} processada (${processed}/${totalErros})`);
-            }
+                }
           } catch (err) {
             console.error(`\u274C Batch: Erro em Q${currentId}:`, err);
             errors++;
