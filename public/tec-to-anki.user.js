@@ -2123,6 +2123,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <div class="tec-field">
               <label>Modelo Gemini</label>
               <select id="tec-cfg-gemini-model">
+                <option value="gemini-3.1-pro-preview" ${getSetting('geminiModel') === 'gemini-3.1-pro-preview' ? 'selected' : ''}>gemini-3.1-pro-preview \u2B50 (mais avan\u00E7ado)</option>
                 <option value="gemini-2.5-flash" ${getSetting('geminiModel') === 'gemini-2.5-flash' ? 'selected' : ''}>gemini-2.5-flash (recomendado)</option>
                 <option value="gemini-2.5-pro" ${getSetting('geminiModel') === 'gemini-2.5-pro' ? 'selected' : ''}>gemini-2.5-pro (mais preciso)</option>
                 <option value="gemini-2.5-flash-lite" ${getSetting('geminiModel') === 'gemini-2.5-flash-lite' ? 'selected' : ''}>gemini-2.5-flash-lite (mais r\u00E1pido)</option>
