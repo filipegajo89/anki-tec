@@ -33,12 +33,12 @@
 
   const DEFAULTS = {
     aiProvider: 'gemini', // 'gemini' or 'openrouter'
-    geminiApiKey: '***REMOVED***',
+    geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
     geminiModel: 'gemini-2.5-flash',
-    openrouterApiKey: '***REMOVED***',
+    openrouterApiKey: 'YOUR_OPENROUTER_API_KEY_HERE',
     openrouterModel: 'qwen/qwen3-235b-a22b-2507',
     obsidianVault: 'Filipe - Obs',
-    obsidianToken: '***REMOVED***',
+    obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
     obsidianBasePath: 'TEC',
     obsidianMethod: 'rest', // 'rest', 'uri', 'clipboard'
