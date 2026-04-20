@@ -1251,6 +1251,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
     { id: 'anthropic/claude-3.5-haiku',          label: 'Claude 3.5 Haiku ($2.40/M tok)' },
     { id: 'anthropic/claude-haiku-4.5',          label: 'Claude Haiku 4.5 ($3.00/M tok)' },
+    { id: 'google/gemini-3.1-pro-preview',       label: '\u2B50 Gemini 3.1 Pro Preview \u2014 GPQA 94.1% ($1.25/$10 M tok)' },
   ];
 
   // Models for dual pipeline (creator + auditor)
@@ -1434,7 +1435,7 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
       ...extraBody,
     };
 
-    const MAX_RETRIES = 3;
+    const MAX_RETRIES = 5;
     let res;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       res = await gmFetch(url, {
@@ -1446,18 +1447,10 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
           'X-Title': 'TEC-to-Anki',
         },
         body: JSON.stringify(body),
-        timeout: 30000,
+        timeout: 90000,
       });
 
       if (res.ok) break;
-
-      // Auth errors: abort immediately, no retry
-      if (res.status === 401 || res.status === 403) {
-        const errText = await res.text();
-        const err = new Error(`OpenRouter API error (${res.status}): ${errText}`);
-        err.isAuthError = true;
-        throw err;
-      }
 
       if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
         const waitSec = res.status === 429 ? attempt * 8 : attempt * 5;
@@ -1624,9 +1617,6 @@ ${questionData.comentario || 'Não disponível'}`;
     try {
       creatorResult = await callCreator(questionData);
     } catch (err) {
-      // Auth errors: don't bother with fallback (same key will fail)
-      if (err.isAuthError) throw new Error('API key do OpenRouter inválida ou expirada. Gere uma nova em openrouter.ai/keys e configure em ⚙️.');
-
       // Fallback: use auditor model as creator
       console.warn('⚠️ Creator falhou, usando modelo auditor como fallback:', err.message);
       onStatus('⚠️ Creator falhou — usando fallback...');
