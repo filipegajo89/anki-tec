@@ -19,6 +19,7 @@
 // @connect      localhost
 // @connect      generativelanguage.googleapis.com
 // @connect      openrouter.ai
+// @connect      api.opencode.co
 // @connect      www.tecconcursos.com.br
 // @connect      tecconcursos.com.br
 // @run-at       document-idle
@@ -32,11 +33,14 @@
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
   const DEFAULTS = {
-    aiProvider: 'gemini', // 'gemini' or 'openrouter'
+    aiProvider: 'gemini', // 'gemini', 'openrouter' or 'opencode'
     geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
     geminiModel: 'gemini-2.5-flash',
     openrouterApiKey: 'YOUR_OPENROUTER_API_KEY_HERE',
     openrouterModel: 'qwen/qwen3-235b-a22b-2507',
+    opencodeApiKey: 'YOUR_OPENCODE_API_KEY_HERE',
+    opencodeModel: 'opencode-go-1',
+    opencodeBaseUrl: 'https://api.opencode.co/v1/chat/completions',
     obsidianVault: 'Filipe - Obs',
     obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
@@ -993,29 +997,36 @@
 
 Aplique rigorosamente: cada card testa UMA ÚNICA informação — um prazo, uma exceção, uma palavra-chave, uma tese do STF. Nunca agrupe dois fatos num mesmo card.
 
+**Evite enumerações:** se a questão cobrar uma lista de 3+ itens (requisitos, características, hipóteses), prefira criar 1 card por item em vez de 1 card com a lista inteira.
+
 ## Formato dos cards
 
 ### PRIORIDADE 1 — Cloze (lacunas)
 
-Prefira SEMPRE este formato para regras, leis e jurisprudências. Escreva a afirmação completa com {{lacuna}} marcando a informação-chave a ser ocultada.
+Prefira SEMPRE este formato para regras, leis e jurisprudências. Escreva uma afirmação AUTOCONTIDA, que faça sentido mesmo sem a questão original. A lacuna entre {{ }} deve ser um RÓTULO GENÉRICO do que falta (ex: {{tipo}}, {{regra}}, {{conceito}}), nunca a resposta já preenchida (ex: {{N:N}}, {{igual para todas as contas}}).
 
 ❌ Ruim (Q&A genérico):
 Frente: O que diz a Súmula 539 do STJ sobre juros?
 Verso: É permitida a capitalização com periodicidade inferior a um ano.
 
 ✅ Bom (Cloze):
-Frente: A capitalização de juros com periodicidade inferior a um ano é {{permitida}} em contratos celebrados após 31/03/2000. (Súmula 539 STJ)
+Frente: A capitalização de juros com periodicidade inferior a um ano é {{regra}} em contratos celebrados após 31/03/2000. (Súmula 539 STJ)
 Verso: permitida
+
+Em contratos após 31/03/2000, admite-se capitalização inferior a um ano. (Súmula 539 STJ)
 
 ### PRIORIDADE 2 — Q&A cirúrgico
 
 Use apenas quando Cloze não for natural. Regras obrigatórias:
 - Pergunta sem pistas na formulação: NÃO use "Segundo o STF..." se isso entrega a resposta
-- Verso com NO MÁXIMO 10 palavras
+- O verso deve abrir com a resposta curta e, se necessário, trazer 1 explicação breve logo abaixo para deixar o card autocontido
+- Para fórmulas ou cálculos: prefira Cloze com a variável como lacuna; inclua um exemplo numérico concreto no verso para ancorar a memória
 
 ✅ Bom (Q&A):
 Frente: Qual princípio veda cobrar tributo no mesmo exercício da lei que o criou?
-Verso: Anterioridade Anual. (CF art. 150, III, b)
+Verso: Anterioridade anual.
+
+Impede a cobrança no mesmo exercício da lei instituidora. (CF art. 150, III, b)
 
 ## O que fazer
 
@@ -1041,7 +1052,7 @@ O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR a confusão
 ### Exemplos de erros comuns e como abordar:
 
 **Erro por TROCA/INVERSÃO de conceitos:**
-Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Prefira Cloze comparativo.
+Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Prefira Cloze comparativo, mas use Q&A ou V/F se o Cloze ficar artificial.
 
 **Erro por EXCEÇÃO desconhecida:**
 Se o aluno generalizou uma regra que tem exceção, o card deve focar na exceção via Cloze: "A regra X se aplica, EXCETO quando {{situação}}."
@@ -1055,10 +1066,13 @@ Se um item parece certo mas tem uma palavra que o torna errado, o card usa Cloze
 **Erro por GENERALIZAÇÃO (como "toda norma...", "sempre...", "nunca..."):**
 Cloze: "A regra X se aplica {{sempre / salvo quando}}..."
 
+**Questão de jurisprudência (STF/STJ):**
+Prefira o sentido caso→tese: frente = situação fática do julgado, verso = tese fixada pelo tribunal. Se a tese for amplamente cobrada em provas, um segundo card tese→caso consolida o reconhecimento inverso.
+
 ### Tipos de cards para questão ERRADA (em ordem de prioridade):
 
-1. **Card da distinção (OBRIGATÓRIO):** Force o aluno a distinguir os conceitos que ele CONFUNDIU. Prefira Cloze.
-2. **Card da regra correta (se necessário):** Pergunta direta sobre o artigo, súmula ou regra que fundamenta a resposta correta. Prefira Cloze.
+1. **Card da distinção (OBRIGATÓRIO):** Force o aluno a distinguir os conceitos que ele CONFUNDIU. Prefira Cloze, salvo se um Q&A ou V/F ficar mais claro.
+2. **Card da regra correta (se necessário):** Pergunta direta sobre o artigo, súmula ou regra que fundamenta a resposta correta.
 
 **No campo "erro_identificado":** descreva o mecanismo do erro (ex: "Confundiu competência da União com a dos Estados").
 
@@ -1075,8 +1089,8 @@ Identifique com precisão:
 
 ### Tipos de cards para questão ACERTADA (em ordem de prioridade):
 
-1. **Card da pegadinha (OBRIGATÓRIO):** Exponha a armadilha da banca via Cloze. Se havia uma alternativa que PARECIA certa mas não era, o card deve fixar o detalhe que a invalida.
-2. **Card da nuance (se necessário):** Cloze testando a distinção sutil que tornava a questão difícil.
+1. **Card da pegadinha (OBRIGATÓRIO):** Exponha a armadilha da banca. Use Cloze se ficar natural; caso contrário, use Q&A ou V/F autocontido.
+2. **Card da nuance (se necessário):** Teste a distinção sutil que tornava a questão difícil sem depender da redação da questão original.
 
 **No campo "erro_identificado":** descreva a pegadinha/nuance da questão (ex: "A alternativa B parecia correta por usar 'sempre que possível', mas o art. X não admite exceção neste caso").
 
@@ -1084,12 +1098,14 @@ Identifique com precisão:
 
 - **MÁXIMO 2 cards** — se a confusão for simples, 1 card basta
 - O PRIMEIRO card SEMPRE deve atacar o ponto central: a confusão (se errou) ou a pegadinha/nuance (se acertou)
-- **Tipo**: indique no campo "tipo" se é "Cloze" ou "Q&A"
-- **Cloze**: use {{lacuna}} para marcar a informação oculta; o Verso deve ter APENAS a palavra/expressão revelada + referência legal se houver
-- **Q&A**: frente cirúrgica, verso com NO MÁXIMO 10 palavras. Não use "Segundo o STF..." se isso entrega a resposta
+- O card precisa ser AUTOCONTIDO: quem o lê deve entender o erro e a distinção sem voltar à questão
+- **Tipo**: indique no campo "tipo" se é "Cloze" ou "Q&A". Você pode combinar 1 Cloze + 1 Q&A quando isso ensinar melhor
+- **Cloze**: use {{rotulo_generico}} para marcar a informação oculta; nunca coloque a resposta dentro das chaves. O verso deve começar pela resposta curta e pode trazer 1 explicação breve logo abaixo
+- **Q&A**: frente cirúrgica, verso começando pela resposta curta. Depois, se necessário, acrescente 1 explicação breve. Não use "Segundo o STF..." se isso entrega a resposta
 - Use perguntas COMPARATIVAS quando o erro envolver troca de conceitos
 - NUNCA crie cards genéricos sobre o assunto. Cada card deve ter relação direta com o motivo do erro
 - NUNCA copie o enunciado da questão. O card deve testar o CONCEITO, não a questão específica
+- Se a distinção importante não couber num Cloze limpo, prefira um Q&A ou V/F curto e claro
 - Se a questão envolver artigo de lei, cite o artigo no verso
 - materia: nome oficial como em editais (Direito Constitucional, Direito Tributário, etc.)
 - ATENÇÃO na classificação de matéria: classifique pelo CONTEÚDO TÉCNICO do tema
@@ -1106,9 +1122,12 @@ Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos
 - **<mark>texto</mark>** → para palavras-chave críticas dentro da frase que o aluno deve gravar (ex: a legalidade é sobre a <mark>forma</mark>; a anterioridade é sobre o <mark>tempo</mark>)
 - **<ul><li>texto</li></ul>** → para listas enumerativas (ex: atos que exigem lei: instituição, aumento, majoração de alíquota, alteração de base de cálculo)
 - **<span class="ref">texto</span>** → para referências legais e artigos (ex: <span class="ref">CF art. 150, I</span>)
+- **<div class="answer-line">texto</div>** → para a primeira linha do verso, com a resposta curta
+- **<div class="explanation">texto</div>** → para a explicação breve que contextualiza a distinção
 
 ### Regras de formatação:
-- Em cards Cloze: use <mark> na lacuna assim: <mark>{{lacuna}}</mark> para destacar visualmente a informação oculta
+- Em cards Cloze: use <mark> na lacuna assim: <mark>{{rotulo_generico}}</mark> para destacar visualmente a informação oculta
+- No verso, prefira a estrutura: <div class="answer-line">resposta curta</div> + <div class="explanation">explicação breve</div>
 - Use <b> em TODA menção a conceitos jurídicos importantes no verso
 - Use <span class="neg"> SEMPRE que houver negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto")
 - Use <mark> com moderação (1-3 palavras por card) apenas nas palavras que são o NÚCLEO da distinção
@@ -1132,7 +1151,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
 - Nomes de institutos: o nome do conceito em si não é palavra-chave, são as expressões que SINALIZAM ele
 
 ### Regras:
-- Liste 2-5 expressões por card (as mais recorrentes em provas para aquele conceito)
+- Liste 1-2 expressões por card (somente as mais fortes e discriminativas)
 - Priorize trechos literais de artigos de lei ou súmulas
 - Se não houver expressões canônicas claras para o conceito, deixe o campo vazio ("")`;
 
@@ -1147,11 +1166,11 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
         items: {
           type: 'object',
           properties: {
-            tipo: { type: 'string', enum: ['Cloze', 'Q&A'], description: 'Formato do card: Cloze para afirmação com {{lacuna}}, Q&A para pergunta/resposta direta' },
-            frente_texto_limpo: { type: 'string', description: 'Para Cloze: afirmação completa com {{lacuna}} em texto puro. Para Q&A: pergunta cirúrgica sem pistas.' },
-            verso_texto_limpo: { type: 'string', description: 'Resposta do flashcard em texto puro (sem HTML, max 3 linhas)' },
-            frente_html: { type: 'string', description: 'Pergunta do flashcard com formata\u00E7\u00E3o HTML (<b>, <mark>, <span class="neg">, etc.)' },
-            verso_html: { type: 'string', description: 'Resposta do flashcard com formata\u00E7\u00E3o HTML (<b>, <mark>, <span class="neg">, etc., max 3 linhas)' },
+            tipo: { type: 'string', enum: ['Cloze', 'Q&A'], description: 'Formato do card: Cloze para afirmação autocontida com {{rotulo_generico}}, Q&A para pergunta direta, V/F ou distinção breve' },
+            frente_texto_limpo: { type: 'string', description: 'Card autocontido em texto puro. Se for Cloze, use {{rotulo_generico}}, nunca a resposta preenchida.' },
+            verso_texto_limpo: { type: 'string', description: 'Primeira linha com resposta curta em texto puro. Depois, se necessário, uma explicação breve.' },
+            frente_html: { type: 'string', description: 'Mesmo conteúdo da frente com HTML e destaque visual; se for Cloze, use <mark>{{rotulo_generico}}</mark>.' },
+            verso_html: { type: 'string', description: 'Verso em HTML, idealmente com <div class="answer-line">resposta curta</div> e <div class="explanation">explicação breve</div>.' },
             palavras_chave: { type: 'string', description: 'Express\u00F5es can\u00F4nicas da lei/doutrina que identificam este conceito jur\u00EDdico, separadas por " | ". Vazio se n\u00E3o houver.' },
           },
           required: ['tipo', 'frente_texto_limpo', 'verso_texto_limpo', 'frente_html', 'verso_html', 'palavras_chave'],
@@ -1194,7 +1213,112 @@ ${altsText || 'N\u00E3o dispon\u00EDveis'}
 ${q.comentario || 'N\u00E3o dispon\u00EDvel'}
 
 ---
-Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie 2-3 flashcards cir\u00FArgicos.`;
+Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie no m\u00E1ximo 2 cards AUTOCONTIDOS, podendo combinar 1 Cloze + 1 Q&A quando isso deixar a distin\u00E7\u00E3o mais clara.`;
+  }
+
+  function normalizeKeywords(value) {
+    return (value || '')
+      .split(/\s*\|\s*/)
+      .map(item => stripHtml(item).trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(' | ');
+  }
+
+  function extractAnswerLabel(content) {
+    return stripHtml(content || '')
+      .replace(/\r/g, '')
+      .split(/\n\s*\n/)[0]
+      .split('\n')[0]
+      .trim()
+      .replace(/[.:;!]+$/, '')
+      .toLowerCase();
+  }
+
+  function normalizeClozePlaceholder(text, answerText = '', wrapWithMark = false) {
+    if (!text) return text;
+
+    const answerLabel = extractAnswerLabel(answerText);
+
+    let normalized = text.replace(/\{\{([^}]+)\}\}/g, (_, inner) => {
+      const clean = stripHtml(inner).trim();
+      if (!clean) return '{{lacuna}}';
+
+      if (answerLabel && clean.toLowerCase() === answerLabel) {
+        return '{{lacuna}}';
+      }
+
+      if (/^[A-Za-zÀ-ÿ0-9_-]{1,24}(?:\s+[A-Za-zÀ-ÿ0-9_-]{1,24})?$/.test(clean)) {
+        return `{{${clean}}}`;
+      }
+
+      return '{{lacuna}}';
+    });
+
+    if (wrapWithMark && !/<mark>\s*\{\{/.test(normalized)) {
+      normalized = normalized.replace(/\{\{([^}]+)\}\}/g, '<mark>{{$1}}</mark>');
+    }
+
+    return normalized;
+  }
+
+  function normalizeBackText(content) {
+    return (content || '').trim().replace(/\n{3,}/g, '\n\n');
+  }
+
+  function formatCardBack(content) {
+    if (!content) return content;
+
+    const trimmed = content.trim();
+    if (!trimmed || /class="answer-line"|class="explanation"/.test(trimmed)) {
+      return trimmed;
+    }
+
+    const blocks = trimmed.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean);
+    if (!blocks.length) return trimmed;
+
+    const answerLine = blocks.shift().replace(/\n/g, '<br>');
+    const explanation = blocks.length
+      ? `<div class="explanation">${blocks.map(block => `<div class="explanation-block">${block.replace(/\n/g, '<br>')}</div>`).join('')}</div>`
+      : '';
+
+    return `<div class="answer-line">${answerLine}</div>${explanation}`;
+  }
+
+  function normalizeGeneratedCard(card) {
+    const normalized = { ...card };
+
+    if (normalized.frente_html && !normalized.frente) {
+      normalized.frente = normalized.frente_html;
+      normalized.verso = normalized.verso_html;
+    }
+    if (normalized.frente && !normalized.frente_html) {
+      normalized.frente_html = normalized.frente;
+      normalized.verso_html = normalized.verso;
+      normalized.frente_texto_limpo = normalized.frente.replace(/<[^>]+>/g, '');
+      normalized.verso_texto_limpo = normalized.verso.replace(/<[^>]+>/g, '');
+    }
+
+    normalized.tipo = normalized.tipo || (/\{\{[^}]+\}\}/.test(normalized.frente_html || normalized.frente_texto_limpo || '') ? 'Cloze' : 'Q&A');
+
+    if (normalized.tipo === 'Cloze') {
+      const answerText = normalized.verso_texto_limpo || normalized.verso || normalized.verso_html || '';
+      normalized.frente_texto_limpo = normalizeClozePlaceholder(normalized.frente_texto_limpo || '', answerText, false);
+      normalized.frente_html = normalizeClozePlaceholder(normalized.frente_html || normalized.frente_texto_limpo || '', answerText, true);
+    }
+
+    normalized.verso_texto_limpo = normalizeBackText(normalized.verso_texto_limpo || normalized.verso || '');
+    normalized.verso_html = formatCardBack(normalized.verso_html || normalized.verso || normalized.verso_texto_limpo);
+    normalized.frente = normalized.frente_html;
+    normalized.verso = normalized.verso_html;
+    normalized.palavras_chave = normalizeKeywords(normalized.palavras_chave);
+    return normalized;
+  }
+
+  function normalizeGeneratedResult(result) {
+    if (!result || !Array.isArray(result.cards)) return result;
+    result.cards = result.cards.map(normalizeGeneratedCard);
+    return result;
   }
 
   async function callGemini(questionData) {
@@ -1241,27 +1365,126 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error('Resposta vazia do Gemini');
 
-    const parsed = JSON.parse(text);
-    // Normalize card fields for backward compat
-    for (const card of (parsed.cards || [])) {
-      if (card.frente_html && !card.frente) {
+    const result = normalizeGeneratedResult(JSON.parse(text));
+    result._generatorModel = `gemini/${model}`;
+    return result;
+  }
+
+  // ── Generic OpenAI-compatible API caller ────────────────────────────
+
+  function parseOpenAIResponse(json) {
+    let content = json?.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Resposta vazia da API');
+    content = content.trim();
+    if (content.startsWith('```')) {
+      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+    }
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Resposta não contém JSON válido.');
+    return JSON.parse(jsonMatch[0]);
+  }
+
+  async function callOpenAICompatible(url, apiKey, body, extraHeaders = {}) {
+    const MAX_RETRIES = 5;
+    let res;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      res = await gmFetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          ...extraHeaders,
+        },
+        body: JSON.stringify(body),
+        timeout: 90000,
+      });
+
+      if (res.ok) break;
+
+      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5;
+        console.warn(`⚠️ ${res.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+
+      const errText = await res.text();
+      throw new Error(`API error (${res.status}): ${errText}`);
+    }
+
+    return res.json();
+  }
+
+  async function callOpencode(questionData) {
+    const apiKey = getSetting('opencodeApiKey');
+    const model = getSetting('opencodeModel');
+    const baseUrl = getSetting('opencodeBaseUrl');
+    if (!apiKey) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
+
+    const schemaDescription = `Responda SOMENTE com JSON válido neste formato exato (sem markdown, sem comentários):
+{
+  "materia": "string - matéria do edital",
+  "subtopico": "string - subtópico específico",
+  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance",
+  "cards": [
+    {
+      "tipo": "string - Cloze ou Q&A",
+      "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e nunca a resposta preenchida",
+      "verso_texto_limpo": "string - primeira linha com resposta curta; depois, se necessário, uma explicação breve",
+      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
+      "verso_html": "string - verso em HTML, idealmente com <div class=\"answer-line\">resposta curta</div> e <div class=\"explanation\">explicação breve</div>",
+      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
+    }
+  ]
+}`;
+
+    const body = {
+      model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
+        { role: 'user', content: buildGeminiPrompt(questionData) },
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    };
+
+    const json = await callOpenAICompatible(baseUrl, apiKey, body);
+    const usage = json?.usage;
+    const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
+
+    const result = parseOpenAIResponse(json);
+    if (!result.materia || !result.cards || !Array.isArray(result.cards)) {
+      throw new Error('Resposta do OpenCode em formato inválido. Tente novamente.');
+    }
+    for (const card of result.cards) {
+      const hasNew = card.frente_html && card.verso_html;
+      const hasOld = card.frente && card.verso;
+      if (!hasNew && !hasOld) {
+        throw new Error('Um ou mais flashcards estão incompletos na resposta da IA.');
+      }
+      if (hasNew && !hasOld) {
         card.frente = card.frente_html;
         card.verso = card.verso_html;
       }
-      if (card.frente && !card.frente_html) {
+      if (hasOld && !hasNew) {
         card.frente_html = card.frente;
         card.verso_html = card.verso;
         card.frente_texto_limpo = card.frente.replace(/<[^>]+>/g, '');
         card.verso_texto_limpo = card.verso.replace(/<[^>]+>/g, '');
       }
     }
-    return parsed;
+    const normalized = normalizeGeneratedResult(result);
+    normalized._generatorModel = `opencode/${model}`;
+    if (costEstimate) normalized._usage = costEstimate;
+    return normalized;
   }
 
   // ── OpenRouter (OpenAI-compatible) ──────────────────────────────────
 
   const OPENROUTER_MODELS = [
     { id: 'google/gemma-4-31b-it:free',          label: '\u2B50 Gemma 4 31B (GRATUITO)' },
+    { id: 'qwen/qwen3.6-plus',                   label: '\uD83E\uDDE0 Qwen 3.6 Plus Thinking ($0.325/$1.95 M tok)' },
+    { id: 'moonshotai/kimi-k2.6',                label: '\uD83E\uDDE0 Kimi K2.6 Thinking ($0.75/$3.50 M tok)' },
     { id: 'moonshotai/kimi-k2.5',                 label: '\uD83E\uDDE0 Kimi K2.5 Thinking ($0.60/M tok)' },
     { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok \u2014 recomendado)' },
     { id: 'openai/gpt-4o-mini',                  label: 'GPT-4o Mini ($0.39/M tok)' },
@@ -1272,16 +1495,35 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     { id: 'google/gemini-3.1-pro-preview',       label: '\u2B50 Gemini 3.1 Pro Preview \u2014 GPQA 94.1% ($1.25/$10 M tok)' },
   ];
 
+  const OPENCODE_MODELS = [
+    { id: 'opencode-go-1', label: 'OpenCode Go 1' },
+    { id: 'opencode-go-2', label: 'OpenCode Go 2' },
+  ];
+
   // Models for dual pipeline (creator + auditor)
   const PIPELINE_CREATOR_MODELS = [
+    { id: 'qwen/qwen3.6-plus',                   label: 'Qwen 3.6 Plus Thinking ($0.325/$1.95 M tok)' },
+    { id: 'moonshotai/kimi-k2.6',                label: 'Kimi K2.6 Thinking ($0.75/$3.50 M tok)' },
     { id: 'moonshotai/kimi-k2.5',                label: 'Kimi K2.5 — IFEval 100% ($0.60/$2.00 M tok)' },
     { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok)' },
     { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
+    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: `OpenCode ${m.label}` })),
   ];
+
+  function getOpenRouterReasoningConfig(model) {
+    if (!model) return null;
+
+    if (model === 'qwen/qwen3.6-plus' || model === 'moonshotai/kimi-k2.6' || model.includes('kimi-k2')) {
+      return { reasoning: { effort: 'high' } };
+    }
+
+    return null;
+  }
   const PIPELINE_AUDITOR_MODELS = [
     { id: 'google/gemini-3.1-pro-preview',       label: 'Gemini 3.1 Pro Preview — GPQA 94.1% ($1.25/$10 M tok)' },
     { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
     { id: 'anthropic/claude-haiku-4.5',          label: 'Claude Haiku 4.5 ($3.00/M tok)' },
+    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: `OpenCode ${m.label}` })),
   ];
 
   async function callOpenRouter(questionData) {
@@ -1296,18 +1538,18 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil",
   "cards": [
     {
-      "frente_texto_limpo": "string - pergunta em texto puro, sem HTML",
-      "verso_texto_limpo": "string - resposta em texto puro, sem HTML (max 3 linhas)",
-      "frente_html": "string - mesma pergunta com formata\u00E7\u00E3o HTML (<b>, <mark>, <span class=\\"neg\\">)",
-      "verso_html": "string - mesma resposta com formata\u00E7\u00E3o HTML",
-      "palavras_chave": "string - express\u00F5es can\u00F4nicas separadas por | . Vazio se n\u00E3o houver"
+      "tipo": "string - Cloze ou Q&A",
+      "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e nunca a resposta preenchida",
+      "verso_texto_limpo": "string - primeira linha com resposta curta; depois, se necessário, uma explicação breve",
+      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
+      "verso_html": "string - verso em HTML, idealmente com <div class=\\"answer-line\\">resposta curta</div> e <div class=\\"explanation\\">explicação breve</div>",
+      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
     }
   ]
 }`;
 
-    const url = 'https://openrouter.ai/api/v1/chat/completions';
     const body = {
-      model: model,
+      model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
         { role: 'user', content: buildGeminiPrompt(questionData) },
@@ -1316,71 +1558,29 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
       response_format: { type: 'json_object' },
     };
 
-    // Enable thinking/reasoning for Kimi K2.5
-    if (model.includes('kimi-k2')) {
-      body.reasoning = { effort: 'high' };
+    const reasoningConfig = getOpenRouterReasoningConfig(model);
+    if (reasoningConfig) {
+      Object.assign(body, reasoningConfig);
     }
 
-    const MAX_RETRIES = 5;
-    let res;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      res = await gmFetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
-          'X-Title': 'TEC-to-Anki',
-        },
-        body: JSON.stringify(body),
-        timeout: 90000,
-      });
+    const json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
+      'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
+      'X-Title': 'TEC-to-Anki',
+    });
 
-      if (res.ok) break;
+    const usage = json?.usage;
+    const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
 
-      // Retry on 429 (rate limit) or 503 (overloaded) with progressive backoff
-      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
-        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5; // longer waits for rate limits
-        console.warn(`\u26A0\uFE0F OpenRouter ${res.status} \u2014 tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
-        await new Promise(r => setTimeout(r, waitSec * 1000));
-        continue;
-      }
-
-      const errText = await res.text();
-      throw new Error(`OpenRouter API error (${res.status}): ${errText}`);
-    }
-
-    const json = await res.json();
-
-    // OpenRouter returns OpenAI-compatible format
-    let content = json?.choices?.[0]?.message?.content;
-    if (!content) throw new Error('Resposta vazia do OpenRouter');
-
-    // Strip markdown code fences if model wrapped JSON in ```json ... ```
-    content = content.trim();
-    if (content.startsWith('```')) {
-      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    }
-
-    // Some models return extra text after (or before) the JSON object.
-    // Extract the first valid JSON object from the response.
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Resposta do OpenRouter n\u00E3o cont\u00E9m JSON v\u00E1lido.');
-    content = jsonMatch[0];
-
-    // Parse and validate structure
-    const parsed = JSON.parse(content);
+    const parsed = parseOpenAIResponse(json);
     if (!parsed.materia || !parsed.cards || !Array.isArray(parsed.cards)) {
       throw new Error('Resposta do OpenRouter em formato inv\u00E1lido. Tente novamente.');
     }
-    // Ensure every card has required fields (support both old and new format)
     for (const card of parsed.cards) {
       const hasNew = card.frente_html && card.verso_html;
       const hasOld = card.frente && card.verso;
       if (!hasNew && !hasOld) {
         throw new Error('Um ou mais flashcards est\u00E3o incompletos na resposta da IA.');
       }
-      // Normalize: ensure both old and new field names exist for backward compat
       if (hasNew && !hasOld) {
         card.frente = card.frente_html;
         card.verso = card.verso_html;
@@ -1392,7 +1592,10 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
         card.verso_texto_limpo = card.verso.replace(/<[^>]+>/g, '');
       }
     }
-    return parsed;
+    const normalized = normalizeGeneratedResult(parsed);
+    normalized._generatorModel = model;
+    if (costEstimate) normalized._usage = costEstimate;
+    return normalized;
   }
 
   // ── AI Dispatcher ───────────────────────────────────────────────────
@@ -1401,6 +1604,9 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const provider = getSetting('aiProvider');
     if (provider === 'openrouter') {
       return callOpenRouter(questionData);
+    }
+    if (provider === 'opencode') {
+      return callOpencode(questionData);
     }
     return callGemini(questionData);
   }
@@ -1443,10 +1649,11 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
    * Returns parsed JSON response.
    */
   async function callOpenRouterWithModel(model, systemPrompt, userPrompt, extraBody = {}) {
-    const apiKey = getSetting('openrouterApiKey');
-    if (!apiKey) throw new Error('API key do OpenRouter não configurada.');
+    const isOpencode = model.startsWith('opencode-');
+    const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
+    if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada.`);
 
-    const url = 'https://openrouter.ai/api/v1/chat/completions';
+    const reasoningConfig = !isOpencode ? (getOpenRouterReasoningConfig(model) || {}) : {};
     const body = {
       model,
       messages: [
@@ -1455,53 +1662,26 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
       ],
       temperature: 0.3,
       response_format: { type: 'json_object' },
+      ...reasoningConfig,
       ...extraBody,
     };
 
-    const MAX_RETRIES = 5;
-    let res;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      res = await gmFetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
-          'X-Title': 'TEC-to-Anki',
-        },
-        body: JSON.stringify(body),
-        timeout: 90000,
+    let json;
+    if (isOpencode) {
+      const baseUrl = getSetting('opencodeBaseUrl');
+      json = await callOpenAICompatible(baseUrl, apiKey, body);
+    } else {
+      json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
+        'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
+        'X-Title': 'TEC-to-Anki',
       });
-
-      if (res.ok) break;
-
-      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
-        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5;
-        console.warn(`⚠️ OpenRouter ${res.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
-        await new Promise(r => setTimeout(r, waitSec * 1000));
-        continue;
-      }
-
-      const errText = await res.text();
-      throw new Error(`OpenRouter API error (${res.status}): ${errText}`);
     }
-
-    const json = await res.json();
-    let content = json?.choices?.[0]?.message?.content;
-    if (!content) throw new Error('Resposta vazia do OpenRouter');
-
-    content = content.trim();
-    if (content.startsWith('```')) {
-      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    }
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Resposta não contém JSON válido.');
 
     // Estimate cost from usage if available
     const usage = json?.usage;
     const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = parseOpenAIResponse(json);
     parsed._usage = costEstimate;
     return parsed;
   }
@@ -1629,8 +1809,10 @@ ${questionData.comentario || 'Não disponível'}`;
    * Full dual pipeline: Creator → Filter → Auditor → (retry if rejected) → final result.
    */
   async function callDualPipeline(questionData, onStatus = () => {}) {
-    const apiKey = getSetting('openrouterApiKey');
-    if (!apiKey) throw new Error('API key do OpenRouter não configurada para o pipeline dual.');
+    const creatorModel = getSetting('creatorModel');
+    const isOpencode = creatorModel.startsWith('opencode-');
+    const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
+    if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada para o pipeline dual.`);
 
     let totalCost = 0;
 
@@ -1738,6 +1920,8 @@ ${questionData.comentario || 'Não disponível'}`;
       erro_identificado: creatorResult.erro_identificado,
       cards: approved,
       _pipelineCost: totalCost,
+      _creatorModel: getSetting('creatorModel'),
+      _auditorModel: getSetting('auditorModel'),
     };
 
     const reviewCount = approved.filter(c => c._needsReview).length;
@@ -1772,9 +1956,86 @@ ${questionData.comentario || 'Não disponível'}`;
     } catch { return false; }
   }
 
+  function getAnkiModelCss() {
+    return `.card {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  max-width: 640px; margin: 0 auto; padding: 28px;
+  line-height: 1.72; color: #e8e8e8; background: #1e1e2e;
+}
+.frente { font-size: 1.22em; color: #eef2ff; font-weight: 500; }
+.frente b { color: #60a5fa; }
+.frente mark { background: #fde047; color: #111827; padding: 1px 4px; border-radius: 3px; }
+.verso { font-size: 1.02em; color: #d4d4d4; margin-top: 4px; }
+.answer-line { font-size: 1.3em; font-weight: 800; color: #fca5a5; margin: 0 0 12px; }
+.answer-line b, .answer-line .neg { color: inherit; }
+.explanation { color: #e5e7eb; line-height: 1.75; }
+.explanation-block + .explanation-block { margin-top: 10px; }
+.verso b { color: #93c5fd; font-weight: 700; }
+.verso .neg { color: #fca5a5; font-weight: 800; }
+.verso mark { background: rgba(253, 224, 71, 0.28); color: #fde68a; padding: 1px 4px; border-radius: 3px; }
+.verso .ref { color: #a5b4fc; font-style: italic; font-size: 0.92em; }
+.verso ul { margin: 8px 0 8px 18px; padding: 0; }
+.verso li { margin-bottom: 4px; }
+.palavras-chave {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px;
+  padding: 8px 10px; background: #23283d; border-left: 3px solid #60a5fa; border-radius: 8px;
+}
+.palavras-chave .kw {
+  background: transparent; color: #c7d2fe; padding: 0;
+  border: none; font-size: 0.82em; font-weight: 600; letter-spacing: 0.1px;
+}
+.contexto { color: #a0a0b8; font-size: 0.82em; margin-bottom: 14px;
+  padding-bottom: 10px; border-bottom: 1px solid #3a3a4e; letter-spacing: 0.3px; }
+.fonte { color: #787890; font-size: 0.72em; margin-top: 4px; text-align: right; }
+.modelo { color: #6b7280; font-size: 0.68em; margin-top: 14px; text-align: right; font-style: italic; }
+:root[class*="light"] .modelo { color: #9ca3af; }
+.erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
+  font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
+hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
+/* Modo claro */
+.card.night_mode_off, :root[class*="light"] .card {
+  color: #1f2937; background: #ffffff;
+}
+:root[class*="light"] .frente { color: #111827; }
+:root[class*="light"] .frente b { color: #1d4ed8; }
+:root[class*="light"] .frente mark { background: #fde047; color: #111827; }
+:root[class*="light"] .verso { color: #1f2937; }
+:root[class*="light"] .answer-line { color: #b42318; }
+:root[class*="light"] .explanation { color: #111827; }
+:root[class*="light"] .verso b { color: #1d4ed8; }
+:root[class*="light"] .verso .neg { color: #b42318; }
+:root[class*="light"] .verso mark { background: #fde68a; color: #111827; }
+:root[class*="light"] .verso .ref { color: #6b7280; }
+:root[class*="light"] .palavras-chave { background: #eef2ff; border-left-color: #4f46e5; }
+:root[class*="light"] .palavras-chave .kw { color: #4338ca; }
+:root[class*="light"] .contexto { color: #6b7280; border-bottom-color: #e5e7eb; }
+:root[class*="light"] .fonte { color: #9ca3af; }
+:root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
+:root[class*="light"] hr { border-top-color: #dee2e6; }`;
+  }
+
+  function getAnkiCardTemplate() {
+    return {
+      Name: 'Card',
+      Front: '<div class="card"><div class="contexto">{{Contexto}}</div><div class="frente">{{Frente}}</div></div>',
+      Back: `<div class="card">
+<div class="contexto">{{Contexto}}</div>
+<div class="frente">{{Frente}}</div>
+<hr>
+<div class="verso">{{Verso}}</div>
+{{#PalavrasChave}}<div class="palavras-chave">{{PalavrasChave}}</div>{{/PalavrasChave}}
+{{#ErroIdentificado}}<div class="erro">💡 {{ErroIdentificado}}</div>{{/ErroIdentificado}}
+{{#Modelo}}<div class="modelo">🤖 {{Modelo}}</div>{{/Modelo}}
+<div class="fonte">{{Fonte}}</div>
+</div>`,
+    };
+  }
+
   async function ensureAnkiModel() {
     const modelName = getSetting('ankiModelName');
     const models = await ankiInvoke('modelNames');
+    const cardTemplate = getAnkiCardTemplate();
+    const modelCss = getAnkiModelCss();
     if (models.includes(modelName)) {
       // Migrate: add PalavrasChave field if missing
       try {
@@ -1783,66 +2044,28 @@ ${questionData.comentario || 'Não disponível'}`;
           await ankiInvoke('modelFieldAdd', { modelName, fieldName: 'PalavrasChave', index: 2 });
           console.log('[TEC\u2192Anki] Campo PalavrasChave adicionado ao modelo existente');
         }
-      } catch (e) { console.warn('[TEC\u2192Anki] N\u00E3o foi poss\u00EDvel migrar campo PalavrasChave:', e); }
+        if (!fields.includes('Modelo')) {
+          await ankiInvoke('modelFieldAdd', { modelName, fieldName: 'Modelo', index: 6 });
+          console.log('[TEC\u2192Anki] Campo Modelo adicionado ao modelo existente');
+        }
+        await ankiInvoke('updateModelStyling', { model: { name: modelName, css: modelCss } });
+        await ankiInvoke('updateModelTemplates', {
+          model: {
+            name: modelName,
+            templates: {
+              [cardTemplate.Name]: { Front: cardTemplate.Front, Back: cardTemplate.Back },
+            },
+          },
+        });
+      } catch (e) { console.warn('[TEC→Anki] Não foi possível migrar o modelo existente:', e); }
       return;
     }
 
     await ankiInvoke('createModel', {
       modelName,
-      inOrderFields: ['Frente', 'Verso', 'PalavrasChave', 'Contexto', 'Fonte', 'ErroIdentificado'],
-      css: `.card {
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  max-width: 620px; margin: 0 auto; padding: 28px;
-  line-height: 1.7; color: #e8e8e8; background: #1e1e2e;
-}
-.frente { font-size: 1.2em; color: #60cdff; font-weight: 500; }
-.verso { font-size: 1.05em; color: #d4d4d4; margin-top: 4px; line-height: 1.8; }
-.verso b { color: #7ee8a2; font-weight: 600; }
-.verso .neg { color: #ff6b6b; font-weight: 700; }
-.verso mark { background: rgba(255, 230, 0, 0.25); color: #ffe066; padding: 1px 4px; border-radius: 3px; }
-.verso .ref { color: #a0a0b8; font-style: italic; font-size: 0.9em; }
-.verso ul { margin: 6px 0 6px 18px; padding: 0; }
-.verso li { margin-bottom: 2px; }
-.frente b { color: #60cdff; }
-.frente mark { background: rgba(255, 230, 0, 0.2); color: #ffe066; padding: 1px 4px; border-radius: 3px; }
-.palavras-chave { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.palavras-chave .kw { background: #2a2a4a; color: #c4b5fd; padding: 2px 10px;
-  border-radius: 12px; font-size: 0.78em; border: 1px solid #4a4a6a; letter-spacing: 0.3px; }
-.contexto { color: #a0a0b8; font-size: 0.82em; margin-bottom: 14px;
-  padding-bottom: 10px; border-bottom: 1px solid #3a3a4e; letter-spacing: 0.3px; }
-.fonte { color: #787890; font-size: 0.72em; margin-top: 20px; text-align: right; }
-.erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
-  font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
-hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
-/* Modo claro */
-.card.night_mode_off, :root[class*="light"] .card {
-  color: #1a1a2e; background: #ffffff;
-}
-:root[class*="light"] .frente { color: #1a56db; }
-:root[class*="light"] .verso { color: #2d2d2d; }
-:root[class*="light"] .verso b { color: #2d6a4f; }
-:root[class*="light"] .verso .neg { color: #d32f2f; }
-:root[class*="light"] .verso mark { background: #fff59d; color: #1a1a2e; }
-:root[class*="light"] .verso .ref { color: #6c757d; }
-:root[class*="light"] .frente mark { background: #fff59d; color: #1a1a2e; }
-:root[class*="light"] .palavras-chave .kw { background: #f3f0ff; color: #6d28d9; border-color: #ddd6fe; }
-:root[class*="light"] .contexto { color: #6c757d; border-bottom-color: #eee; }
-:root[class*="light"] .fonte { color: #adb5bd; }
-:root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
-:root[class*="light"] hr { border-top-color: #dee2e6; }`,
-      cardTemplates: [{
-        Name: 'Card',
-        Front: '<div class="card"><div class="contexto">{{Contexto}}</div><div class="frente">{{Frente}}</div></div>',
-        Back: `<div class="card">
-<div class="contexto">{{Contexto}}</div>
-<div class="frente">{{Frente}}</div>
-<hr>
-<div class="verso">{{Verso}}</div>
-{{#PalavrasChave}}<div class="palavras-chave">\uD83D\uDD11 {{#PalavrasChave}}{{PalavrasChave}}{{/PalavrasChave}}</div>{{/PalavrasChave}}
-{{#ErroIdentificado}}<div class="erro">\uD83D\uDCA1 {{ErroIdentificado}}</div>{{/ErroIdentificado}}
-<div class="fonte">{{Fonte}}</div>
-</div>`,
-      }],
+      inOrderFields: ['Frente', 'Verso', 'PalavrasChave', 'Contexto', 'Fonte', 'ErroIdentificado', 'Modelo'],
+      css: modelCss,
+      cardTemplates: [cardTemplate],
     });
   }
 
@@ -1889,6 +2112,14 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
           Contexto: contexto,
           Fonte: fonte,
           ErroIdentificado: aiResult.erro_identificado || '',
+          Modelo: (() => {
+            if (aiResult._creatorModel) {
+              const creator = aiResult._creatorModel.split('/').pop();
+              const auditor = (aiResult._auditorModel || '').split('/').pop();
+              return auditor ? `${creator} → ${auditor}` : creator;
+            }
+            return (aiResult._generatorModel || '').split('/').pop();
+          })(),
         },
         tags: cardTags,
         options: { allowDuplicate: false, duplicateScope: 'deck' },
@@ -2135,6 +2366,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <select id="tec-cfg-ai-provider">
               <option value="gemini" ${getSetting('aiProvider') === 'gemini' ? 'selected' : ''}>Google Gemini (gratuito)</option>
               <option value="openrouter" ${getSetting('aiProvider') === 'openrouter' ? 'selected' : ''}>OpenRouter (multi-modelo)</option>
+              <option value="opencode" ${getSetting('aiProvider') === 'opencode' ? 'selected' : ''}>OpenCode Go</option>
             </select>
           </div>
 
@@ -2168,6 +2400,20 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             </div>
           </div>
 
+          <div id="tec-cfg-opencode-section" style="display:none">
+            <div class="tec-field">
+              <label>OpenCode API Key</label>
+              <input type="password" id="tec-cfg-opencode-key" value="${getSetting('opencodeApiKey')}" placeholder="...">
+              <small style="color:#888;font-size:11px">Obtenha em <a href="https://opencode.co" target="_blank" style="color:#60cdff">opencode.co</a></small>
+            </div>
+            <div class="tec-field">
+              <label>Modelo OpenCode</label>
+              <select id="tec-cfg-opencode-model">
+                ${OPENCODE_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('opencodeModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
+              </select>
+            </div>
+          </div>
+
           <hr class="tec-divider">
           <h3>\uD83D\uDD00 Pipeline Dual (Creator + Auditor)</h3>
           <div class="tec-field">
@@ -2176,7 +2422,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <option value="single" ${getSetting('pipelineMode') === 'single' ? 'selected' : ''}>Single (1 modelo, sem auditoria)</option>
               <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual (Creator \u2192 Auditor, mais preciso)</option>
             </select>
-            <small style="color:#888;font-size:11px">Dual requer OpenRouter API key. Custo ~1.2\u00A2/quest\u00E3o.</small>
+            <small style="color:#888;font-size:11px">Dual requer OpenRouter ou OpenCode API key. Custo ~1.2\u00A2/quest\u00E3o.</small>
           </div>
           <div id="tec-cfg-pipeline-section" style="display:none">
             <div class="tec-field">
@@ -2264,10 +2510,12 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     const providerSelect = overlay.querySelector('#tec-cfg-ai-provider');
     const geminiSection = overlay.querySelector('#tec-cfg-gemini-section');
     const openrouterSection = overlay.querySelector('#tec-cfg-openrouter-section');
+    const opencodeSection = overlay.querySelector('#tec-cfg-opencode-section');
     function toggleProviderSections() {
-      const isGemini = providerSelect.value === 'gemini';
-      geminiSection.style.display = isGemini ? '' : 'none';
-      openrouterSection.style.display = isGemini ? 'none' : '';
+      const val = providerSelect.value;
+      geminiSection.style.display = val === 'gemini' ? '' : 'none';
+      openrouterSection.style.display = val === 'openrouter' ? '' : 'none';
+      opencodeSection.style.display = val === 'opencode' ? '' : 'none';
     }
     providerSelect.addEventListener('change', toggleProviderSections);
     toggleProviderSections(); // set initial state
@@ -2302,6 +2550,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         setSetting('geminiModel', overlay.querySelector('#tec-cfg-gemini-model').value);
         setSetting('openrouterApiKey', overlay.querySelector('#tec-cfg-openrouter-key').value);
         setSetting('openrouterModel', overlay.querySelector('#tec-cfg-openrouter-model').value);
+        setSetting('opencodeApiKey', overlay.querySelector('#tec-cfg-opencode-key').value);
+        setSetting('opencodeModel', overlay.querySelector('#tec-cfg-opencode-model').value);
         setSetting('pipelineMode', overlay.querySelector('#tec-cfg-pipeline-mode').value);
         setSetting('creatorModel', overlay.querySelector('#tec-cfg-creator-model').value);
         setSetting('auditorModel', overlay.querySelector('#tec-cfg-auditor-model').value);

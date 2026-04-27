@@ -19,6 +19,7 @@
 // @connect      localhost
 // @connect      generativelanguage.googleapis.com
 // @connect      openrouter.ai
+// @connect      api.opencode.co
 // @connect      www.tecconcursos.com.br
 // @connect      tecconcursos.com.br
 // @run-at       document-idle
@@ -32,11 +33,14 @@
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
   const DEFAULTS = {
-    aiProvider: 'gemini', // 'gemini' or 'openrouter'
+    aiProvider: 'gemini', // 'gemini', 'openrouter' or 'opencode'
     geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
     geminiModel: 'gemini-2.5-flash',
     openrouterApiKey: 'YOUR_OPENROUTER_API_KEY_HERE',
     openrouterModel: 'qwen/qwen3-235b-a22b-2507',
+    opencodeApiKey: 'YOUR_OPENCODE_API_KEY_HERE',
+    opencodeModel: 'opencode-go-1',
+    opencodeBaseUrl: 'https://api.opencode.co/v1/chat/completions',
     obsidianVault: 'Filipe - Obs',
     obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
@@ -47,6 +51,10 @@
     enableAnki: true,
     enableObsidian: true,
     showPreview: true,
+    pipelineMode: 'single', // 'single' or 'dual'
+    creatorModel: 'moonshotai/kimi-k2.5',
+    auditorModel: 'google/gemini-3.1-pro-preview',
+    pipelineCostTotal: 0, // cumulative cost in USD
   };
 
   function getSetting(key) {
@@ -345,12 +353,16 @@
   // Module-level variable to store the captured comment text
   let _capturedComment = '';
 
-  /** Strip HTML tags and return plain text */
+  /** Strip HTML tags and return plain text (regex-based, no DOM) */
   function stripHtml(html) {
     if (!html) return '';
-    const div = document.createElement('div');
-    div.innerHTML = html;
-    return div.textContent.trim();
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   /** Try to extract a comment string from a JSON object (API response) */
@@ -395,7 +407,6 @@
     const { scope, vm } = getAngularVm();
 
     // \u2500\u2500 Strategy 1: Direct property read from Angular scope \u2500\u2500
-    console.log('\n\uD83D\uDCD6 Strategy 1: Leitura direta do Angular scope...');
     if (vm) {
       const commentProps = [
         'comentario', 'textoComentario', 'comentarioProfessor', 'comentarioTexto',
@@ -414,8 +425,7 @@
             const plain = stripHtml(val);
             if (plain !== stripHtml(enunciado) && !plain.startsWith(stripHtml(enunciado).substring(0, 50))) {
               _capturedComment = plain;
-              console.log(`\u2705 Coment\u00E1rio via vm.questao.${prop} (${plain.length} chars)`);
-              return true;
+                  return true;
             }
           }
         }
@@ -426,10 +436,8 @@
             const plain = stripHtml(val);
             const enunciadoPlain = stripHtml(enunciado);
             if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
-              console.log(`\uD83D\uDD0E Poss\u00EDvel coment\u00E1rio em vm.questao.${key} (${plain.length} chars): "${plain.substring(0, 100)}..."`);
-              _capturedComment = plain;
-              console.log(`\u2705 Coment\u00E1rio via vm.questao.${key} (${plain.length} chars)`);
-              return true;
+                  _capturedComment = plain;
+                  return true;
             }
           }
         }
@@ -441,8 +449,7 @@
               const nested = val[prop];
               if (typeof nested === 'string' && nested.length > 30) {
                 _capturedComment = stripHtml(nested);
-                console.log(`\u2705 Coment\u00E1rio via vm.questao.${key}.${prop} (${_capturedComment.length} chars)`);
-                return true;
+                      return true;
               }
             }
           }
@@ -454,7 +461,6 @@
         const val = vm[prop];
         if (typeof val === 'string' && val.length > 30) {
           _capturedComment = stripHtml(val);
-          console.log(`\u2705 Coment\u00E1rio via vm.${prop} (${_capturedComment.length} chars)`);
           return true;
         }
       }
@@ -465,15 +471,13 @@
           const val = vm.comentario[prop];
           if (typeof val === 'string' && val.length > 30) {
             _capturedComment = stripHtml(val);
-            console.log(`\u2705 Coment\u00E1rio via vm.comentario.${prop} (${_capturedComment.length} chars)`);
-            return true;
+              return true;
           }
         }
       }
     }
 
     // \u2500\u2500 Strategy 2: Call Angular controller methods \u2500\u2500
-    console.log('\n\uD83D\uDD27 Strategy 2: Chamando m\u00E9todos Angular...');
     if (vm) {
       const methodNames = [
         'mostrarComentario', 'abrirComentario', 'toggleComentario', 'verComentario',
@@ -484,14 +488,13 @@
 
       for (const name of methodNames) {
         if (typeof vm[name] === 'function') {
-          console.log(`  \uD83D\uDD27 Calling vm.${name}()...`);
-          try {
+              try {
             const result = vm[name]();
             if (result && typeof result.then === 'function') {
               await result;
             }
             try { scope.$apply(); } catch (_) { /* may already be in digest */ }
-            await delay(2000);
+            await delay(800);
 
             // Re-check scope for new comment data
             if (vm.questao) {
@@ -501,8 +504,7 @@
                   const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
                   if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
                     _capturedComment = plain;
-                    console.log(`\u2705 Coment\u00E1rio after ${name}(): vm.questao.${key} (${plain.length} chars)`);
-                    return true;
+                              return true;
                   }
                 }
               }
@@ -516,8 +518,7 @@
       // Also try on scope directly
       for (const name of methodNames) {
         if (scope && typeof scope[name] === 'function' && typeof vm[name] !== 'function') {
-          console.log(`  \uD83D\uDD27 Calling scope.${name}()...`);
-          try {
+              try {
             scope[name]();
             try { scope.$apply(); } catch (_) {}
             await delay(2000);
@@ -528,8 +529,7 @@
                   const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
                   if (plain !== enunciadoPlain) {
                     _capturedComment = plain;
-                    console.log(`\u2705 Coment\u00E1rio after scope.${name}(): .${key} (${plain.length} chars)`);
-                    return true;
+                              return true;
                   }
                 }
               }
@@ -542,67 +542,59 @@
     }
 
     // \u2500\u2500 Strategy 3: XHR interception + click "Ver resolu\u00E7\u00E3o" \u2500\u2500
-    console.log('\n\uD83D\uDCE1 Strategy 3: XHR intercept + click...');
     let capturedXhrUrl = null;
     let capturedXhrResponse = null;
 
     const origOpen = unsafeWindow.XMLHttpRequest.prototype.open;
     const origSend = unsafeWindow.XMLHttpRequest.prototype.send;
 
-    unsafeWindow.XMLHttpRequest.prototype.open = function(method, url, ...args) {
-      this._tecUrl = url;
-      return origOpen.apply(this, [method, url, ...args]);
-    };
-    unsafeWindow.XMLHttpRequest.prototype.send = function(...args) {
-      const self = this;
-      this.addEventListener('load', function() {
-        if (self._tecUrl) {
-          console.log(`  \uD83D\uDCE1 XHR: ${self._tecUrl} (${self.status}) [${(self.responseText||'').length} chars]`);
-          if (/coment|resoluc|questao|questoes/i.test(self._tecUrl) && self.responseText?.length > 50) {
-            capturedXhrUrl = self._tecUrl;
-            capturedXhrResponse = self.responseText;
-          }
-        }
+    try {
+      if (!origOpen._tecPatched) {
+        const patchedOpen = function(method, url, ...args) {
+          this._tecUrl = url;
+          return origOpen.apply(this, [method, url, ...args]);
+        };
+        patchedOpen._tecPatched = true;
+        unsafeWindow.XMLHttpRequest.prototype.open = patchedOpen;
+
+        unsafeWindow.XMLHttpRequest.prototype.send = function(...args) {
+          const self = this;
+          this.addEventListener('load', function() {
+            if (self._tecUrl && /coment|resoluc|questao|questoes/i.test(self._tecUrl) && self.responseText?.length > 50) {
+              capturedXhrUrl = self._tecUrl;
+              capturedXhrResponse = self.responseText;
+            }
+          });
+          return origSend.apply(this, args);
+        };
+      }
+
+      const resolucaoLinks = [...document.querySelectorAll('a, button, span')].filter(el => {
+        const txt = el.textContent.trim();
+        return /ver resolu[\u00E7c]/i.test(txt) && txt.length < 40;
       });
-      return origSend.apply(this, args);
-    };
+      for (const link of resolucaoLinks) { realClick(link); }
+      try { document.activeElement?.blur(); } catch (_) {}
+      document.body.focus();
+      simulateKey('o', 79);
 
-    // Click "Ver resolu\u00E7\u00E3o" links
-    const resolucaoLinks = [...document.querySelectorAll('a, button, span')].filter(el => {
-      const txt = el.textContent.trim();
-      return /ver resolu[\u00E7c]/i.test(txt) && txt.length < 40;
-    });
-    console.log(`  Links "Ver resolu\u00E7\u00E3o": ${resolucaoLinks.length}`);
-
-    for (const link of resolucaoLinks) {
-      console.log(`  Clicando: "${link.textContent.trim()}" <${link.tagName}>`);
-      realClick(link);
+      await delay(2000);
+    } finally {
+      unsafeWindow.XMLHttpRequest.prototype.open = origOpen;
+      unsafeWindow.XMLHttpRequest.prototype.send = origSend;
     }
-    // Also keyboard shortcut
-    try { document.activeElement?.blur(); } catch (_) {}
-    document.body.focus();
-    simulateKey('o', 79);
-
-    await delay(4000);
-
-    // Restore XHR originals
-    unsafeWindow.XMLHttpRequest.prototype.open = origOpen;
-    unsafeWindow.XMLHttpRequest.prototype.send = origSend;
 
     if (capturedXhrResponse) {
-      console.log(`  \uD83D\uDCE1 XHR capturado: ${capturedXhrResponse.length} chars de ${capturedXhrUrl}`);
       try {
         const data = JSON.parse(capturedXhrResponse);
         const text = extractCommentFromJson(data);
         if (text && text.length > 30) {
           _capturedComment = text;
-          console.log(`\u2705 Coment\u00E1rio via XHR JSON (${text.length} chars)`);
           return true;
         }
       } catch {
         if (capturedXhrResponse.length > 50 && !capturedXhrResponse.startsWith('<!')) {
           _capturedComment = stripHtml(capturedXhrResponse);
-          console.log(`\u2705 Coment\u00E1rio via XHR raw (${_capturedComment.length} chars)`);
           return true;
         }
       }
@@ -617,8 +609,7 @@
           const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
           if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
             _capturedComment = plain;
-            console.log(`\u2705 Coment\u00E1rio via scope re-check: .${key} (${plain.length} chars)`);
-            return true;
+              return true;
           }
         }
       }
@@ -640,8 +631,7 @@
 
       for (const url of apiUrls) {
         try {
-          console.log(`  \uD83D\uDCE1 GET ${url}`);
-          const resp = await gmFetch(url, {
+              const resp = await gmFetch(url, {
             method: 'GET',
             headers: {
               'Accept': 'application/json, text/html',
@@ -650,16 +640,13 @@
           });
           if (resp.ok) {
             const text = await resp.text();
-            console.log(`    \u2705 ${resp.status} \u2014 ${text.length} chars`);
-            if (text.length > 50) {
+              if (text.length > 50) {
               try {
                 const data = JSON.parse(text);
-                console.log(`    JSON keys: ${Object.keys(data).join(', ')}`);
-                const comment = extractCommentFromJson(data);
+                      const comment = extractCommentFromJson(data);
                 if (comment && comment.length > 30) {
                   _capturedComment = comment;
-                  console.log(`\u2705 Coment\u00E1rio via API (${comment.length} chars)`);
-                  return true;
+                          return true;
                 }
               } catch {
                 // Maybe HTML \u2014 try parsing for comment section
@@ -670,24 +657,20 @@
                   for (const cel of commentEls) {
                     if (cel.textContent.trim().length > 30) {
                       _capturedComment = cel.textContent.trim();
-                      console.log(`\u2705 Coment\u00E1rio via API HTML (${_capturedComment.length} chars)`);
-                      return true;
+                                  return true;
                     }
                   }
                 }
               }
             }
           } else {
-            console.log(`    \u274C ${resp.status}`);
-          }
+            }
         } catch (err) {
-          console.log(`    \u274C ${err.message}`);
         }
       }
     }
 
     // \u2500\u2500 Strategy 5: DOM fallback \u2500\u2500
-    console.log('\n\uD83D\uDD0D Strategy 5: DOM fallback...');
     const tecElements = document.querySelectorAll('[tec-formatar-html]');
     const enunciadoText = vm?.questao?.enunciado ||
                           document.querySelector('.questao-enunciado-texto')?.innerText?.trim() || '';
@@ -700,7 +683,6 @@
       if (/coment/i.test(attr) && text.length > 30) {
         if (text !== enunciadoPlain && !text.startsWith(enunciadoPlain.substring(0, 50))) {
           _capturedComment = text;
-          console.log(`\u2705 Coment\u00E1rio via DOM [${attr}] (${text.length} chars)`);
           return true;
         }
       }
@@ -1015,29 +997,36 @@
 
 Aplique rigorosamente: cada card testa UMA ÚNICA informação — um prazo, uma exceção, uma palavra-chave, uma tese do STF. Nunca agrupe dois fatos num mesmo card.
 
+**Evite enumerações:** se a questão cobrar uma lista de 3+ itens (requisitos, características, hipóteses), prefira criar 1 card por item em vez de 1 card com a lista inteira.
+
 ## Formato dos cards
 
 ### PRIORIDADE 1 — Cloze (lacunas)
 
-Prefira SEMPRE este formato para regras, leis e jurisprudências. Escreva a afirmação completa com {{lacuna}} marcando a informação-chave a ser ocultada.
+Prefira SEMPRE este formato para regras, leis e jurisprudências. Escreva uma afirmação AUTOCONTIDA, que faça sentido mesmo sem a questão original. A lacuna entre {{ }} deve ser um RÓTULO GENÉRICO do que falta (ex: {{tipo}}, {{regra}}, {{conceito}}), nunca a resposta já preenchida (ex: {{N:N}}, {{igual para todas as contas}}).
 
 ❌ Ruim (Q&A genérico):
 Frente: O que diz a Súmula 539 do STJ sobre juros?
 Verso: É permitida a capitalização com periodicidade inferior a um ano.
 
 ✅ Bom (Cloze):
-Frente: A capitalização de juros com periodicidade inferior a um ano é {{permitida}} em contratos celebrados após 31/03/2000. (Súmula 539 STJ)
+Frente: A capitalização de juros com periodicidade inferior a um ano é {{regra}} em contratos celebrados após 31/03/2000. (Súmula 539 STJ)
 Verso: permitida
+
+Em contratos após 31/03/2000, admite-se capitalização inferior a um ano. (Súmula 539 STJ)
 
 ### PRIORIDADE 2 — Q&A cirúrgico
 
 Use apenas quando Cloze não for natural. Regras obrigatórias:
 - Pergunta sem pistas na formulação: NÃO use "Segundo o STF..." se isso entrega a resposta
-- Verso com NO MÁXIMO 10 palavras
+- O verso deve abrir com a resposta curta e, se necessário, trazer 1 explicação breve logo abaixo para deixar o card autocontido
+- Para fórmulas ou cálculos: prefira Cloze com a variável como lacuna; inclua um exemplo numérico concreto no verso para ancorar a memória
 
 ✅ Bom (Q&A):
 Frente: Qual princípio veda cobrar tributo no mesmo exercício da lei que o criou?
-Verso: Anterioridade Anual. (CF art. 150, III, b)
+Verso: Anterioridade anual.
+
+Impede a cobrança no mesmo exercício da lei instituidora. (CF art. 150, III, b)
 
 ## O que fazer
 
@@ -1063,7 +1052,7 @@ O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR a confusão
 ### Exemplos de erros comuns e como abordar:
 
 **Erro por TROCA/INVERSÃO de conceitos:**
-Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Prefira Cloze comparativo.
+Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Prefira Cloze comparativo, mas use Q&A ou V/F se o Cloze ficar artificial.
 
 **Erro por EXCEÇÃO desconhecida:**
 Se o aluno generalizou uma regra que tem exceção, o card deve focar na exceção via Cloze: "A regra X se aplica, EXCETO quando {{situação}}."
@@ -1077,10 +1066,13 @@ Se um item parece certo mas tem uma palavra que o torna errado, o card usa Cloze
 **Erro por GENERALIZAÇÃO (como "toda norma...", "sempre...", "nunca..."):**
 Cloze: "A regra X se aplica {{sempre / salvo quando}}..."
 
+**Questão de jurisprudência (STF/STJ):**
+Prefira o sentido caso→tese: frente = situação fática do julgado, verso = tese fixada pelo tribunal. Se a tese for amplamente cobrada em provas, um segundo card tese→caso consolida o reconhecimento inverso.
+
 ### Tipos de cards para questão ERRADA (em ordem de prioridade):
 
-1. **Card da distinção (OBRIGATÓRIO):** Force o aluno a distinguir os conceitos que ele CONFUNDIU. Prefira Cloze.
-2. **Card da regra correta (se necessário):** Pergunta direta sobre o artigo, súmula ou regra que fundamenta a resposta correta. Prefira Cloze.
+1. **Card da distinção (OBRIGATÓRIO):** Force o aluno a distinguir os conceitos que ele CONFUNDIU. Prefira Cloze, salvo se um Q&A ou V/F ficar mais claro.
+2. **Card da regra correta (se necessário):** Pergunta direta sobre o artigo, súmula ou regra que fundamenta a resposta correta.
 
 **No campo "erro_identificado":** descreva o mecanismo do erro (ex: "Confundiu competência da União com a dos Estados").
 
@@ -1097,8 +1089,8 @@ Identifique com precisão:
 
 ### Tipos de cards para questão ACERTADA (em ordem de prioridade):
 
-1. **Card da pegadinha (OBRIGATÓRIO):** Exponha a armadilha da banca via Cloze. Se havia uma alternativa que PARECIA certa mas não era, o card deve fixar o detalhe que a invalida.
-2. **Card da nuance (se necessário):** Cloze testando a distinção sutil que tornava a questão difícil.
+1. **Card da pegadinha (OBRIGATÓRIO):** Exponha a armadilha da banca. Use Cloze se ficar natural; caso contrário, use Q&A ou V/F autocontido.
+2. **Card da nuance (se necessário):** Teste a distinção sutil que tornava a questão difícil sem depender da redação da questão original.
 
 **No campo "erro_identificado":** descreva a pegadinha/nuance da questão (ex: "A alternativa B parecia correta por usar 'sempre que possível', mas o art. X não admite exceção neste caso").
 
@@ -1106,12 +1098,14 @@ Identifique com precisão:
 
 - **MÁXIMO 2 cards** — se a confusão for simples, 1 card basta
 - O PRIMEIRO card SEMPRE deve atacar o ponto central: a confusão (se errou) ou a pegadinha/nuance (se acertou)
-- **Tipo**: indique no campo "tipo" se é "Cloze" ou "Q&A"
-- **Cloze**: use {{lacuna}} para marcar a informação oculta; o Verso deve ter APENAS a palavra/expressão revelada + referência legal se houver
-- **Q&A**: frente cirúrgica, verso com NO MÁXIMO 10 palavras. Não use "Segundo o STF..." se isso entrega a resposta
+- O card precisa ser AUTOCONTIDO: quem o lê deve entender o erro e a distinção sem voltar à questão
+- **Tipo**: indique no campo "tipo" se é "Cloze" ou "Q&A". Você pode combinar 1 Cloze + 1 Q&A quando isso ensinar melhor
+- **Cloze**: use {{rotulo_generico}} para marcar a informação oculta; nunca coloque a resposta dentro das chaves. O verso deve começar pela resposta curta e pode trazer 1 explicação breve logo abaixo
+- **Q&A**: frente cirúrgica, verso começando pela resposta curta. Depois, se necessário, acrescente 1 explicação breve. Não use "Segundo o STF..." se isso entrega a resposta
 - Use perguntas COMPARATIVAS quando o erro envolver troca de conceitos
 - NUNCA crie cards genéricos sobre o assunto. Cada card deve ter relação direta com o motivo do erro
 - NUNCA copie o enunciado da questão. O card deve testar o CONCEITO, não a questão específica
+- Se a distinção importante não couber num Cloze limpo, prefira um Q&A ou V/F curto e claro
 - Se a questão envolver artigo de lei, cite o artigo no verso
 - materia: nome oficial como em editais (Direito Constitucional, Direito Tributário, etc.)
 - ATENÇÃO na classificação de matéria: classifique pelo CONTEÚDO TÉCNICO do tema
@@ -1128,9 +1122,12 @@ Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos
 - **<mark>texto</mark>** → para palavras-chave críticas dentro da frase que o aluno deve gravar (ex: a legalidade é sobre a <mark>forma</mark>; a anterioridade é sobre o <mark>tempo</mark>)
 - **<ul><li>texto</li></ul>** → para listas enumerativas (ex: atos que exigem lei: instituição, aumento, majoração de alíquota, alteração de base de cálculo)
 - **<span class="ref">texto</span>** → para referências legais e artigos (ex: <span class="ref">CF art. 150, I</span>)
+- **<div class="answer-line">texto</div>** → para a primeira linha do verso, com a resposta curta
+- **<div class="explanation">texto</div>** → para a explicação breve que contextualiza a distinção
 
 ### Regras de formatação:
-- Em cards Cloze: use <mark> na lacuna assim: <mark>{{lacuna}}</mark> para destacar visualmente a informação oculta
+- Em cards Cloze: use <mark> na lacuna assim: <mark>{{rotulo_generico}}</mark> para destacar visualmente a informação oculta
+- No verso, prefira a estrutura: <div class="answer-line">resposta curta</div> + <div class="explanation">explicação breve</div>
 - Use <b> em TODA menção a conceitos jurídicos importantes no verso
 - Use <span class="neg"> SEMPRE que houver negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto")
 - Use <mark> com moderação (1-3 palavras por card) apenas nas palavras que são o NÚCLEO da distinção
@@ -1154,7 +1151,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
 - Nomes de institutos: o nome do conceito em si não é palavra-chave, são as expressões que SINALIZAM ele
 
 ### Regras:
-- Liste 2-5 expressões por card (as mais recorrentes em provas para aquele conceito)
+- Liste 1-2 expressões por card (somente as mais fortes e discriminativas)
 - Priorize trechos literais de artigos de lei ou súmulas
 - Se não houver expressões canônicas claras para o conceito, deixe o campo vazio ("")`;
 
@@ -1169,12 +1166,14 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
         items: {
           type: 'object',
           properties: {
-            tipo: { type: 'string', enum: ['Cloze', 'Q&A'], description: 'Formato do card: Cloze para afirmação com {{lacuna}}, Q&A para pergunta/resposta direta' },
-            frente: { type: 'string', description: 'Para Cloze: afirmação completa com {{lacuna}}. Para Q&A: pergunta cirúrgica sem pistas.' },
-            verso: { type: 'string', description: 'Para Cloze: apenas a palavra/expressão que preenche a lacuna + referência legal. Para Q&A: resposta com no máximo 10 palavras.' },
-            palavras_chave: { type: 'string', description: 'Express\u00F5es can\u00F4nicas da lei/doutrina que identificam este conceito jur\u00EDdico, separadas por " | " (ex: "circunst\u00E2ncias pessoais | capacidade econ\u00F4mica real | ser\u00E1 pessoal sempre que poss\u00EDvel"). Vazio se n\u00E3o houver.' },
+            tipo: { type: 'string', enum: ['Cloze', 'Q&A'], description: 'Formato do card: Cloze para afirmação autocontida com {{rotulo_generico}}, Q&A para pergunta direta, V/F ou distinção breve' },
+            frente_texto_limpo: { type: 'string', description: 'Card autocontido em texto puro. Se for Cloze, use {{rotulo_generico}}, nunca a resposta preenchida.' },
+            verso_texto_limpo: { type: 'string', description: 'Primeira linha com resposta curta em texto puro. Depois, se necessário, uma explicação breve.' },
+            frente_html: { type: 'string', description: 'Mesmo conteúdo da frente com HTML e destaque visual; se for Cloze, use <mark>{{rotulo_generico}}</mark>.' },
+            verso_html: { type: 'string', description: 'Verso em HTML, idealmente com <div class="answer-line">resposta curta</div> e <div class="explanation">explicação breve</div>.' },
+            palavras_chave: { type: 'string', description: 'Express\u00F5es can\u00F4nicas da lei/doutrina que identificam este conceito jur\u00EDdico, separadas por " | ". Vazio se n\u00E3o houver.' },
           },
-          required: ['tipo', 'frente', 'verso', 'palavras_chave'],
+          required: ['tipo', 'frente_texto_limpo', 'verso_texto_limpo', 'frente_html', 'verso_html', 'palavras_chave'],
         },
       },
     },
@@ -1214,7 +1213,112 @@ ${altsText || 'N\u00E3o dispon\u00EDveis'}
 ${q.comentario || 'N\u00E3o dispon\u00EDvel'}
 
 ---
-Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie 2-3 flashcards cir\u00FArgicos.`;
+Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie no m\u00E1ximo 2 cards AUTOCONTIDOS, podendo combinar 1 Cloze + 1 Q&A quando isso deixar a distin\u00E7\u00E3o mais clara.`;
+  }
+
+  function normalizeKeywords(value) {
+    return (value || '')
+      .split(/\s*\|\s*/)
+      .map(item => stripHtml(item).trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(' | ');
+  }
+
+  function extractAnswerLabel(content) {
+    return stripHtml(content || '')
+      .replace(/\r/g, '')
+      .split(/\n\s*\n/)[0]
+      .split('\n')[0]
+      .trim()
+      .replace(/[.:;!]+$/, '')
+      .toLowerCase();
+  }
+
+  function normalizeClozePlaceholder(text, answerText = '', wrapWithMark = false) {
+    if (!text) return text;
+
+    const answerLabel = extractAnswerLabel(answerText);
+
+    let normalized = text.replace(/\{\{([^}]+)\}\}/g, (_, inner) => {
+      const clean = stripHtml(inner).trim();
+      if (!clean) return '{{lacuna}}';
+
+      if (answerLabel && clean.toLowerCase() === answerLabel) {
+        return '{{lacuna}}';
+      }
+
+      if (/^[A-Za-zÀ-ÿ0-9_-]{1,24}(?:\s+[A-Za-zÀ-ÿ0-9_-]{1,24})?$/.test(clean)) {
+        return `{{${clean}}}`;
+      }
+
+      return '{{lacuna}}';
+    });
+
+    if (wrapWithMark && !/<mark>\s*\{\{/.test(normalized)) {
+      normalized = normalized.replace(/\{\{([^}]+)\}\}/g, '<mark>{{$1}}</mark>');
+    }
+
+    return normalized;
+  }
+
+  function normalizeBackText(content) {
+    return (content || '').trim().replace(/\n{3,}/g, '\n\n');
+  }
+
+  function formatCardBack(content) {
+    if (!content) return content;
+
+    const trimmed = content.trim();
+    if (!trimmed || /class="answer-line"|class="explanation"/.test(trimmed)) {
+      return trimmed;
+    }
+
+    const blocks = trimmed.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean);
+    if (!blocks.length) return trimmed;
+
+    const answerLine = blocks.shift().replace(/\n/g, '<br>');
+    const explanation = blocks.length
+      ? `<div class="explanation">${blocks.map(block => `<div class="explanation-block">${block.replace(/\n/g, '<br>')}</div>`).join('')}</div>`
+      : '';
+
+    return `<div class="answer-line">${answerLine}</div>${explanation}`;
+  }
+
+  function normalizeGeneratedCard(card) {
+    const normalized = { ...card };
+
+    if (normalized.frente_html && !normalized.frente) {
+      normalized.frente = normalized.frente_html;
+      normalized.verso = normalized.verso_html;
+    }
+    if (normalized.frente && !normalized.frente_html) {
+      normalized.frente_html = normalized.frente;
+      normalized.verso_html = normalized.verso;
+      normalized.frente_texto_limpo = normalized.frente.replace(/<[^>]+>/g, '');
+      normalized.verso_texto_limpo = normalized.verso.replace(/<[^>]+>/g, '');
+    }
+
+    normalized.tipo = normalized.tipo || (/\{\{[^}]+\}\}/.test(normalized.frente_html || normalized.frente_texto_limpo || '') ? 'Cloze' : 'Q&A');
+
+    if (normalized.tipo === 'Cloze') {
+      const answerText = normalized.verso_texto_limpo || normalized.verso || normalized.verso_html || '';
+      normalized.frente_texto_limpo = normalizeClozePlaceholder(normalized.frente_texto_limpo || '', answerText, false);
+      normalized.frente_html = normalizeClozePlaceholder(normalized.frente_html || normalized.frente_texto_limpo || '', answerText, true);
+    }
+
+    normalized.verso_texto_limpo = normalizeBackText(normalized.verso_texto_limpo || normalized.verso || '');
+    normalized.verso_html = formatCardBack(normalized.verso_html || normalized.verso || normalized.verso_texto_limpo);
+    normalized.frente = normalized.frente_html;
+    normalized.verso = normalized.verso_html;
+    normalized.palavras_chave = normalizeKeywords(normalized.palavras_chave);
+    return normalized;
+  }
+
+  function normalizeGeneratedResult(result) {
+    if (!result || !Array.isArray(result.cards)) return result;
+    result.cards = result.cards.map(normalizeGeneratedCard);
+    return result;
   }
 
   async function callGemini(questionData) {
@@ -1261,20 +1365,165 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error('Resposta vazia do Gemini');
 
-    return JSON.parse(text);
+    const result = normalizeGeneratedResult(JSON.parse(text));
+    result._generatorModel = `gemini/${model}`;
+    return result;
+  }
+
+  // ── Generic OpenAI-compatible API caller ────────────────────────────
+
+  function parseOpenAIResponse(json) {
+    let content = json?.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Resposta vazia da API');
+    content = content.trim();
+    if (content.startsWith('```')) {
+      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+    }
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Resposta não contém JSON válido.');
+    return JSON.parse(jsonMatch[0]);
+  }
+
+  async function callOpenAICompatible(url, apiKey, body, extraHeaders = {}) {
+    const MAX_RETRIES = 5;
+    let res;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      res = await gmFetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          ...extraHeaders,
+        },
+        body: JSON.stringify(body),
+        timeout: 90000,
+      });
+
+      if (res.ok) break;
+
+      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5;
+        console.warn(`⚠️ ${res.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+
+      const errText = await res.text();
+      throw new Error(`API error (${res.status}): ${errText}`);
+    }
+
+    return res.json();
+  }
+
+  async function callOpencode(questionData) {
+    const apiKey = getSetting('opencodeApiKey');
+    const model = getSetting('opencodeModel');
+    const baseUrl = getSetting('opencodeBaseUrl');
+    if (!apiKey) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
+
+    const schemaDescription = `Responda SOMENTE com JSON válido neste formato exato (sem markdown, sem comentários):
+{
+  "materia": "string - matéria do edital",
+  "subtopico": "string - subtópico específico",
+  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance",
+  "cards": [
+    {
+      "tipo": "string - Cloze ou Q&A",
+      "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e nunca a resposta preenchida",
+      "verso_texto_limpo": "string - primeira linha com resposta curta; depois, se necessário, uma explicação breve",
+      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
+      "verso_html": "string - verso em HTML, idealmente com <div class=\"answer-line\">resposta curta</div> e <div class=\"explanation\">explicação breve</div>",
+      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
+    }
+  ]
+}`;
+
+    const body = {
+      model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
+        { role: 'user', content: buildGeminiPrompt(questionData) },
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    };
+
+    const json = await callOpenAICompatible(baseUrl, apiKey, body);
+    const usage = json?.usage;
+    const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
+
+    const result = parseOpenAIResponse(json);
+    if (!result.materia || !result.cards || !Array.isArray(result.cards)) {
+      throw new Error('Resposta do OpenCode em formato inválido. Tente novamente.');
+    }
+    for (const card of result.cards) {
+      const hasNew = card.frente_html && card.verso_html;
+      const hasOld = card.frente && card.verso;
+      if (!hasNew && !hasOld) {
+        throw new Error('Um ou mais flashcards estão incompletos na resposta da IA.');
+      }
+      if (hasNew && !hasOld) {
+        card.frente = card.frente_html;
+        card.verso = card.verso_html;
+      }
+      if (hasOld && !hasNew) {
+        card.frente_html = card.frente;
+        card.verso_html = card.verso;
+        card.frente_texto_limpo = card.frente.replace(/<[^>]+>/g, '');
+        card.verso_texto_limpo = card.verso.replace(/<[^>]+>/g, '');
+      }
+    }
+    const normalized = normalizeGeneratedResult(result);
+    normalized._generatorModel = `opencode/${model}`;
+    if (costEstimate) normalized._usage = costEstimate;
+    return normalized;
   }
 
   // ── OpenRouter (OpenAI-compatible) ──────────────────────────────────
 
   const OPENROUTER_MODELS = [
     { id: 'google/gemma-4-31b-it:free',          label: '\u2B50 Gemma 4 31B (GRATUITO)' },
-    { id: 'moonshotai/kimi-k2.5',                 label: '\uD83E\uDDE0 Kimi K2.5 Thinking ($0.44/M tok)' },
+    { id: 'qwen/qwen3.6-plus',                   label: '\uD83E\uDDE0 Qwen 3.6 Plus Thinking ($0.325/$1.95 M tok)' },
+    { id: 'moonshotai/kimi-k2.6',                label: '\uD83E\uDDE0 Kimi K2.6 Thinking ($0.75/$3.50 M tok)' },
+    { id: 'moonshotai/kimi-k2.5',                 label: '\uD83E\uDDE0 Kimi K2.5 Thinking ($0.60/M tok)' },
     { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok \u2014 recomendado)' },
     { id: 'openai/gpt-4o-mini',                  label: 'GPT-4o Mini ($0.39/M tok)' },
     { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
     { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
     { id: 'anthropic/claude-3.5-haiku',          label: 'Claude 3.5 Haiku ($2.40/M tok)' },
     { id: 'anthropic/claude-haiku-4.5',          label: 'Claude Haiku 4.5 ($3.00/M tok)' },
+    { id: 'google/gemini-3.1-pro-preview',       label: '\u2B50 Gemini 3.1 Pro Preview \u2014 GPQA 94.1% ($1.25/$10 M tok)' },
+  ];
+
+  const OPENCODE_MODELS = [
+    { id: 'opencode-go-1', label: 'OpenCode Go 1' },
+    { id: 'opencode-go-2', label: 'OpenCode Go 2' },
+  ];
+
+  // Models for dual pipeline (creator + auditor)
+  const PIPELINE_CREATOR_MODELS = [
+    { id: 'qwen/qwen3.6-plus',                   label: 'Qwen 3.6 Plus Thinking ($0.325/$1.95 M tok)' },
+    { id: 'moonshotai/kimi-k2.6',                label: 'Kimi K2.6 Thinking ($0.75/$3.50 M tok)' },
+    { id: 'moonshotai/kimi-k2.5',                label: 'Kimi K2.5 — IFEval 100% ($0.60/$2.00 M tok)' },
+    { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok)' },
+    { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
+    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: `OpenCode ${m.label}` })),
+  ];
+
+  function getOpenRouterReasoningConfig(model) {
+    if (!model) return null;
+
+    if (model === 'qwen/qwen3.6-plus' || model === 'moonshotai/kimi-k2.6' || model.includes('kimi-k2')) {
+      return { reasoning: { effort: 'high' } };
+    }
+
+    return null;
+  }
+  const PIPELINE_AUDITOR_MODELS = [
+    { id: 'google/gemini-3.1-pro-preview',       label: 'Gemini 3.1 Pro Preview — GPQA 94.1% ($1.25/$10 M tok)' },
+    { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
+    { id: 'anthropic/claude-haiku-4.5',          label: 'Claude Haiku 4.5 ($3.00/M tok)' },
+    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: `OpenCode ${m.label}` })),
   ];
 
   async function callOpenRouter(questionData) {
@@ -1288,13 +1537,19 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   "subtopico": "string - subt\u00F3pico espec\u00EDfico",
   "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil",
   "cards": [
-    { "frente": "string - pergunta do flashcard", "verso": "string - resposta (max 3 linhas)", "palavras_chave": "string - express\u00F5es can\u00F4nicas da lei/doutrina que identificam o conceito jur\u00EDdico, separadas por | (ex: circunst\u00E2ncias pessoais | capacidade econ\u00F4mica real). Vazio se n\u00E3o houver" }
+    {
+      "tipo": "string - Cloze ou Q&A",
+      "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e nunca a resposta preenchida",
+      "verso_texto_limpo": "string - primeira linha com resposta curta; depois, se necessário, uma explicação breve",
+      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
+      "verso_html": "string - verso em HTML, idealmente com <div class=\\"answer-line\\">resposta curta</div> e <div class=\\"explanation\\">explicação breve</div>",
+      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
+    }
   ]
 }`;
 
-    const url = 'https://openrouter.ai/api/v1/chat/completions';
     const body = {
-      model: model,
+      model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
         { role: 'user', content: buildGeminiPrompt(questionData) },
@@ -1303,70 +1558,44 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
       response_format: { type: 'json_object' },
     };
 
-    // Enable thinking/reasoning for models that support it
-    if (model.includes('kimi-k2')) {
-      body.reasoning = { effort: 'high' };
+    const reasoningConfig = getOpenRouterReasoningConfig(model);
+    if (reasoningConfig) {
+      Object.assign(body, reasoningConfig);
     }
 
-    const MAX_RETRIES = 5;
-    let res;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      res = await gmFetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
-          'X-Title': 'TEC-to-Anki',
-        },
-        body: JSON.stringify(body),
-        timeout: 60000,
-      });
+    const json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
+      'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
+      'X-Title': 'TEC-to-Anki',
+    });
 
-      if (res.ok) break;
+    const usage = json?.usage;
+    const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
 
-      // Retry on 429 (rate limit) or 503 (overloaded) with progressive backoff
-      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
-        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5; // longer waits for rate limits
-        console.warn(`\u26A0\uFE0F OpenRouter ${res.status} \u2014 tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
-        await new Promise(r => setTimeout(r, waitSec * 1000));
-        continue;
-      }
-
-      const errText = await res.text();
-      throw new Error(`OpenRouter API error (${res.status}): ${errText}`);
-    }
-
-    const json = await res.json();
-
-    // OpenRouter returns OpenAI-compatible format
-    let content = json?.choices?.[0]?.message?.content;
-    if (!content) throw new Error('Resposta vazia do OpenRouter');
-
-    // Strip markdown code fences if model wrapped JSON in ```json ... ```
-    content = content.trim();
-    if (content.startsWith('```')) {
-      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    }
-
-    // Some models return extra text after (or before) the JSON object.
-    // Extract the first valid JSON object from the response.
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Resposta do OpenRouter n\u00E3o cont\u00E9m JSON v\u00E1lido.');
-    content = jsonMatch[0];
-
-    // Parse and validate structure
-    const parsed = JSON.parse(content);
+    const parsed = parseOpenAIResponse(json);
     if (!parsed.materia || !parsed.cards || !Array.isArray(parsed.cards)) {
       throw new Error('Resposta do OpenRouter em formato inv\u00E1lido. Tente novamente.');
     }
-    // Ensure every card has frente and verso
     for (const card of parsed.cards) {
-      if (!card.frente || !card.verso) {
+      const hasNew = card.frente_html && card.verso_html;
+      const hasOld = card.frente && card.verso;
+      if (!hasNew && !hasOld) {
         throw new Error('Um ou mais flashcards est\u00E3o incompletos na resposta da IA.');
       }
+      if (hasNew && !hasOld) {
+        card.frente = card.frente_html;
+        card.verso = card.verso_html;
+      }
+      if (hasOld && !hasNew) {
+        card.frente_html = card.frente;
+        card.verso_html = card.verso;
+        card.frente_texto_limpo = card.frente.replace(/<[^>]+>/g, '');
+        card.verso_texto_limpo = card.verso.replace(/<[^>]+>/g, '');
+      }
     }
-    return parsed;
+    const normalized = normalizeGeneratedResult(parsed);
+    normalized._generatorModel = model;
+    if (costEstimate) normalized._usage = costEstimate;
+    return normalized;
   }
 
   // ── AI Dispatcher ───────────────────────────────────────────────────
@@ -1376,7 +1605,332 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     if (provider === 'openrouter') {
       return callOpenRouter(questionData);
     }
+    if (provider === 'opencode') {
+      return callOpencode(questionData);
+    }
     return callGemini(questionData);
+  }
+
+  // ── Dual Pipeline (Creator → Filter → Auditor) ─────────────────────
+
+  const AUDITOR_SYSTEM_PROMPT = `Você é um juiz jurídico implacável especializado em concursos públicos brasileiros. Sua função é AUDITAR flashcards gerados por outra IA para garantir precisão absoluta.
+
+## Sua tarefa
+
+Receba uma lista de flashcards (frente + verso em texto limpo) junto com o contexto da questão (banca, comentário do professor, gabarito). Para CADA card, avalie:
+
+1. **Precisão jurídica:** O conteúdo está correto? Cita corretamente artigos, súmulas, jurisprudência?
+2. **Coerência com o gabarito:** O card reflete corretamente o que a banca considerou certo/errado?
+3. **Coerência com o comentário do professor:** O card contradiz o que o professor explicou?
+4. **Clareza:** A pergunta é clara e a resposta é objetiva?
+5. **Relevância:** O card ataca o ponto central (mecanismo do erro ou pegadinha)?
+
+## Critérios de REJEIÇÃO (qualquer um = REJEITADO):
+- Informação juridicamente incorreta ou desatualizada
+- Contradição com o gabarito oficial ou comentário do professor
+- Inversão de conceitos (atribuir a X o que é de Y)
+- Resposta ambígua ou genérica demais
+- Pergunta que não testa o conceito relevante
+
+## Formato de resposta
+
+Responda SOMENTE com JSON válido:
+{
+  "cards": [
+    { "index": 0, "status": "APROVADO" },
+    { "index": 1, "status": "REJEITADO", "justificativa": "string - razão precisa da rejeição" }
+  ]
+}
+
+Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um card incorreto ao Anki.`;
+
+  /**
+   * Call OpenRouter with a specific model (used by creator and auditor).
+   * Returns parsed JSON response.
+   */
+  async function callOpenRouterWithModel(model, systemPrompt, userPrompt, extraBody = {}) {
+    const isOpencode = model.startsWith('opencode-');
+    const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
+    if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada.`);
+
+    const reasoningConfig = !isOpencode ? (getOpenRouterReasoningConfig(model) || {}) : {};
+    const body = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+      ...reasoningConfig,
+      ...extraBody,
+    };
+
+    let json;
+    if (isOpencode) {
+      const baseUrl = getSetting('opencodeBaseUrl');
+      json = await callOpenAICompatible(baseUrl, apiKey, body);
+    } else {
+      json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
+        'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
+        'X-Title': 'TEC-to-Anki',
+      });
+    }
+
+    // Estimate cost from usage if available
+    const usage = json?.usage;
+    const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
+
+    const parsed = parseOpenAIResponse(json);
+    parsed._usage = costEstimate;
+    return parsed;
+  }
+
+  /**
+   * Step 1: Call the Creator model to generate flashcards.
+   */
+  async function callCreator(questionData, feedback = null) {
+    const model = getSetting('creatorModel');
+    const schemaDescription = `Responda SOMENTE com JSON válido neste formato exato (sem markdown, sem comentários):
+{
+  "materia": "string - matéria do edital",
+  "subtopico": "string - subtópico específico",
+  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance",
+  "cards": [
+    {
+      "frente_texto_limpo": "string - pergunta em texto puro, sem HTML",
+      "verso_texto_limpo": "string - resposta em texto puro, sem HTML (max 3 linhas)",
+      "frente_html": "string - mesma pergunta com formatação HTML (<b>, <mark>, <span class=\\"neg\\">)",
+      "verso_html": "string - mesma resposta com formatação HTML",
+      "palavras_chave": "string - expressões canônicas separadas por | . Vazio se não houver"
+    }
+  ]
+}`;
+
+    let userPrompt = buildGeminiPrompt(questionData);
+    if (feedback) {
+      userPrompt += `\n\n---\n⚠️ ATENÇÃO: Uma auditoria anterior REJEITOU alguns cards. Corrija com base no feedback:\n${feedback}`;
+    }
+
+    const result = await callOpenRouterWithModel(
+      model,
+      SYSTEM_PROMPT + '\n\n' + schemaDescription,
+      userPrompt
+    );
+
+    if (!result.materia || !result.cards || !Array.isArray(result.cards)) {
+      throw new Error('Resposta do Creator em formato inválido.');
+    }
+
+    // Normalize fields
+    for (const card of result.cards) {
+      if (!card.frente_html && card.frente) {
+        card.frente_html = card.frente;
+        card.verso_html = card.verso;
+        card.frente_texto_limpo = card.frente.replace(/<[^>]+>/g, '');
+        card.verso_texto_limpo = card.verso.replace(/<[^>]+>/g, '');
+      }
+      card.frente = card.frente_html;
+      card.verso = card.verso_html;
+    }
+
+    return result;
+  }
+
+  /**
+   * Step 2: Filter creator output for auditor — extract texto_limpo + question context.
+   * Reduces token payload from ~4100 to ~800 tokens.
+   */
+  function filterForAuditor(creatorResult, questionData) {
+    const cards = creatorResult.cards.map((card, i) => ({
+      index: i,
+      frente: card.frente_texto_limpo,
+      verso: card.verso_texto_limpo,
+    }));
+
+    return `## Cards para auditoria
+
+${cards.map(c => `### Card ${c.index}
+**Frente:** ${c.frente}
+**Verso:** ${c.verso}`).join('\n\n')}
+
+---
+## Contexto da questão
+- **Banca:** ${questionData.banca || 'N/A'}
+- **Resultado:** ${questionData.errou ? 'ERROU ❌' : 'ACERTOU ✅'}
+- **Gabarito:** ${questionData.gabarito || 'N/A'}
+- **Resposta do aluno:** ${questionData.respostaAluno || 'N/A'}
+
+### Comentário do Professor
+${questionData.comentario || 'Não disponível'}`;
+  }
+
+  /**
+   * Step 3: Call the Auditor model to validate cards.
+   * Returns { cards: [{ index, status, justificativa? }] }
+   */
+  async function callAuditor(filteredPayload) {
+    const model = getSetting('auditorModel');
+    const result = await callOpenRouterWithModel(
+      model,
+      AUDITOR_SYSTEM_PROMPT,
+      filteredPayload,
+      { reasoning: { effort: 'high' } }
+    );
+
+    if (!result.cards || !Array.isArray(result.cards)) {
+      throw new Error('Resposta do Auditor em formato inválido.');
+    }
+    return result;
+  }
+
+  /**
+   * Track pipeline cost from usage data.
+   */
+  function trackPipelineCost(usage, model) {
+    if (!usage) return 0;
+    // Approximate pricing per 1M tokens (input/output) for known models
+    const pricing = {
+      'moonshotai/kimi-k2.5':           { input: 0.60, output: 2.00 },
+      'google/gemini-3.1-pro-preview':   { input: 1.25, output: 10.00 },
+      'qwen/qwen3-235b-a22b-2507':       { input: 0.07, output: 0.07 },
+      'deepseek/deepseek-v3.2':          { input: 0.41, output: 0.41 },
+      'google/gemini-2.5-flash':         { input: 0.15, output: 0.60 },
+      'anthropic/claude-haiku-4.5':      { input: 0.80, output: 4.00 },
+    };
+    const p = pricing[model] || { input: 1, output: 3 };
+    const cost = (usage.promptTokens * p.input + usage.completionTokens * p.output) / 1_000_000;
+    const total = getSetting('pipelineCostTotal') + cost;
+    setSetting('pipelineCostTotal', total);
+    return cost;
+  }
+
+  /**
+   * Full dual pipeline: Creator → Filter → Auditor → (retry if rejected) → final result.
+   */
+  async function callDualPipeline(questionData, onStatus = () => {}) {
+    const creatorModel = getSetting('creatorModel');
+    const isOpencode = creatorModel.startsWith('opencode-');
+    const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
+    if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada para o pipeline dual.`);
+
+    let totalCost = 0;
+
+    // ── Step 1: Creator ──
+    onStatus('🧠 Creator gerando flashcards...');
+    let creatorResult;
+    try {
+      creatorResult = await callCreator(questionData);
+    } catch (err) {
+      // Fallback: use auditor model as creator
+      console.warn('⚠️ Creator falhou, usando modelo auditor como fallback:', err.message);
+      onStatus('⚠️ Creator falhou — usando fallback...');
+      const fallbackModel = getSetting('auditorModel');
+      const origCreator = getSetting('creatorModel');
+      setSetting('creatorModel', fallbackModel);
+      try {
+        creatorResult = await callCreator(questionData);
+      } finally {
+        setSetting('creatorModel', origCreator);
+      }
+      showToast('⚠️ Creator indisponível — cards gerados pelo modelo auditor (fallback).', 'warning', 5000);
+    }
+    if (creatorResult._usage) totalCost += trackPipelineCost(creatorResult._usage, getSetting('creatorModel'));
+
+    console.log('📝 Creator result:', creatorResult.cards.length, 'cards');
+
+    // ── Step 2: Filter ──
+    onStatus('🔍 Filtrando para auditoria...');
+    const filteredPayload = filterForAuditor(creatorResult, questionData);
+
+    // ── Step 3: Auditor ──
+    onStatus('⚖️ Auditor validando cards...');
+    let auditorResult;
+    try {
+      auditorResult = await callAuditor(filteredPayload);
+    } catch (err) {
+      console.warn('⚠️ Auditor falhou, aceitando todos os cards:', err.message);
+      showToast('⚠️ Auditor indisponível — cards aceitos sem validação.', 'warning', 5000);
+      return creatorResult;
+    }
+    if (auditorResult._usage) totalCost += trackPipelineCost(auditorResult._usage, getSetting('auditorModel'));
+
+    console.log('⚖️ Auditor result:', auditorResult.cards.map(c => `${c.index}:${c.status}`).join(', '));
+
+    // ── Process auditor verdicts ──
+    const approved = [];
+    const rejected = [];
+    for (const verdict of auditorResult.cards) {
+      if (verdict.status === 'APROVADO') {
+        approved.push(creatorResult.cards[verdict.index]);
+      } else {
+        rejected.push({ card: creatorResult.cards[verdict.index], justificativa: verdict.justificativa || 'Sem justificativa' });
+      }
+    }
+
+    // ── Retry rejected cards once ──
+    if (rejected.length > 0) {
+      onStatus(`🔄 Regenerando ${rejected.length} card(s) rejeitado(s)...`);
+      const feedback = rejected.map((r, i) => `Card ${i + 1}: ${r.justificativa}`).join('\n');
+
+      try {
+        const retryResult = await callCreator(questionData, feedback);
+        if (retryResult._usage) totalCost += trackPipelineCost(retryResult._usage, getSetting('creatorModel'));
+
+        // Re-audit the retried cards
+        onStatus('⚖️ Re-auditando cards regenerados...');
+        const retryFiltered = filterForAuditor(retryResult, questionData);
+        let retryAudit;
+        try {
+          retryAudit = await callAuditor(retryFiltered);
+          if (retryAudit._usage) totalCost += trackPipelineCost(retryAudit._usage, getSetting('auditorModel'));
+        } catch {
+          // If re-audit fails, accept retried cards
+          approved.push(...retryResult.cards);
+          retryAudit = null;
+        }
+
+        if (retryAudit) {
+          for (const verdict of retryAudit.cards) {
+            if (verdict.status === 'APROVADO') {
+              approved.push(retryResult.cards[verdict.index]);
+            } else {
+              // Still rejected after retry — add with 'revisar' tag
+              const card = retryResult.cards[verdict.index];
+              card._needsReview = true;
+              card._rejectReason = verdict.justificativa;
+              approved.push(card);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Retry falhou, adicionando cards originais com tag revisar:', err.message);
+        for (const r of rejected) {
+          r.card._needsReview = true;
+          r.card._rejectReason = r.justificativa;
+          approved.push(r.card);
+        }
+      }
+    }
+
+    // Build final result
+    const finalResult = {
+      materia: creatorResult.materia,
+      subtopico: creatorResult.subtopico,
+      erro_identificado: creatorResult.erro_identificado,
+      cards: approved,
+      _pipelineCost: totalCost,
+      _creatorModel: getSetting('creatorModel'),
+      _auditorModel: getSetting('auditorModel'),
+    };
+
+    const reviewCount = approved.filter(c => c._needsReview).length;
+    const costCents = (totalCost * 100).toFixed(1);
+    let summaryMsg = `✅ Pipeline: ${approved.length} cards (custo: $${totalCost.toFixed(4)} / ${costCents}¢)`;
+    if (reviewCount > 0) summaryMsg += ` | ⚠️ ${reviewCount} para revisão manual`;
+    console.log(summaryMsg);
+
+    return finalResult;
   }
 
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
@@ -1402,9 +1956,86 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     } catch { return false; }
   }
 
+  function getAnkiModelCss() {
+    return `.card {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  max-width: 640px; margin: 0 auto; padding: 28px;
+  line-height: 1.72; color: #e8e8e8; background: #1e1e2e;
+}
+.frente { font-size: 1.22em; color: #eef2ff; font-weight: 500; }
+.frente b { color: #60a5fa; }
+.frente mark { background: #fde047; color: #111827; padding: 1px 4px; border-radius: 3px; }
+.verso { font-size: 1.02em; color: #d4d4d4; margin-top: 4px; }
+.answer-line { font-size: 1.3em; font-weight: 800; color: #fca5a5; margin: 0 0 12px; }
+.answer-line b, .answer-line .neg { color: inherit; }
+.explanation { color: #e5e7eb; line-height: 1.75; }
+.explanation-block + .explanation-block { margin-top: 10px; }
+.verso b { color: #93c5fd; font-weight: 700; }
+.verso .neg { color: #fca5a5; font-weight: 800; }
+.verso mark { background: rgba(253, 224, 71, 0.28); color: #fde68a; padding: 1px 4px; border-radius: 3px; }
+.verso .ref { color: #a5b4fc; font-style: italic; font-size: 0.92em; }
+.verso ul { margin: 8px 0 8px 18px; padding: 0; }
+.verso li { margin-bottom: 4px; }
+.palavras-chave {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px;
+  padding: 8px 10px; background: #23283d; border-left: 3px solid #60a5fa; border-radius: 8px;
+}
+.palavras-chave .kw {
+  background: transparent; color: #c7d2fe; padding: 0;
+  border: none; font-size: 0.82em; font-weight: 600; letter-spacing: 0.1px;
+}
+.contexto { color: #a0a0b8; font-size: 0.82em; margin-bottom: 14px;
+  padding-bottom: 10px; border-bottom: 1px solid #3a3a4e; letter-spacing: 0.3px; }
+.fonte { color: #787890; font-size: 0.72em; margin-top: 4px; text-align: right; }
+.modelo { color: #6b7280; font-size: 0.68em; margin-top: 14px; text-align: right; font-style: italic; }
+:root[class*="light"] .modelo { color: #9ca3af; }
+.erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
+  font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
+hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
+/* Modo claro */
+.card.night_mode_off, :root[class*="light"] .card {
+  color: #1f2937; background: #ffffff;
+}
+:root[class*="light"] .frente { color: #111827; }
+:root[class*="light"] .frente b { color: #1d4ed8; }
+:root[class*="light"] .frente mark { background: #fde047; color: #111827; }
+:root[class*="light"] .verso { color: #1f2937; }
+:root[class*="light"] .answer-line { color: #b42318; }
+:root[class*="light"] .explanation { color: #111827; }
+:root[class*="light"] .verso b { color: #1d4ed8; }
+:root[class*="light"] .verso .neg { color: #b42318; }
+:root[class*="light"] .verso mark { background: #fde68a; color: #111827; }
+:root[class*="light"] .verso .ref { color: #6b7280; }
+:root[class*="light"] .palavras-chave { background: #eef2ff; border-left-color: #4f46e5; }
+:root[class*="light"] .palavras-chave .kw { color: #4338ca; }
+:root[class*="light"] .contexto { color: #6b7280; border-bottom-color: #e5e7eb; }
+:root[class*="light"] .fonte { color: #9ca3af; }
+:root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
+:root[class*="light"] hr { border-top-color: #dee2e6; }`;
+  }
+
+  function getAnkiCardTemplate() {
+    return {
+      Name: 'Card',
+      Front: '<div class="card"><div class="contexto">{{Contexto}}</div><div class="frente">{{Frente}}</div></div>',
+      Back: `<div class="card">
+<div class="contexto">{{Contexto}}</div>
+<div class="frente">{{Frente}}</div>
+<hr>
+<div class="verso">{{Verso}}</div>
+{{#PalavrasChave}}<div class="palavras-chave">{{PalavrasChave}}</div>{{/PalavrasChave}}
+{{#ErroIdentificado}}<div class="erro">💡 {{ErroIdentificado}}</div>{{/ErroIdentificado}}
+{{#Modelo}}<div class="modelo">🤖 {{Modelo}}</div>{{/Modelo}}
+<div class="fonte">{{Fonte}}</div>
+</div>`,
+    };
+  }
+
   async function ensureAnkiModel() {
     const modelName = getSetting('ankiModelName');
     const models = await ankiInvoke('modelNames');
+    const cardTemplate = getAnkiCardTemplate();
+    const modelCss = getAnkiModelCss();
     if (models.includes(modelName)) {
       // Migrate: add PalavrasChave field if missing
       try {
@@ -1413,66 +2044,28 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
           await ankiInvoke('modelFieldAdd', { modelName, fieldName: 'PalavrasChave', index: 2 });
           console.log('[TEC\u2192Anki] Campo PalavrasChave adicionado ao modelo existente');
         }
-      } catch (e) { console.warn('[TEC\u2192Anki] N\u00E3o foi poss\u00EDvel migrar campo PalavrasChave:', e); }
+        if (!fields.includes('Modelo')) {
+          await ankiInvoke('modelFieldAdd', { modelName, fieldName: 'Modelo', index: 6 });
+          console.log('[TEC\u2192Anki] Campo Modelo adicionado ao modelo existente');
+        }
+        await ankiInvoke('updateModelStyling', { model: { name: modelName, css: modelCss } });
+        await ankiInvoke('updateModelTemplates', {
+          model: {
+            name: modelName,
+            templates: {
+              [cardTemplate.Name]: { Front: cardTemplate.Front, Back: cardTemplate.Back },
+            },
+          },
+        });
+      } catch (e) { console.warn('[TEC→Anki] Não foi possível migrar o modelo existente:', e); }
       return;
     }
 
     await ankiInvoke('createModel', {
       modelName,
-      inOrderFields: ['Frente', 'Verso', 'PalavrasChave', 'Contexto', 'Fonte', 'ErroIdentificado'],
-      css: `.card {
-  font-family: 'Segoe UI', system-ui, sans-serif;
-  max-width: 620px; margin: 0 auto; padding: 28px;
-  line-height: 1.7; color: #e8e8e8; background: #1e1e2e;
-}
-.frente { font-size: 1.2em; color: #60cdff; font-weight: 500; }
-.verso { font-size: 1.05em; color: #d4d4d4; margin-top: 4px; line-height: 1.8; }
-.verso b { color: #7ee8a2; font-weight: 600; }
-.verso .neg { color: #ff6b6b; font-weight: 700; }
-.verso mark { background: rgba(255, 230, 0, 0.25); color: #ffe066; padding: 1px 4px; border-radius: 3px; }
-.verso .ref { color: #a0a0b8; font-style: italic; font-size: 0.9em; }
-.verso ul { margin: 6px 0 6px 18px; padding: 0; }
-.verso li { margin-bottom: 2px; }
-.frente b { color: #60cdff; }
-.frente mark { background: rgba(255, 230, 0, 0.2); color: #ffe066; padding: 1px 4px; border-radius: 3px; }
-.palavras-chave { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.palavras-chave .kw { background: #2a2a4a; color: #c4b5fd; padding: 2px 10px;
-  border-radius: 12px; font-size: 0.78em; border: 1px solid #4a4a6a; letter-spacing: 0.3px; }
-.contexto { color: #a0a0b8; font-size: 0.82em; margin-bottom: 14px;
-  padding-bottom: 10px; border-bottom: 1px solid #3a3a4e; letter-spacing: 0.3px; }
-.fonte { color: #787890; font-size: 0.72em; margin-top: 20px; text-align: right; }
-.erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
-  font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
-hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
-/* Modo claro */
-.card.night_mode_off, :root[class*="light"] .card {
-  color: #1a1a2e; background: #ffffff;
-}
-:root[class*="light"] .frente { color: #1a56db; }
-:root[class*="light"] .verso { color: #2d2d2d; }
-:root[class*="light"] .verso b { color: #2d6a4f; }
-:root[class*="light"] .verso .neg { color: #d32f2f; }
-:root[class*="light"] .verso mark { background: #fff59d; color: #1a1a2e; }
-:root[class*="light"] .verso .ref { color: #6c757d; }
-:root[class*="light"] .frente mark { background: #fff59d; color: #1a1a2e; }
-:root[class*="light"] .palavras-chave .kw { background: #f3f0ff; color: #6d28d9; border-color: #ddd6fe; }
-:root[class*="light"] .contexto { color: #6c757d; border-bottom-color: #eee; }
-:root[class*="light"] .fonte { color: #adb5bd; }
-:root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
-:root[class*="light"] hr { border-top-color: #dee2e6; }`,
-      cardTemplates: [{
-        Name: 'Card',
-        Front: '<div class="card"><div class="contexto">{{Contexto}}</div><div class="frente">{{Frente}}</div></div>',
-        Back: `<div class="card">
-<div class="contexto">{{Contexto}}</div>
-<div class="frente">{{Frente}}</div>
-<hr>
-<div class="verso">{{Verso}}</div>
-{{#PalavrasChave}}<div class="palavras-chave">\uD83D\uDD11 {{#PalavrasChave}}{{PalavrasChave}}{{/PalavrasChave}}</div>{{/PalavrasChave}}
-{{#ErroIdentificado}}<div class="erro">\uD83D\uDCA1 {{ErroIdentificado}}</div>{{/ErroIdentificado}}
-<div class="fonte">{{Fonte}}</div>
-</div>`,
-      }],
+      inOrderFields: ['Frente', 'Verso', 'PalavrasChave', 'Contexto', 'Fonte', 'ErroIdentificado', 'Modelo'],
+      css: modelCss,
+      cardTemplates: [cardTemplate],
     });
   }
 
@@ -1505,20 +2098,33 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       : questionData.url;
     const contexto = `${materia}${subtopico ? ' \u203A ' + subtopico : ''}`;
 
-    const notes = aiResult.cards.map(card => ({
-      deckName,
-      modelName,
-      fields: {
-        Frente: card.frente,
-        Verso: card.verso,
-        PalavrasChave: (card.palavras_chave || '').split(/\s*\|\s*/).filter(Boolean).map(kw => `<span class="kw">${kw.trim()}</span>`).join(' '),
-        Contexto: contexto,
-        Fonte: fonte,
-        ErroIdentificado: aiResult.erro_identificado || '',
-      },
-      tags,
-      options: { allowDuplicate: false, duplicateScope: 'deck' },
-    }));
+    const notes = aiResult.cards.map(card => {
+      const cardTags = [...tags];
+      if (card._needsReview) cardTags.push('revisar');
+      if (getSetting('pipelineMode') === 'dual') cardTags.push('dual-pipeline');
+      return {
+        deckName,
+        modelName,
+        fields: {
+          Frente: card.frente_html || card.frente,
+          Verso: card.verso_html || card.verso,
+          PalavrasChave: (card.palavras_chave || '').split(/\s*\|\s*/).filter(Boolean).map(kw => `<span class="kw">${kw.trim()}</span>`).join(' '),
+          Contexto: contexto,
+          Fonte: fonte,
+          ErroIdentificado: aiResult.erro_identificado || '',
+          Modelo: (() => {
+            if (aiResult._creatorModel) {
+              const creator = aiResult._creatorModel.split('/').pop();
+              const auditor = (aiResult._auditorModel || '').split('/').pop();
+              return auditor ? `${creator} → ${auditor}` : creator;
+            }
+            return (aiResult._generatorModel || '').split('/').pop();
+          })(),
+        },
+        tags: cardTags,
+        options: { allowDuplicate: false, duplicateScope: 'deck' },
+      };
+    });
 
     const results = await ankiInvoke('addNotes', { notes });
     const added = results.filter(r => r !== null).length;
@@ -1760,6 +2366,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <select id="tec-cfg-ai-provider">
               <option value="gemini" ${getSetting('aiProvider') === 'gemini' ? 'selected' : ''}>Google Gemini (gratuito)</option>
               <option value="openrouter" ${getSetting('aiProvider') === 'openrouter' ? 'selected' : ''}>OpenRouter (multi-modelo)</option>
+              <option value="opencode" ${getSetting('aiProvider') === 'opencode' ? 'selected' : ''}>OpenCode Go</option>
             </select>
           </div>
 
@@ -1790,6 +2397,49 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <select id="tec-cfg-openrouter-model">
                 ${OPENROUTER_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('openrouterModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
               </select>
+            </div>
+          </div>
+
+          <div id="tec-cfg-opencode-section" style="display:none">
+            <div class="tec-field">
+              <label>OpenCode API Key</label>
+              <input type="password" id="tec-cfg-opencode-key" value="${getSetting('opencodeApiKey')}" placeholder="...">
+              <small style="color:#888;font-size:11px">Obtenha em <a href="https://opencode.co" target="_blank" style="color:#60cdff">opencode.co</a></small>
+            </div>
+            <div class="tec-field">
+              <label>Modelo OpenCode</label>
+              <select id="tec-cfg-opencode-model">
+                ${OPENCODE_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('opencodeModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
+              </select>
+            </div>
+          </div>
+
+          <hr class="tec-divider">
+          <h3>\uD83D\uDD00 Pipeline Dual (Creator + Auditor)</h3>
+          <div class="tec-field">
+            <label>Modo</label>
+            <select id="tec-cfg-pipeline-mode">
+              <option value="single" ${getSetting('pipelineMode') === 'single' ? 'selected' : ''}>Single (1 modelo, sem auditoria)</option>
+              <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual (Creator \u2192 Auditor, mais preciso)</option>
+            </select>
+            <small style="color:#888;font-size:11px">Dual requer OpenRouter ou OpenCode API key. Custo ~1.2\u00A2/quest\u00E3o.</small>
+          </div>
+          <div id="tec-cfg-pipeline-section" style="display:none">
+            <div class="tec-field">
+              <label>Modelo Creator</label>
+              <select id="tec-cfg-creator-model">
+                ${PIPELINE_CREATOR_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('creatorModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
+              </select>
+            </div>
+            <div class="tec-field">
+              <label>Modelo Auditor</label>
+              <select id="tec-cfg-auditor-model">
+                ${PIPELINE_AUDITOR_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('auditorModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
+              </select>
+            </div>
+            <div class="tec-field" style="padding:8px;background:#1a2332;border-radius:6px;font-size:12px;color:#8899aa;">
+              \uD83D\uDCB0 Custo acumulado: <strong style="color:#06d6a0">$${getSetting('pipelineCostTotal').toFixed(4)}</strong>
+              <button id="tec-cfg-reset-cost" style="margin-left:8px;font-size:11px;padding:2px 8px;cursor:pointer;background:#2a3a4a;color:#60cdff;border:1px solid #3a4a5a;border-radius:4px;">Zerar</button>
             </div>
           </div>
 
@@ -1860,13 +2510,36 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     const providerSelect = overlay.querySelector('#tec-cfg-ai-provider');
     const geminiSection = overlay.querySelector('#tec-cfg-gemini-section');
     const openrouterSection = overlay.querySelector('#tec-cfg-openrouter-section');
+    const opencodeSection = overlay.querySelector('#tec-cfg-opencode-section');
     function toggleProviderSections() {
-      const isGemini = providerSelect.value === 'gemini';
-      geminiSection.style.display = isGemini ? '' : 'none';
-      openrouterSection.style.display = isGemini ? 'none' : '';
+      const val = providerSelect.value;
+      geminiSection.style.display = val === 'gemini' ? '' : 'none';
+      openrouterSection.style.display = val === 'openrouter' ? '' : 'none';
+      opencodeSection.style.display = val === 'opencode' ? '' : 'none';
     }
     providerSelect.addEventListener('change', toggleProviderSections);
     toggleProviderSections(); // set initial state
+
+    // Show/hide pipeline section based on mode
+    const pipelineModeSelect = overlay.querySelector('#tec-cfg-pipeline-mode');
+    const pipelineSection = overlay.querySelector('#tec-cfg-pipeline-section');
+    function togglePipelineSection() {
+      pipelineSection.style.display = pipelineModeSelect.value === 'dual' ? '' : 'none';
+    }
+    pipelineModeSelect.addEventListener('change', togglePipelineSection);
+    togglePipelineSection();
+
+    // Reset cost button
+    const resetCostBtn = overlay.querySelector('#tec-cfg-reset-cost');
+    if (resetCostBtn) {
+      resetCostBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setSetting('pipelineCostTotal', 0);
+        resetCostBtn.previousElementSibling?.remove();
+        resetCostBtn.insertAdjacentHTML('beforebegin', '<strong style="color:#06d6a0">$0.0000</strong>');
+        showToast('Contador de custo zerado.', 'info');
+      });
+    }
 
     overlay.addEventListener('click', async (e) => {
       const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
@@ -1877,6 +2550,11 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         setSetting('geminiModel', overlay.querySelector('#tec-cfg-gemini-model').value);
         setSetting('openrouterApiKey', overlay.querySelector('#tec-cfg-openrouter-key').value);
         setSetting('openrouterModel', overlay.querySelector('#tec-cfg-openrouter-model').value);
+        setSetting('opencodeApiKey', overlay.querySelector('#tec-cfg-opencode-key').value);
+        setSetting('opencodeModel', overlay.querySelector('#tec-cfg-opencode-model').value);
+        setSetting('pipelineMode', overlay.querySelector('#tec-cfg-pipeline-mode').value);
+        setSetting('creatorModel', overlay.querySelector('#tec-cfg-creator-model').value);
+        setSetting('auditorModel', overlay.querySelector('#tec-cfg-auditor-model').value);
         setSetting('obsidianMethod', overlay.querySelector('#tec-cfg-obs-method').value);
         setSetting('obsidianVault', overlay.querySelector('#tec-cfg-obs-vault').value);
         setSetting('obsidianToken', overlay.querySelector('#tec-cfg-obs-token').value);
@@ -1940,22 +2618,25 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     updateStatusDot();
 
     // Make toolbar draggable
-    let isDragging = false, startX, startY, origX, origY;
-    toolbar.addEventListener('mousedown', (e) => {
-      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
-      isDragging = true;
-      startX = e.clientX; startY = e.clientY;
-      const rect = toolbar.getBoundingClientRect();
-      origX = rect.left; origY = rect.top;
-      e.preventDefault();
-    });
-    document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
+    let startX, startY, origX, origY;
+    function onDragMove(e) {
       toolbar.style.right = 'auto'; toolbar.style.bottom = 'auto';
       toolbar.style.left = (origX + e.clientX - startX) + 'px';
       toolbar.style.top = (origY + e.clientY - startY) + 'px';
+    }
+    function onDragEnd() {
+      document.removeEventListener('mousemove', onDragMove);
+      document.removeEventListener('mouseup', onDragEnd);
+    }
+    toolbar.addEventListener('mousedown', (e) => {
+      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+      startX = e.clientX; startY = e.clientY;
+      const rect = toolbar.getBoundingClientRect();
+      origX = rect.left; origY = rect.top;
+      document.addEventListener('mousemove', onDragMove);
+      document.addEventListener('mouseup', onDragEnd);
+      e.preventDefault();
     });
-    document.addEventListener('mouseup', () => { isDragging = false; });
   }
 
   async function updateStatusDot() {
@@ -2005,10 +2686,17 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       loadingToast.remove();
       loadingToast = showLoadingToast('\uD83E\uDD16 Gerando flashcards com IA...');
 
-      // Step 2: Generate flashcards with AI (Gemini or OpenRouter)
+      // Step 2: Generate flashcards with AI
       let aiResult = null;
       try {
-        aiResult = await callAI(questionData);
+        if (getSetting('pipelineMode') === 'dual') {
+          aiResult = await callDualPipeline(questionData, (statusMsg) => {
+            if (loadingToast) loadingToast.remove();
+            loadingToast = showLoadingToast(statusMsg);
+          });
+        } else {
+          aiResult = await callAI(questionData);
+        }
       } catch (err) {
         console.error('AI error:', err);
         showToast(`Erro na IA: ${err.message}. Salvando sem flashcards.`, 'warning', 6000);
@@ -2057,6 +2745,9 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       }
 
       if (msgs.length) {
+        if (aiResult?._pipelineCost) {
+          msgs.push(`\uD83D\uDCB0 Custo: ${(aiResult._pipelineCost * 100).toFixed(1)}\u00A2 (total: $${getSetting('pipelineCostTotal').toFixed(4)})`);
+        }
         showToast(msgs.join('<br>'), 'success', 5000);
       }
 
@@ -2283,7 +2974,6 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
 
         if (isError && !processedIds.has(currentId)) {
           processedIds.add(currentId);
-          console.log(`\uD83D\uDCDD Batch: Processando Q${currentId} (erro ${processed + 1}/${totalErros})`);
 
           try {
             // Expand comment before extracting
@@ -2298,8 +2988,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
                 getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
               ]);
               processed++;
-              console.log(`\u2705 Batch: Q${currentId} processada (${processed}/${totalErros})`);
-            }
+                }
           } catch (err) {
             console.error(`\u274C Batch: Erro em Q${currentId}:`, err);
             errors++;
@@ -2455,15 +3144,18 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     // Show confirmation toast on load
     showToast('TEC\u2192Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB', 'success', 4000);
 
-    // Check connections periodically
+    // Check connections periodically (every 2 min)
     updateStatusDot();
-    setInterval(updateStatusDot, 60000);
+    setInterval(updateStatusDot, 120000);
 
-    // Re-inject toolbar on SPA navigation (AngularJS)
+    // Re-inject toolbar on SPA navigation (AngularJS) — debounced
+    let _reinjectTimer = null;
     const observer = new MutationObserver(() => {
-      if (!document.getElementById('tec-anki-toolbar')) {
-        injectToolbar();
-      }
+      if (_reinjectTimer) return;
+      _reinjectTimer = setTimeout(() => {
+        _reinjectTimer = null;
+        if (!document.getElementById('tec-anki-toolbar')) injectToolbar();
+      }, 500);
     });
     observer.observe(document.body, { childList: true, subtree: false });
   }
