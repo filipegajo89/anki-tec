@@ -353,16 +353,25 @@
   // Module-level variable to store the captured comment text
   let _capturedComment = '';
 
-  /** Strip HTML tags and return plain text (regex-based, no DOM) */
+  /** Decode all HTML entities (named + numeric) using a temporary DOM element */
+  function decodeHtmlEntities(text) {
+    if (!text) return '';
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = text;
+    return textarea.value;
+  }
+
+  /** Strip HTML tags and return plain text */
   function stripHtml(html) {
     if (!html) return '';
-    return html
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+    return decodeHtmlEntities(
+      html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+    );
   }
 
   /** Try to extract a comment string from a JSON object (API response) */
