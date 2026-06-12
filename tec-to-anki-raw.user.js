@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.0.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com Gemini AI e salva no Anki + Obsidian
+// @version      1.1.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (com seu raciocínio como contexto) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -51,6 +51,7 @@
     enableAnki: true,
     enableObsidian: true,
     showPreview: true,
+    askThoughts: true, // ask "qual foi seu raciocínio?" before generating cards
     pipelineMode: 'single', // 'single' or 'dual'
     creatorModel: 'moonshotai/kimi-k2.5',
     auditorModel: 'google/gemini-3.1-pro-preview',
@@ -201,6 +202,42 @@
     .tec-settings .tec-toggle input[type="checkbox"] { width: 18px; height: 18px; accent-color: #4361ee; }
     .tec-settings .tec-divider { border: none; border-top: 1px solid #eee; margin: 16px 0; }
     .tec-settings h3 { font-size: 13px; color: #4361ee; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* \u2500\u2500 Racioc\u00ednio do aluno \u2500\u2500 */
+    .tec-thoughts-textarea {
+      width: 100%; box-sizing: border-box; min-height: 90px; resize: vertical;
+      padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px;
+      font-size: 13px; font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a2e;
+    }
+    .tec-thoughts-textarea:focus { outline: none; border-color: #4361ee; }
+    .tec-dup-badge {
+      display: inline-block; background: #fff3cd; color: #856404;
+      padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    }
+
+    /* \u2500\u2500 Batch selection \u2500\u2500 */
+    .tec-batch-select-item {
+      border: 1px solid #e9ecef; border-radius: 10px; margin-bottom: 10px;
+      background: #fafbfc; overflow: hidden; transition: opacity .15s, border-color .15s;
+    }
+    .tec-batch-select-item.deselected { opacity: .45; }
+    .tec-batch-select-item.selected { border-color: #4361ee; }
+    .tec-batch-select-item .item-header {
+      display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; cursor: pointer;
+    }
+    .tec-batch-select-item .item-header input[type="checkbox"] {
+      width: 18px; height: 18px; accent-color: #4361ee; margin-top: 1px; flex-shrink: 0; cursor: pointer;
+    }
+    .tec-batch-select-item .item-title { font-size: 13px; font-weight: 700; color: #1a1a2e; }
+    .tec-batch-select-item .item-meta { font-size: 11px; color: #888; margin-top: 2px; }
+    .tec-batch-select-item .item-snippet { font-size: 12px; color: #555; margin-top: 4px; line-height: 1.4; }
+    .tec-batch-select-item .item-thoughts { padding: 0 12px 10px 40px; }
+    .tec-batch-select-item .item-thoughts textarea {
+      width: 100%; box-sizing: border-box; min-height: 34px; resize: vertical;
+      padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px;
+      font-size: 12px; font-family: system-ui, sans-serif; color: #1a1a2e;
+    }
+    .tec-batch-select-item .item-thoughts textarea:focus { outline: none; border-color: #4361ee; }
 
     /* \u2500\u2500 Loading Spinner \u2500\u2500 */
     .tec-spinner {
@@ -1254,7 +1291,13 @@ ${altsText || 'N\u00E3o dispon\u00EDveis'}
 
 ### Coment\u00E1rio do Professor
 ${q.comentario || 'N\u00E3o dispon\u00EDvel'}
+${q.pensamentoAluno ? `
+### \uD83D\uDCAD Relato do Aluno \u2014 PRIORIDADE M\u00C1XIMA
+O aluno descreveu o pr\u00F3prio racioc\u00EDnio ao responder esta quest\u00E3o:
+"${q.pensamentoAluno}"
 
+Este relato \u00E9 a fonte MAIS CONFI\u00C1VEL sobre o mecanismo REAL do erro/d\u00FAvida \u2014 mais confi\u00E1vel que qualquer hip\u00F3tese sua e que o foco do coment\u00E1rio do professor. Os cards DEVEM atacar diretamente a d\u00FAvida/confus\u00E3o descrita pelo aluno. Se o relato revelar uma confus\u00E3o diferente da que voc\u00EA deduziria sozinho, siga o relato.
+` : ''}
 ---
 Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie no m\u00E1ximo 2 cards AUTOCONTIDOS, podendo combinar 1 Cloze + 1 Q&A quando isso deixar a distin\u00E7\u00E3o mais clara.`;
   }
@@ -1830,7 +1873,12 @@ ${cards.map(c => `### Card ${c.index}
 - **Resposta do aluno:** ${questionData.respostaAluno || 'N/A'}
 
 ### Comentário do Professor
-${questionData.comentario || 'Não disponível'}`;
+${questionData.comentario || 'Não disponível'}${questionData.pensamentoAluno ? `
+
+### 💭 Relato do Aluno (raciocínio dele durante a questão)
+${questionData.pensamentoAluno}
+
+Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por esse critério.` : ''}`;
   }
 
   /**
@@ -2001,6 +2049,17 @@ ${questionData.comentario || 'Não disponível'}`;
     return finalResult;
   }
 
+  /**
+   * Unified card generation: dual pipeline (Creator \u2192 Auditor) when configured,
+   * single model otherwise. Used by both single-question and batch flows.
+   */
+  async function generateCards(questionData, onStatus = () => {}) {
+    if (getSetting('pipelineMode') === 'dual') {
+      return callDualPipeline(questionData, onStatus);
+    }
+    return callAI(questionData);
+  }
+
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                  7. ANKI CONNECT                             \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
@@ -2139,6 +2198,18 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 
   async function ensureAnkiDeck(deckName) {
     await ankiInvoke('createDeck', { deck: deckName });
+  }
+
+  /**
+   * Count Anki notes already created for this question (matches the Fonte field).
+   * Returns 0 on any failure — duplicate detection is best-effort.
+   */
+  async function countExistingAnkiCards(questionId) {
+    if (!questionId) return 0;
+    try {
+      const ids = await ankiInvoke('findNotes', { query: `"Fonte:Q#${questionId} *"` });
+      return Array.isArray(ids) ? ids.length : 0;
+    } catch { return 0; }
   }
 
   async function addCardsToAnki(aiResult, questionData) {
@@ -2340,7 +2411,10 @@ ${altsMarkdown || '_N\u00E3o extra\u00EDdas_'}
 - **Sua resposta:** ${questionData.respostaAluno || 'N/A'} ${questionData.errou ? '\u274C' : '\u2705'}
 - **Gabarito:** ${questionData.gabarito || 'N/A'} \u2705
 
-## Coment\u00E1rio do Professor
+${questionData.pensamentoAluno ? `## \uD83D\uDCAD Meu Racioc\u00EDnio
+${cleanText(questionData.pensamentoAluno)}
+
+` : ''}## Coment\u00E1rio do Professor
 ${comentario}
 
 ## ${questionData.errou ? '\uD83C\uDFAF Erro Identificado (IA)' : '\uD83D\uDD0D Pegadinha/Nuance Identificada (IA)'}
@@ -2412,6 +2486,65 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   // \u2551                  9. PREVIEW MODAL                            \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
+  /**
+   * Asks the user to describe their reasoning during the question, BEFORE the AI runs.
+   * Resolves to: string (reasoning, possibly empty when skipped) or null (cancel everything).
+   */
+  function showThoughtsModal(questionData, existingCards = 0) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'tec-modal-overlay';
+
+      const dupWarning = existingCards > 0
+        ? `<div class="tec-dup-badge" style="margin-bottom:12px;">⚠️ Você já gerou ${existingCards} card(s) desta questão no Anki — duplicatas serão bloqueadas, mas cards parecidos podem passar.</div>`
+        : '';
+
+      overlay.innerHTML = `
+        <div class="tec-modal" style="width:560px;">
+          <div class="tec-modal-header">
+            <h2>💭 Qual foi seu raciocínio? <span style="font-weight:400;font-size:13px;color:#888;">Questão #${questionData.id || '?'}</span></h2>
+            <button class="tec-modal-close" data-action="cancel">×</button>
+          </div>
+          <div class="tec-modal-body">
+            ${dupWarning}
+            <p style="margin:0 0 10px;font-size:13px;color:#555;line-height:1.5;">
+              Descreva o que você pensou ao responder: em que você ficou em dúvida, o que confundiu, por que marcou ${questionData.respostaAluno || 'sua resposta'}.
+              A IA vai usar isso como <b>fonte principal</b> para o card atacar sua dúvida real.
+            </p>
+            <textarea class="tec-thoughts-textarea" id="tec-thoughts-input"
+              placeholder="Ex: achei que a anterioridade também valia para alteração de prazo de pagamento... fiquei entre A e C e chutei."></textarea>
+            <div style="margin-top:6px;font-size:11px;color:#999;">Ctrl+Enter gera os cards · Esc pula</div>
+          </div>
+          <div class="tec-modal-footer">
+            <button class="tec-btn tec-btn-cancel" data-action="skip">⏭️ Pular</button>
+            <button class="tec-btn tec-btn-save" data-action="generate">🤖 Gerar cards</button>
+          </div>
+        </div>
+      `;
+
+      const textarea = overlay.querySelector('#tec-thoughts-input');
+      const finish = (value) => { document.removeEventListener('keydown', onKey, true); overlay.remove(); resolve(value); };
+      const submit = () => finish(textarea.value.trim());
+
+      function onKey(e) {
+        if (!document.body.contains(overlay)) { document.removeEventListener('keydown', onKey, true); return; }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(''); }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); submit(); }
+      }
+      document.addEventListener('keydown', onKey, true);
+
+      overlay.addEventListener('click', (e) => {
+        const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
+        if (action === 'cancel' || e.target === overlay) finish(null);
+        else if (action === 'skip') finish('');
+        else if (action === 'generate') submit();
+      });
+
+      document.body.appendChild(overlay);
+      setTimeout(() => textarea.focus(), 50);
+    });
+  }
+
   function showPreviewModal(questionData, aiResult) {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
@@ -2460,6 +2593,13 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               ${cardsHTML || '<div class="content"><em>Nenhum card gerado</em></div>'}
             </div>
 
+            <div class="tec-section">
+              <h3>\uD83D\uDCAD Meu Racioc\u00EDnio</h3>
+              <textarea class="tec-thoughts-textarea" id="tec-preview-thoughts" style="min-height:60px;"
+                placeholder="O card n\u00E3o captou sua d\u00FAvida real? Descreva (ou ajuste) seu racioc\u00EDnio e clique em Regenerar.">${(questionData.pensamentoAluno || '').replace(/</g, '&lt;')}</textarea>
+              <button class="tec-btn" data-action="regen" style="margin-top:8px;background:#fff3cd;color:#856404;border:1px solid #ffd166;">\uD83D\uDD04 Regenerar cards com meu racioc\u00EDnio</button>
+            </div>
+
             <div class="tec-section" style="margin-bottom:0">
               <h3>\uD83D\uDCC4 Enunciado</h3>
               <div class="content">${questionData.enunciado?.substring(0, 500) || '<em>N\u00E3o extra\u00EDdo</em>'}${(questionData.enunciado?.length || 0) > 500 ? '...' : ''}</div>
@@ -2472,11 +2612,18 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         </div>
       `;
 
+      const finish = (action) => {
+        const pensamento = overlay.querySelector('#tec-preview-thoughts')?.value.trim() || '';
+        overlay.remove();
+        resolve({ action, pensamento });
+      };
+
       overlay.addEventListener('click', (e) => {
         const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
-        if (action === 'close' || action === 'cancel') { overlay.remove(); resolve(false); }
-        if (action === 'save') { overlay.remove(); resolve(true); }
-        if (e.target === overlay) { overlay.remove(); resolve(false); }
+        if (action === 'close' || action === 'cancel') finish('cancel');
+        else if (action === 'save') finish('save');
+        else if (action === 'regen') finish('regen');
+        else if (e.target === overlay) finish('cancel');
       });
 
       document.body.appendChild(overlay);
@@ -2486,6 +2633,114 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                 10. SETTINGS PANEL                           \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+
+  /**
+   * Lets the user pick which wrong questions deserve cards before the AI runs.
+   * Questions that already have Anki cards come deselected by default.
+   * Each item has an optional "raciocínio" textarea fed into the AI prompt.
+   * @param {Array<{questionData: object, existingCards: number}>} items
+   * @returns {Promise<object[]|null>} selected questionData array, or null on cancel
+   */
+  function showBatchSelectionModal(items) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'tec-modal-overlay';
+      overlay.style.zIndex = '100002';
+
+      const itemsHTML = items.map((item, idx) => {
+        const q = item.questionData;
+        const isDup = item.existingCards > 0;
+        const snippet = (q.enunciado || '').substring(0, 160);
+        return `
+          <div class="tec-batch-select-item ${isDup ? 'deselected' : 'selected'}" data-idx="${idx}">
+            <div class="item-header">
+              <input type="checkbox" data-idx="${idx}" ${isDup ? '' : 'checked'}>
+              <div style="flex:1;min-width:0;">
+                <div class="item-title">#${q.id || '?'} — ${q.materia || '-'} › ${q.assunto || '-'}
+                  ${isDup ? `<span class="tec-dup-badge" style="margin-left:6px;padding:2px 8px;font-size:11px;">já tem ${item.existingCards} card(s)</span>` : ''}
+                </div>
+                <div class="item-meta">${q.banca || '-'} ${q.ano || ''} | Você marcou: <b>${q.respostaAluno || '?'}</b> → Gabarito: <b>${q.gabarito || '?'}</b></div>
+                <div class="item-snippet">${snippet}${(q.enunciado || '').length > 160 ? '…' : ''}</div>
+              </div>
+            </div>
+            <div class="item-thoughts">
+              <textarea data-idx="${idx}" placeholder="💭 Seu raciocínio nesta questão (opcional — a IA usa como fonte principal do erro)"></textarea>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      overlay.innerHTML = `
+        <div class="tec-modal" style="width:760px;max-width:96vw;">
+          <div class="tec-modal-header">
+            <h2>🗂️ ${items.length} erradas encontradas — quais viram cards?</h2>
+            <button class="tec-modal-close" data-action="cancel">×</button>
+          </div>
+          <div class="tec-modal-body" style="max-height:65vh;overflow-y:auto;">
+            <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
+              <button class="tec-btn tec-btn-cancel" data-action="all" style="padding:6px 14px;font-size:12px;">✅ Marcar todas</button>
+              <button class="tec-btn tec-btn-cancel" data-action="none" style="padding:6px 14px;font-size:12px;">⬜ Desmarcar todas</button>
+              <span style="font-size:12px;color:#888;">Desmarque o que você errou por besteira — não vira card.</span>
+            </div>
+            ${itemsHTML}
+          </div>
+          <div class="tec-modal-footer">
+            <button class="tec-btn tec-btn-cancel" data-action="cancel">Cancelar</button>
+            <button class="tec-btn tec-btn-save" data-action="generate">🤖 Gerar cards (<span id="tec-batch-sel-count">0</span>)</button>
+          </div>
+        </div>
+      `;
+
+      const checkboxes = [...overlay.querySelectorAll('input[type="checkbox"]')];
+      const countEl = overlay.querySelector('#tec-batch-sel-count');
+      const updateCount = () => {
+        const n = checkboxes.filter(cb => cb.checked).length;
+        countEl.textContent = n;
+        checkboxes.forEach(cb => {
+          const itemEl = overlay.querySelector(`.tec-batch-select-item[data-idx="${cb.dataset.idx}"]`);
+          if (itemEl) itemEl.className = `tec-batch-select-item ${cb.checked ? 'selected' : 'deselected'}`;
+        });
+      };
+      updateCount();
+
+      const finish = (value) => { document.removeEventListener('keydown', onKey, true); overlay.remove(); resolve(value); };
+      const collectSelected = () => items
+        .map((item, idx) => ({ item, idx }))
+        .filter(({ idx }) => checkboxes[idx].checked)
+        .map(({ item, idx }) => {
+          const thoughts = overlay.querySelector(`textarea[data-idx="${idx}"]`)?.value.trim();
+          if (thoughts) item.questionData.pensamentoAluno = thoughts;
+          return item.questionData;
+        });
+
+      function onKey(e) {
+        if (!document.body.contains(overlay)) { document.removeEventListener('keydown', onKey, true); return; }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); }
+      }
+      document.addEventListener('keydown', onKey, true);
+
+      overlay.addEventListener('change', (e) => {
+        if (e.target.type === 'checkbox') updateCount();
+      });
+
+      overlay.addEventListener('click', (e) => {
+        const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
+        if (action === 'cancel' || e.target === overlay) { finish(null); return; }
+        if (action === 'all') { checkboxes.forEach(cb => cb.checked = true); updateCount(); return; }
+        if (action === 'none') { checkboxes.forEach(cb => cb.checked = false); updateCount(); return; }
+        if (action === 'generate') { finish(collectSelected()); return; }
+        // Clicking the item header (outside checkbox/textarea) toggles selection
+        const header = e.target.closest('.item-header');
+        if (header && e.target.type !== 'checkbox') {
+          const cb = header.querySelector('input[type="checkbox"]');
+          cb.checked = !cb.checked;
+          updateCount();
+        }
+      });
+
+      document.body.appendChild(overlay);
+    });
+  }
 
   /**
    * Shows a consolidated preview of ALL cards generated during a batch run.
@@ -2707,6 +2962,9 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <label class="tec-toggle"><input type="checkbox" id="tec-cfg-preview" ${getSetting('showPreview') ? 'checked' : ''}> Mostrar preview antes de salvar</label>
           </div>
           <div class="tec-field">
+            <label class="tec-toggle"><input type="checkbox" id="tec-cfg-ask-thoughts" ${getSetting('askThoughts') ? 'checked' : ''}> Perguntar meu raciocínio antes de gerar cards</label>
+          </div>
+          <div class="tec-field">
             <label class="tec-toggle"><input type="checkbox" id="tec-cfg-enable-anki" ${getSetting('enableAnki') ? 'checked' : ''}> Salvar no Anki</label>
           </div>
           <div class="tec-field">
@@ -2783,6 +3041,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         setSetting('ankiDeckPrefix', overlay.querySelector('#tec-cfg-anki-prefix').value || 'TEC');
         setSetting('ankiModelName', overlay.querySelector('#tec-cfg-anki-model').value || 'TEC Concursos');
         setSetting('showPreview', overlay.querySelector('#tec-cfg-preview').checked);
+        setSetting('askThoughts', overlay.querySelector('#tec-cfg-ask-thoughts').checked);
         setSetting('enableAnki', overlay.querySelector('#tec-cfg-enable-anki').checked);
         setSetting('enableObsidian', overlay.querySelector('#tec-cfg-enable-obs').checked);
         showToast('Configura\u00E7\u00F5es salvas!', 'success');
@@ -2909,34 +3168,57 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       }
 
       loadingToast.remove();
-      loadingToast = showLoadingToast('\uD83E\uDD16 Gerando flashcards com IA...');
+      loadingToast = null;
 
-      // Step 2: Generate flashcards with AI
+      // Step 1.5: Ask for the user's reasoning (the REAL reason behind the error)
+      if (getSetting('askThoughts')) {
+        const existingCards = await countExistingAnkiCards(questionData.id);
+        const pensamento = await showThoughtsModal(questionData, existingCards);
+        if (pensamento === null) {
+          showToast('Cancelado pelo usu\u00E1rio.', 'info');
+          return;
+        }
+        if (pensamento) questionData.pensamentoAluno = pensamento;
+      }
+
+      // Step 2+3: Generate flashcards with AI + preview, looping when the user
+      // edits their reasoning and asks to regenerate
       let aiResult = null;
-      try {
-        if (getSetting('pipelineMode') === 'dual') {
-          aiResult = await callDualPipeline(questionData, (statusMsg) => {
+      let regenerate = true;
+      while (regenerate) {
+        regenerate = false;
+        loadingToast = showLoadingToast('\uD83E\uDD16 Gerando flashcards com IA...');
+        try {
+          aiResult = await generateCards(questionData, (statusMsg) => {
             if (loadingToast) loadingToast.remove();
             loadingToast = showLoadingToast(statusMsg);
           });
-        } else {
-          aiResult = await callAI(questionData);
+        } catch (err) {
+          console.error('AI error:', err);
+          showToast(`Erro na IA: ${err.message}. Salvando sem flashcards.`, 'warning', 6000);
+          aiResult = { materia: questionData.materia, subtopico: questionData.assunto, erro_identificado: '', cards: [] };
         }
-      } catch (err) {
-        console.error('AI error:', err);
-        showToast(`Erro na IA: ${err.message}. Salvando sem flashcards.`, 'warning', 6000);
-        aiResult = { materia: questionData.materia, subtopico: questionData.assunto, erro_identificado: '', cards: [] };
-      }
 
-      loadingToast.remove();
-      loadingToast = null;
+        loadingToast.remove();
+        loadingToast = null;
 
-      // Step 3: Preview (optional)
-      if (getSetting('showPreview')) {
-        const confirmed = await showPreviewModal(questionData, aiResult);
-        if (!confirmed) {
-          showToast('Cancelado pelo usu\u00E1rio.', 'info');
-          return;
+        if (getSetting('showPreview')) {
+          const decision = await showPreviewModal(questionData, aiResult);
+          if (decision.action === 'cancel') {
+            showToast('Cancelado pelo usu\u00E1rio.', 'info');
+            return;
+          }
+          if (decision.action === 'regen') {
+            if (decision.pensamento) {
+              questionData.pensamentoAluno = decision.pensamento;
+            } else {
+              delete questionData.pensamentoAluno;
+            }
+            regenerate = true;
+          } else if (decision.pensamento && decision.pensamento !== questionData.pensamentoAluno) {
+            // User edited the reasoning but saved directly \u2014 keep it for Obsidian
+            questionData.pensamentoAluno = decision.pensamento;
+          }
         }
       }
 
@@ -3145,28 +3427,28 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       `${cadernoInfo.method !== 'none' ? `Detectados ${totalErros} erros (${cadernoInfo.method})` : `Total informado: ${totalErros} erros`}` +
       ` neste caderno (${totalQuestoes || '?'} quest\u00F5es no total).\n` +
       `Voc\u00EA est\u00E1 na quest\u00E3o ${currentQNum || '?'} de ${totalQuestoes || '?'}.\n\n` +
-      `Processar todas as quest\u00F5es erradas a partir da quest\u00E3o ATUAL?\n\n` +
-      `\u26A0\uFE0F Isso pode levar alguns minutos. Mantenha o Anki aberto.\n` +
-      `\uD83D\uDCA1 O script vai navegar quest\u00E3o por quest\u00E3o (\u2192) e processar s\u00F3 as erradas.`
+      `O script vai navegar pelo caderno COLETANDO as erradas (sem IA), ` +
+      `e depois voc\u00EA escolhe quais viram cards.\n\n` +
+      `\u26A0\uFE0F Mantenha o Anki aberto.\n` +
+      `Come\u00E7ar a coleta a partir da quest\u00E3o ATUAL?`
     )) {
       return;
     }
 
     batchRunning = true;
     const batchBtn = document.getElementById('tec-btn-batch');
-    if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Batch...';
-    let processed = 0, skipped = 0, errors = 0;
-    const processedIds = new Set(); // Track processed question IDs to avoid duplicates
-    const batchResults = []; // Accumulate results for preview modal
-    const batchErrors = []; // Track failed questions
+    if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Coletando...';
+    let skipped = 0;
+    const collected = []; // questionData of every wrong question found
+    const collectedIds = new Set(); // avoid duplicates while navigating
 
-    // Create progress indicator
+    // \u2500\u2500 Phase 1: navigate and COLLECT wrong questions (no AI calls yet) \u2500\u2500
     const progressToast = document.createElement('div');
     progressToast.className = 'tec-toast info';
     progressToast.style.pointerEvents = 'auto';
     progressToast.innerHTML = `
       <div style="width:100%">
-        <div>\uD83D\uDCCB Batch: <span id="tec-batch-count">0</span>/${totalErros} erros processados</div>
+        <div>\uD83D\uDD0D Coletando erradas: <span id="tec-batch-count">0</span>/${totalErros}</div>
         <div style="font-size:11px;color:#aaa;margin-top:2px;">Quest\u00E3o <span id="tec-batch-qnum">-</span> | Puladas: <span id="tec-batch-skipped">0</span></div>
         <div class="tec-progress-bar"><div class="tec-progress-fill" id="tec-batch-progress" style="width:0%"></div></div>
         <button id="tec-batch-stop" style="margin-top:8px;padding:4px 12px;border:1px solid #ef476f;background:transparent;color:#ef476f;border-radius:6px;cursor:pointer;font-size:12px;">\u23F9\uFE0F Parar</button>
@@ -3199,33 +3481,25 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         const { vm: batchVm } = getAngularVm();
         const isError = (batchVm?.questao?.correcaoQuestao === false) || /Voc\u00EA errou/i.test(currentBody);
 
-        if (isError && !processedIds.has(currentId)) {
-          processedIds.add(currentId);
+        if (isError && !collectedIds.has(currentId)) {
+          collectedIds.add(currentId);
 
           try {
-            // Expand comment before extracting
+            // Expand comment before extracting (the AI prompt needs it later)
             await ensureCommentExpanded();
             await delay(500);
 
             const qData = extractQuestionData();
             if (qData.enunciado || qData.id) {
-              const aiResult = await callAI(qData);
-              await Promise.allSettled([
-                getSetting('enableAnki') ? addCardsToAnki(aiResult, qData) : Promise.resolve(null),
-                getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
-              ]);
-              processed++;
-              batchResults.push({ questionData: qData, aiResult });
-                }
+              collected.push(qData);
+            }
           } catch (err) {
-            console.error(`\u274C Batch: Erro em Q${currentId}:`, err);
-            errors++;
-            batchErrors.push({ id: currentId, num: qNum, error: err.message || String(err) });
+            console.error(`\u274C Batch: Erro ao extrair Q${currentId}:`, err);
           }
 
           // Update progress UI
-          document.getElementById('tec-batch-count').textContent = processed;
-          document.getElementById('tec-batch-progress').style.width = `${(processed / totalErros) * 100}%`;
+          document.getElementById('tec-batch-count').textContent = collected.length;
+          document.getElementById('tec-batch-progress').style.width = `${(collected.length / totalErros) * 100}%`;
 
           // No need to close comment \u2014 navigation handles it
         } else if (!isError) {
@@ -3234,9 +3508,9 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
           if (skippedEl) skippedEl.textContent = skipped;
         }
 
-        // Check if we've processed all errors
-        if (processed >= totalErros) {
-          console.log('\uD83C\uDF89 Batch: Todos os erros processados!');
+        // Check if we've collected all errors
+        if (collected.length >= totalErros) {
+          console.log('\uD83C\uDF89 Batch: Todas as erradas coletadas!');
           break;
         }
 
@@ -3253,6 +3527,77 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       }
     } finally {
       progressToast.remove();
+    }
+
+    if (collected.length === 0) {
+      batchRunning = false;
+      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      showToast('Nenhuma quest\u00E3o errada encontrada a partir da quest\u00E3o atual.', 'warning', 5000);
+      return;
+    }
+
+    // \u2500\u2500 Phase 2: user picks which errors deserve cards \u2500\u2500
+    if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Sele\u00E7\u00E3o...';
+    const itemsWithDups = await Promise.all(collected.map(async (qData) => ({
+      questionData: qData,
+      existingCards: await countExistingAnkiCards(qData.id),
+    })));
+
+    const selected = await showBatchSelectionModal(itemsWithDups);
+    if (!selected || selected.length === 0) {
+      batchRunning = false;
+      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      showToast(selected ? 'Nenhuma quest\u00E3o selecionada \u2014 batch encerrado.' : 'Batch cancelado.', 'info', 4000);
+      return;
+    }
+
+    // \u2500\u2500 Phase 3: generate cards (AI) + save for selected questions \u2500\u2500
+    if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Gerando...';
+    let processed = 0, errors = 0;
+    const batchResults = [];
+    const batchErrors = [];
+
+    const genToast = document.createElement('div');
+    genToast.className = 'tec-toast info';
+    genToast.style.pointerEvents = 'auto';
+    genToast.innerHTML = `
+      <div style="width:100%">
+        <div>\uD83E\uDD16 Gerando cards: <span id="tec-gen-count">0</span>/${selected.length}</div>
+        <div style="font-size:11px;color:#aaa;margin-top:2px;" id="tec-gen-current">-</div>
+        <div class="tec-progress-bar"><div class="tec-progress-fill" id="tec-gen-progress" style="width:0%"></div></div>
+        <button id="tec-gen-stop" style="margin-top:8px;padding:4px 12px;border:1px solid #ef476f;background:transparent;color:#ef476f;border-radius:6px;cursor:pointer;font-size:12px;">\u23F9\uFE0F Parar</button>
+      </div>
+    `;
+    ensureToastContainer().appendChild(genToast);
+    document.getElementById('tec-gen-stop').addEventListener('click', () => { batchRunning = false; });
+
+    try {
+      for (const qData of selected) {
+        if (!batchRunning) break;
+        const currentEl = document.getElementById('tec-gen-current');
+        if (currentEl) currentEl.textContent = `Q#${qData.id || '?'} \u2014 ${qData.materia || ''}`;
+
+        try {
+          const aiResult = await generateCards(qData);
+          await Promise.allSettled([
+            getSetting('enableAnki') ? addCardsToAnki(aiResult, qData) : Promise.resolve(null),
+            getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
+          ]);
+          processed++;
+          batchResults.push({ questionData: qData, aiResult });
+        } catch (err) {
+          console.error(`\u274C Batch: Erro em Q${qData.id}:`, err);
+          errors++;
+          batchErrors.push({ id: qData.id || '?', num: '?', error: err.message || String(err) });
+        }
+
+        const countEl = document.getElementById('tec-gen-count');
+        if (countEl) countEl.textContent = processed;
+        const progEl = document.getElementById('tec-gen-progress');
+        if (progEl) progEl.style.width = `${((processed + errors) / selected.length) * 100}%`;
+      }
+    } finally {
+      genToast.remove();
       if (batchResults.length > 0 || batchErrors.length > 0) {
         try {
           await showBatchPreviewModal(batchResults, batchErrors);
@@ -3263,6 +3608,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       batchRunning = false;
       if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
       // Persistent toast \u2014 stays until user clicks \u2715
+      const excluded = collected.length - selected.length;
       const type = processed > 0 ? 'success' : 'warning';
       const icons = { success: '\u2705', warning: '\u26A0\uFE0F' };
       const finalToast = document.createElement('div');
@@ -3270,7 +3616,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       finalToast.style.pointerEvents = 'auto';
       finalToast.innerHTML = `
         <span>${icons[type]}</span>
-        <span>Batch finalizado!<br>\u2705 ${processed} processadas | \u274C ${errors} erros | \u23ED\uFE0F ${skipped} puladas (acertos)</span>
+        <span>Batch finalizado!<br>\u2705 ${processed} processadas | \u274C ${errors} erros | \uD83D\uDE48 ${excluded} exclu\u00EDdas por voc\u00EA | \u23ED\uFE0F ${skipped} acertos pulados</span>
         <button style="background:none;border:none;color:inherit;font-size:18px;cursor:pointer;margin-left:8px;padding:2px 6px;opacity:.7;line-height:1;" title="Fechar">\u2715</button>
       `;
       finalToast.querySelector('button').addEventListener('click', () => {
