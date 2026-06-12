@@ -1,0 +1,323 @@
+{
+  "date": "2026-05-31",
+  "total": 295,
+  "erros": 249,
+  "materias": [
+    {
+      "materia": "TI - Ciência de Dados e Inteligência Artificial",
+      "total": 4,
+      "erros": 4,
+      "taxa_erro": 1.0,
+      "status": "🔴",
+      "top_subtopicos": [
+        {
+          "subtopico": "Dados Abertos (Conceitos, Princípios etc.)",
+          "erros": 2,
+          "max_vezes": 1,
+          "recente": true
+        },
+        {
+          "subtopico": "Dado, Informação e Conhecimento",
+          "erros": 1,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Dados Estruturados, Não-Estruturados e Semiestruturados",
+          "erros": 1,
+          "max_vezes": 1,
+          "recente": false
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Dados Abertos (Conceitos, Princípios etc.)"
+      ]
+    },
+    {
+      "materia": "TI - Gestão e Governança de TI",
+      "total": 1,
+      "erros": 1,
+      "taxa_erro": 1.0,
+      "status": "🔴",
+      "top_subtopicos": [
+        {
+          "subtopico": "Sistema de Informações Gerenciais e de Suporte à Decisão",
+          "erros": 1,
+          "max_vezes": 1,
+          "recente": true
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Sistema de Informações Gerenciais e de Suporte à Decisão"
+      ]
+    },
+    {
+      "materia": "Língua Portuguesa (Português)",
+      "total": 28,
+      "erros": 28,
+      "taxa_erro": 1.0,
+      "status": "🔴",
+      "top_subtopicos": [
+        {
+          "subtopico": "Pontuação (Ponto, Vírgula, Travessão, Aspas, Parênteses, etc)",
+          "erros": 5,
+          "max_vezes": 1,
+          "recente": true
+        },
+        {
+          "subtopico": "Reescrita de Frases. Substituição de Palavras ou Trechos de Texto.",
+          "erros": 3,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Coerência. Coesão (Anáfora, Catáfora, Uso dos Conectores - Pronomes Relativos, Conjunções, etc)",
+          "erros": 3,
+          "max_vezes": 1,
+          "recente": false
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Figuras de Linguagem",
+        "Variações da Linguagem: Não Verbal, Regional, Histórica, Contextual. Neologismos e Estrangeirismos",
+        "Tipologia e Gênero Textual",
+        "Tipos de Discurso (Direto, Indireto e Indireto Livre)",
+        "Pontuação (Ponto, Vírgula, Travessão, Aspas, Parênteses, etc)",
+        "Outras Questões de Semântica"
+      ]
+    },
+    {
+      "materia": "Direito Constitucional (CF/1988 e Doutrina)",
+      "total": 49,
+      "erros": 44,
+      "taxa_erro": 0.898,
+      "status": "🔴",
+      "top_subtopicos": [
+        {
+          "subtopico": "Métodos e Princípios de Interpretação das Normas Constitucionais",
+          "erros": 8,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Dos Direitos e Deveres Individuais e Coletivos (art. 5º da CF/1988)",
+          "erros": 5,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Espécies de Nacionalidade (Brasileiros Natos e Naturalizados)",
+          "erros": 3,
+          "max_vezes": 1,
+          "recente": true
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Espécies de Nacionalidade (Brasileiros Natos e Naturalizados)",
+        "Soberania Popular (Voto, Plebiscito, Referendo, Iniciativa popular), Alistamento e Elegibilidade",
+        "Perda e Suspensão dos Direitos Políticos",
+        "Mandado de Injunção",
+        "Direitos Sociais e dos Trabalhadores (arts. 6º e 7º da CF/1988)",
+        "Distinções Constitucionais entre Brasileiros Natos e Naturalizados",
+        "Inelegibilidades (Direitos Políticos)"
+      ]
+    },
+    {
+      "materia": "Legislação Civil e Processual Civil Especial",
+      "total": 7,
+      "erros": 6,
+      "taxa_erro": 0.857,
+      "status": "🔴",
+      "top_subtopicos": [
+        {
+          "subtopico": "Segurança Jurídica e Eficiência na Criação e Aplicação do Direito Público (arts. 20 a 30 da LINDB)",
+          "erros": 4,
+          "max_vezes": 1,
+          "recente": true
+        },
+        {
+          "subtopico": "Eficácia das Leis no Espaço (Normas de Direito Internacional Privado - arts. 7º a 19 da LINDB)",
+          "erros": 2,
+          "max_vezes": 1,
+          "recente": true
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Eficácia das Leis no Espaço (Normas de Direito Internacional Privado - arts. 7º a 19 da LINDB)",
+        "Segurança Jurídica e Eficiência na Criação e Aplicação do Direito Público (arts. 20 a 30 da LINDB)"
+      ]
+    },
+    {
+      "materia": "TI - Banco de Dados",
+      "total": 41,
+      "erros": 35,
+      "taxa_erro": 0.854,
+      "status": "🔴",
+      "top_subtopicos": [
+        {
+          "subtopico": "Conceitos e Fundamentos de Modelo Relacional",
+          "erros": 10,
+          "max_vezes": 1,
+          "recente": true
+        },
+        {
+          "subtopico": "Modelo Entidade-Relacionamento (MER)",
+          "erros": 9,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Consultas e Comandos em SQL",
+          "erros": 6,
+          "max_vezes": 1,
+          "recente": true
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Consultas e Comandos em SQL",
+        "Conceitos e Fundamentos de Modelo Relacional"
+      ]
+    },
+    {
+      "materia": "Contabilidade Geral",
+      "total": 73,
+      "erros": 62,
+      "taxa_erro": 0.849,
+      "status": "🔴",
+      "top_subtopicos": [
+        {
+          "subtopico": "Balanço Patrimonial",
+          "erros": 13,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Escrituração: Normas, Livros Contábeis, Lançamentos, Método das Partidas Dobradas",
+          "erros": 10,
+          "max_vezes": 1,
+          "recente": true
+        },
+        {
+          "subtopico": "Atos e Fatos Contábeis",
+          "erros": 10,
+          "max_vezes": 1,
+          "recente": false
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Escrituração: Normas, Livros Contábeis, Lançamentos, Método das Partidas Dobradas",
+        "Demonstração de Fluxo de Caixa (DFC - CPC 03, Lei 6.404, art. 188, I)"
+      ]
+    },
+    {
+      "materia": "Direito Tributário",
+      "total": 52,
+      "erros": 44,
+      "taxa_erro": 0.846,
+      "status": "🔴",
+      "top_subtopicos": [
+        {
+          "subtopico": "Imunidades Tributárias",
+          "erros": 9,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Princípios Tributários",
+          "erros": 5,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Espécies Normativas Aplicadas ao Direito Tributário (art. 146 e 146-A da CF/1988)",
+          "erros": 4,
+          "max_vezes": 1,
+          "recente": false
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Fato Gerador (arts. 114 a 118 do CTN)",
+        "Disposições Gerais sobre Obrigação Tributária (Conceito, Obrigação Principal e Acessória)",
+        "Capacidade Tributária (art. 126 do CTN)"
+      ]
+    },
+    {
+      "materia": "Direito Administrativo (Doutrina e Leis Federais)",
+      "total": 39,
+      "erros": 25,
+      "taxa_erro": 0.641,
+      "status": "🟡",
+      "top_subtopicos": [
+        {
+          "subtopico": "Administração Indireta",
+          "erros": 5,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Origem, Conceito e Fontes do Direito Administrativo",
+          "erros": 3,
+          "max_vezes": 1,
+          "recente": false
+        },
+        {
+          "subtopico": "Terceiro Setor (OSs, OSCIPs, Sistema S e Fundações de Apoio)",
+          "erros": 3,
+          "max_vezes": 1,
+          "recente": false
+        }
+      ],
+      "cronicos": [],
+      "recentes": [
+        "Poder Regulamentar",
+        "Poder de Polícia",
+        "Abuso de Poder: Excesso de Poder e Desvio de Finalidade (Poderes da Administração)"
+      ]
+    },
+    {
+      "materia": "Biblioteconomia",
+      "total": 1,
+      "erros": 0,
+      "taxa_erro": 0.0,
+      "status": "🟢",
+      "top_subtopicos": [],
+      "cronicos": [],
+      "recentes": []
+    }
+  ],
+  "bancas": {
+    "CEBRASPE": {
+      "total": 124,
+      "erros": 103,
+      "acerto_pct": 16.9
+    },
+    "FGV": {
+      "total": 103,
+      "erros": 89,
+      "acerto_pct": 13.6
+    },
+    "FCC": {
+      "total": 49,
+      "erros": 41,
+      "acerto_pct": 16.3
+    },
+    "VUNESP": {
+      "total": 15,
+      "erros": 13,
+      "acerto_pct": 13.3
+    },
+    "Outra": {
+      "total": 4,
+      "erros": 3,
+      "acerto_pct": 25.0
+    }
+  }
+}

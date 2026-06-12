@@ -1,0 +1,42 @@
+📋 *Diagnóstico Histórico Completo — 31/05/2026*
+_(amostra de 80 erros representativos de toda a história)_
+
+**1. Diagnóstico por matéria**
+
+- **Direito Constitucional (22 erros):** Nacionalidade e Inelegibilidades. Padrão: **generalização das exceções**. Ignora as condições do art. 12, I, "c" (serviço de Estado estrangeiro) e o alcance territorial da inelegibilidade reflexa (art. 14, §7º). Erra na classificação da eficácia das normas.
+- **Direito Tributário (16 erros):** Espécies Normativas e Obrigação Tributária. Padrão: **confusão hierárquica e de institutos**. Troca Lei Complementar por Ordinária (art. 146 vs. 146-A), confunde capacidade civil com tributária (art. 126), erra o tipo de lançamento (ofício vs. homologação) e inverte condição suspensiva/resolutória.
+- **Contabilidade Geral (12 erros):** DFC e Dividendos. Padrão: **classificação incorreta dos fluxos de caixa**. Venda de imobilizado é tratada como Financiamento; integralização em estoque é tratada como fluxo de caixa. Em dividendos, erra a base de cálculo ao ignorar deduções obrigatórias.
+- **TI - Banco de Dados (9 erros):** SQL (JOINs) e Normalização. Padrão: **falha na simulação da execução**. Não visualiza a lógica de conjuntos (LEFT/RIGHT JOIN + DISTINCT) e erra na avaliação de dependências funcionais (B→D inválida).
+- **Direito Administrativo (6 erros):** Terceiro Setor e Poderes. Padrão: **detalhes legais e conceitos vizinhos**. Erra vedações do MROSC e confunde Excesso de Poder (competência) com Desvio de Finalidade (motivo).
+- **Língua Portuguesa (6 erros):** Figuras, Discurso e Variação. Padrão: **percepção de efeitos linguísticos**. Dificuldade em identificar ironia, discurso indireto livre e registrar contrastes formais/coloquiais.
+- **LINDB (5 erros):** Arts. 20-30 e Competência Internacional. Padrão: **invenção de exceções e confusão textual**. Cria hipótese inexistente (imóvel de estrangeiro sem herdeiro) e inverte o conteúdo dos artigos.
+
+**2. Confusões conceituais mais graves**
+
+- **DFC (Investimento x Financiamento):** O erro que mais se repete em Contabilidade.
+- **Responsabilidade do Agente (LINDB) vs. Responsabilidade da Administração:** Acredita que a responsabilidade objetiva cobre o agente pessoalmente.
+- **Inelegibilidade Reflexa (art. 14, §7º):** Acredita que atinge qualquer cargo, ignorando a restrição à circunscrição do titular do Executivo.
+- **SQL JOIN + DISTINCT:** Não compreende que o DISTINCT reduz as linhas preservadas pelo JOIN.
+- **Capacidade Tributária vs. Capacidade Civil:** Ignora a independência total prevista no art. 126 CTN.
+
+**3. Perfil de erro por banca**
+
+- **CEBRASPE:** Explora a **precisão terminológica**. Troca um termo-chave (ex.: "passivo contingente" por "reserva de contingência"). Você aceita a ideia geral e erra o "Certo/Errado".
+- **FGV:** Explora o **raciocínio aplicado e as exceções**. Cobra a aplicação correta do RIGHT JOIN ou a classificação do fluxo na DFC. O erro é não aprofundar o cenário específico.
+- **FCC:** Explora a **literalidade da lei e inversão de conceitos**. Troca obrigação principal por acessória, condição suspensiva por resolutória. Penaliza o estudo superficial de dispositivos.
+
+**4. Raiz comum dos erros**
+
+**Estudo superficial sem simulação de aplicação.** Você:
+1. **Não simula mentalmente** algoritmos (SQL, DFC, cálculo de dividendos).
+2. **Cria/aceita exceções falsas** (LINDB, Nacionalidade, Inelegibilidade).
+3. **Confunde institutos vizinhos** (Excesso/Desvio, Capacidade Civil/Tributária).
+4. **Precipita-se na resposta** ao ver uma opção familiar, sem verificar a armadilha da banca.
+
+**5. Plano de ataque — top 5 prioridades absolutas**
+
+1. **DFC (CPC 03) + Dividendos:** Revisar a classificação de cada transação e o passo a passo da base de cálculo. Maior cluster de erros.
+2. **Direito Constitucional (Nacionalidade e Inelegibilidades):** Mapa mental de todas as exceções do art. 12 e 14 (alcance territorial, cargos privativos).
+3. **SQL (JOINs + Lógica de Conjuntos):** Treinar exaustivamente LEFT/RIGHT JOIN com DISTINCT. Simular a tabela resultante.
+4. **Direito Tributário (Hierarquia e Competência):** Decorar o rol do art. 146 e 146-A, e a parte de lançamento e capacidade do CTN.
+5. **LINDB + Abuso de Poder + Terceiro Setor:** Fechar os detalhes de leis específicas. Esses são os "erros bobos" de memorização que custam pontos fáceis.

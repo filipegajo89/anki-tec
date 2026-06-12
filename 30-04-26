@@ -19,8 +19,6 @@
 // @connect      localhost
 // @connect      generativelanguage.googleapis.com
 // @connect      openrouter.ai
-// @connect      opencode.ai
-// @connect      api.opencode.ai
 // @connect      www.tecconcursos.com.br
 // @connect      tecconcursos.com.br
 // @run-at       document-idle
@@ -34,13 +32,11 @@
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
   const DEFAULTS = {
-    aiProvider: 'gemini', // 'gemini', 'openrouter' or 'opencode'
+    aiProvider: 'gemini', // 'gemini' or 'openrouter'
     geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
     geminiModel: 'gemini-2.5-flash',
     openrouterApiKey: 'YOUR_OPENROUTER_API_KEY_HERE',
     openrouterModel: 'qwen/qwen3-235b-a22b-2507',
-    opencodeApiKey: 'YOUR_OPENCODE_API_KEY_HERE',
-    opencodeModel: 'glm-5.1',
     obsidianVault: 'Filipe - Obs',
     obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
@@ -353,25 +349,16 @@
   // Module-level variable to store the captured comment text
   let _capturedComment = '';
 
-  /** Decode all HTML entities (named + numeric) using a temporary DOM element */
-  function decodeHtmlEntities(text) {
-    if (!text) return '';
-    const textarea = document.createElement('textarea');
-    textarea.innerHTML = text;
-    return textarea.value;
-  }
-
-  /** Strip HTML tags and return plain text */
+  /** Strip HTML tags and return plain text (regex-based, no DOM) */
   function stripHtml(html) {
     if (!html) return '';
-    return decodeHtmlEntities(
-      html
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
-        .replace(/<[^>]+>/g, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim()
-    );
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   /** Try to extract a comment string from a JSON object (API response) */
@@ -508,7 +495,7 @@
             // Re-check scope for new comment data
             if (vm.questao) {
               for (const [key, val] of Object.entries(vm.questao)) {
-                if (typeof val === 'string' && val.length > 30) {
+                if (typeof val === 'string' && val.length > 100) {
                   const plain = stripHtml(val);
                   const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
                   if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
@@ -578,31 +565,16 @@
         };
       }
 
-      // Try multiple selectors to find the comment toggle button
-      const commentSelectors = [
-        'a[ng-click*="comentario"]',
-        'button[ng-click*="comentario"]',
-        'a[ng-click*="resolucao"]',
-        'button[ng-click*="resolucao"]',
-        '[ng-click*="mostrarComentario"]',
-        '[ng-click*="toggleComentario"]',
-        '[ng-click*="abrirComentario"]',
-      ];
-      for (const sel of commentSelectors) {
-        const el = document.querySelector(sel);
-        if (el) { realClick(el); break; }
-      }
-
-      const resolucaoLinks = [...document.querySelectorAll('a, button, span, div')].filter(el => {
+      const resolucaoLinks = [...document.querySelectorAll('a, button, span')].filter(el => {
         const txt = el.textContent.trim();
-        return /ver resolu[\u00E7c]|resolu\u00E7\u00E3o comentada|coment\.rio do professor|exibir coment\.rio/i.test(txt) && txt.length < 60;
+        return /ver resolu[\u00E7c]/i.test(txt) && txt.length < 40;
       });
       for (const link of resolucaoLinks) { realClick(link); }
       try { document.activeElement?.blur(); } catch (_) {}
       document.body.focus();
       simulateKey('o', 79);
 
-      await delay(3500);
+      await delay(2000);
     } finally {
       unsafeWindow.XMLHttpRequest.prototype.open = origOpen;
       unsafeWindow.XMLHttpRequest.prototype.send = origSend;
@@ -1029,25 +1001,6 @@ Aplique rigorosamente: cada card testa UMA ÚNICA informação — um prazo, uma
 
 Prefira SEMPRE este formato para regras, leis e jurisprudências. Escreva uma afirmação AUTOCONTIDA, que faça sentido mesmo sem a questão original. A lacuna entre {{ }} deve ser um RÓTULO GENÉRICO do que falta (ex: {{tipo}}, {{regra}}, {{conceito}}), nunca a resposta já preenchida (ex: {{N:N}}, {{igual para todas as contas}}).
 
-#### Regra do Rótulo Genérico (obrigatório para Cloze)
-
-O texto dentro de {{ }} deve indicar APENAS a CATEGORIA da informação, NUNCA sua identidade. O aluno que lê a frente NÃO pode deduzir a resposta pelo rótulo da lacuna.
-
-❌ RUINS — rótulo é a resposta ou dá dica demais:
-- {{finalidades essenciais}} → o rótulo é literalmente o conceito; quem lê já sabe o que procurar
-- {{imunidade recíproca}} → o rótulo revela o instituto
-- {{ anterioridade anual }} → o rótulo é o nome da regra
-
-✅ BONS — rótulo genérico que oculta a resposta:
-- {{condição}}, {{requisito}}, {{critério}} → quando falta um pré-requisito
-- {{efeito}}, {{consequência}}, {{resultado}} → quando falta o desdobramento
-- {{regra}}, {{tratamento}}, {{regime}} → quando falta como se aplica
-- {{sujeito}}, {{competente}}, {{responsável}} → quando falta quem faz
-- {{prazo}}, {{tempo}}, {{período}} → quando falta uma data/duração
-- {{síntese}}, {{tese}}, {{entendimento}} → quando falta a conclusão de um julgado
-
-DICA: antes de aceitar o rótulo, pergunte-se: "Se eu soubesse ZERO do assunto, esse rótulo me daria a resposta?" Se sim, troque por um mais genérico.
-
 ❌ Ruim (Q&A genérico):
 Frente: O que diz a Súmula 539 do STJ sobre juros?
 Verso: É permitida a capitalização com periodicidade inferior a um ano.
@@ -1413,117 +1366,6 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     return result;
   }
 
-  // ── Generic OpenAI-compatible API caller ────────────────────────────
-
-  function parseOpenAIResponse(json) {
-    let content = json?.choices?.[0]?.message?.content;
-    if (!content) throw new Error('Resposta vazia da API');
-    content = content.trim();
-    if (content.startsWith('```')) {
-      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    }
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Resposta não contém JSON válido.');
-    return JSON.parse(jsonMatch[0]);
-  }
-
-  async function callOpenAICompatible(url, apiKey, body, extraHeaders = {}) {
-    const MAX_RETRIES = 5;
-    let res;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      console.log(`🌐 OpenAI-compatible request → ${url} (tentativa ${attempt}/${MAX_RETRIES})`);
-      res = await gmFetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          ...extraHeaders,
-        },
-        body: JSON.stringify(body),
-        timeout: 300000,
-      });
-
-      if (res.ok) break;
-
-      if ((res.status === 429 || res.status === 503 || res.status === 502 || res.status === 504) && attempt < MAX_RETRIES) {
-        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5;
-        console.warn(`⚠️ ${res.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
-        await new Promise(r => setTimeout(r, waitSec * 1000));
-        continue;
-      }
-
-      const errText = await res.text();
-      throw new Error(`API error (${res.status}): ${errText}`);
-    }
-
-    return res.json();
-  }
-
-  async function callOpencode(questionData) {
-    const apiKey = getSetting('opencodeApiKey');
-    const model = getSetting('opencodeModel');
-    const baseUrl = getOpencodeEndpoint(model);
-    if (!apiKey) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
-
-    const schemaDescription = `Responda SOMENTE com JSON válido neste formato exato (sem markdown, sem comentários):
-{
-  "materia": "string - matéria do edital",
-  "subtopico": "string - subtópico específico",
-  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance",
-  "cards": [
-    {
-      "tipo": "string - Cloze ou Q&A",
-      "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e nunca a resposta preenchida",
-      "verso_texto_limpo": "string - primeira linha com resposta curta; depois, se necessário, uma explicação breve",
-      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
-      "verso_html": "string - verso em HTML, idealmente com <div class=\"answer-line\">resposta curta</div> e <div class=\"explanation\">explicação breve</div>",
-      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
-    }
-  ]
-}`;
-
-    const body = {
-      model,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
-        { role: 'user', content: buildGeminiPrompt(questionData) },
-      ],
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-    };
-
-    const json = await callOpenAICompatible(baseUrl, apiKey, body);
-    const usage = json?.usage;
-    const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
-
-    const result = parseOpenAIResponse(json);
-    if (!result.materia || !result.cards || !Array.isArray(result.cards)) {
-      throw new Error('Resposta do OpenCode em formato inválido. Tente novamente.');
-    }
-    for (const card of result.cards) {
-      const hasNew = card.frente_html && card.verso_html;
-      const hasOld = card.frente && card.verso;
-      if (!hasNew && !hasOld) {
-        throw new Error('Um ou mais flashcards estão incompletos na resposta da IA.');
-      }
-      if (hasNew && !hasOld) {
-        card.frente = card.frente_html;
-        card.verso = card.verso_html;
-      }
-      if (hasOld && !hasNew) {
-        card.frente_html = card.frente;
-        card.verso_html = card.verso;
-        card.frente_texto_limpo = card.frente.replace(/<[^>]+>/g, '');
-        card.verso_texto_limpo = card.verso.replace(/<[^>]+>/g, '');
-      }
-    }
-    const normalized = normalizeGeneratedResult(result);
-    normalized._generatorModel = `opencode/${model}`;
-    if (costEstimate) normalized._usage = costEstimate;
-    return normalized;
-  }
-
   // ── OpenRouter (OpenAI-compatible) ──────────────────────────────────
 
   const OPENROUTER_MODELS = [
@@ -1540,30 +1382,6 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     { id: 'google/gemini-3.1-pro-preview',       label: '\u2B50 Gemini 3.1 Pro Preview \u2014 GPQA 94.1% ($1.25/$10 M tok)' },
   ];
 
-  const OPENCODE_MODELS = [
-    { id: 'glm-5.1',          label: 'GLM 5.1' },
-    { id: 'glm-5',            label: 'GLM 5' },
-    { id: 'kimi-k2.5',        label: 'Kimi K2.5' },
-    { id: 'kimi-k2.6',        label: 'Kimi K2.6' },
-    { id: 'deepseek-v4-pro',  label: 'DeepSeek V4 Pro' },
-    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-    { id: 'mimo-v2-pro',      label: 'MiMo V2 Pro' },
-    { id: 'mimo-v2-omni',     label: 'MiMo V2 Omni' },
-    { id: 'mimo-v2.5-pro',    label: 'MiMo V2.5 Pro' },
-    { id: 'mimo-v2.5',        label: 'MiMo V2.5' },
-    { id: 'minimax-m2.7',     label: 'MiniMax M2.7' },
-    { id: 'minimax-m2.5',     label: 'MiniMax M2.5' },
-    { id: 'qwen3.6-plus',     label: 'Qwen 3.6 Plus' },
-    { id: 'qwen3.5-plus',     label: 'Qwen 3.5 Plus' },
-  ];
-
-  function getOpencodeEndpoint(model) {
-    if (model === 'minimax-m2.7' || model === 'minimax-m2.5') {
-      return 'https://opencode.ai/zen/go/v1/messages';
-    }
-    return 'https://opencode.ai/zen/go/v1/chat/completions';
-  }
-
   // Models for dual pipeline (creator + auditor)
   const PIPELINE_CREATOR_MODELS = [
     { id: 'qwen/qwen3.6-plus',                   label: 'Qwen 3.6 Plus Thinking ($0.325/$1.95 M tok)' },
@@ -1571,7 +1389,6 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     { id: 'moonshotai/kimi-k2.5',                label: 'Kimi K2.5 — IFEval 100% ($0.60/$2.00 M tok)' },
     { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok)' },
     { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
-    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: m.label })),
   ];
 
   function getOpenRouterReasoningConfig(model) {
@@ -1587,7 +1404,6 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     { id: 'google/gemini-3.1-pro-preview',       label: 'Gemini 3.1 Pro Preview — GPQA 94.1% ($1.25/$10 M tok)' },
     { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
     { id: 'anthropic/claude-haiku-4.5',          label: 'Claude Haiku 4.5 ($3.00/M tok)' },
-    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: m.label })),
   ];
 
   async function callOpenRouter(questionData) {
@@ -1612,8 +1428,9 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   ]
 }`;
 
+    const url = 'https://openrouter.ai/api/v1/chat/completions';
     const body = {
-      model,
+      model: model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
         { role: 'user', content: buildGeminiPrompt(questionData) },
@@ -1627,24 +1444,66 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
       Object.assign(body, reasoningConfig);
     }
 
-    const json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
-      'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
-      'X-Title': 'TEC-to-Anki',
-    });
+    const MAX_RETRIES = 5;
+    let res;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      res = await gmFetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
+          'X-Title': 'TEC-to-Anki',
+        },
+        body: JSON.stringify(body),
+        timeout: 90000,
+      });
 
-    const usage = json?.usage;
-    const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
+      if (res.ok) break;
 
-    const parsed = parseOpenAIResponse(json);
+      // Retry on 429 (rate limit) or 503 (overloaded) with progressive backoff
+      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5; // longer waits for rate limits
+        console.warn(`\u26A0\uFE0F OpenRouter ${res.status} \u2014 tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+
+      const errText = await res.text();
+      throw new Error(`OpenRouter API error (${res.status}): ${errText}`);
+    }
+
+    const json = await res.json();
+
+    // OpenRouter returns OpenAI-compatible format
+    let content = json?.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Resposta vazia do OpenRouter');
+
+    // Strip markdown code fences if model wrapped JSON in ```json ... ```
+    content = content.trim();
+    if (content.startsWith('```')) {
+      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+    }
+
+    // Some models return extra text after (or before) the JSON object.
+    // Extract the first valid JSON object from the response.
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Resposta do OpenRouter n\u00E3o cont\u00E9m JSON v\u00E1lido.');
+    content = jsonMatch[0];
+
+    // Parse and validate structure
+    const parsed = JSON.parse(content);
     if (!parsed.materia || !parsed.cards || !Array.isArray(parsed.cards)) {
       throw new Error('Resposta do OpenRouter em formato inv\u00E1lido. Tente novamente.');
     }
+    // Ensure every card has required fields (support both old and new format)
     for (const card of parsed.cards) {
       const hasNew = card.frente_html && card.verso_html;
       const hasOld = card.frente && card.verso;
       if (!hasNew && !hasOld) {
         throw new Error('Um ou mais flashcards est\u00E3o incompletos na resposta da IA.');
       }
+      // Normalize: ensure both old and new field names exist for backward compat
       if (hasNew && !hasOld) {
         card.frente = card.frente_html;
         card.verso = card.verso_html;
@@ -1658,7 +1517,6 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     }
     const normalized = normalizeGeneratedResult(parsed);
     normalized._generatorModel = model;
-    if (costEstimate) normalized._usage = costEstimate;
     return normalized;
   }
 
@@ -1668,9 +1526,6 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const provider = getSetting('aiProvider');
     if (provider === 'openrouter') {
       return callOpenRouter(questionData);
-    }
-    if (provider === 'opencode') {
-      return callOpencode(questionData);
     }
     return callGemini(questionData);
   }
@@ -1712,16 +1567,12 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
    * Call OpenRouter with a specific model (used by creator and auditor).
    * Returns parsed JSON response.
    */
-  function isOpencodeModel(model) {
-    return OPENCODE_MODELS.some(m => m.id === model);
-  }
-
   async function callOpenRouterWithModel(model, systemPrompt, userPrompt, extraBody = {}) {
-    const isOpencode = isOpencodeModel(model);
-    const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
-    if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada.`);
+    const apiKey = getSetting('openrouterApiKey');
+    if (!apiKey) throw new Error('API key do OpenRouter não configurada.');
 
-    const reasoningConfig = !isOpencode ? (getOpenRouterReasoningConfig(model) || {}) : {};
+    const url = 'https://openrouter.ai/api/v1/chat/completions';
+    const reasoningConfig = getOpenRouterReasoningConfig(model) || {};
     const body = {
       model,
       messages: [
@@ -1734,22 +1585,50 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
       ...extraBody,
     };
 
-    let json;
-    if (isOpencode) {
-      const baseUrl = getOpencodeEndpoint(model);
-      json = await callOpenAICompatible(baseUrl, apiKey, body);
-    } else {
-      json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
-        'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
-        'X-Title': 'TEC-to-Anki',
+    const MAX_RETRIES = 5;
+    let res;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      res = await gmFetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
+          'X-Title': 'TEC-to-Anki',
+        },
+        body: JSON.stringify(body),
+        timeout: 90000,
       });
+
+      if (res.ok) break;
+
+      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5;
+        console.warn(`⚠️ OpenRouter ${res.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+
+      const errText = await res.text();
+      throw new Error(`OpenRouter API error (${res.status}): ${errText}`);
     }
+
+    const json = await res.json();
+    let content = json?.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Resposta vazia do OpenRouter');
+
+    content = content.trim();
+    if (content.startsWith('```')) {
+      content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+    }
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Resposta não contém JSON válido.');
 
     // Estimate cost from usage if available
     const usage = json?.usage;
     const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
 
-    const parsed = parseOpenAIResponse(json);
+    const parsed = JSON.parse(jsonMatch[0]);
     parsed._usage = costEstimate;
     return parsed;
   }
@@ -1877,10 +1756,8 @@ ${questionData.comentario || 'Não disponível'}`;
    * Full dual pipeline: Creator → Filter → Auditor → (retry if rejected) → final result.
    */
   async function callDualPipeline(questionData, onStatus = () => {}) {
-    const creatorModel = getSetting('creatorModel');
-    const isOpencode = isOpencodeModel(creatorModel);
-    const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
-    if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada para o pipeline dual.`);
+    const apiKey = getSetting('openrouterApiKey');
+    if (!apiKey) throw new Error('API key do OpenRouter não configurada para o pipeline dual.');
 
     let totalCost = 0;
 
@@ -2226,63 +2103,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       .replace(/\s+$/, '');             // trailing whitespace
   }
 
-  /**
-   * Consulta uma nota existente no Obsidian via REST API.
-   * Retorna { exists: boolean, vezes_errado: number }.
-   */
-  async function getExistingNoteData(filePath) {
-    const port = getSetting('obsidianPort');
-    const token = getSetting('obsidianToken');
-    if (!token) return { exists: false, vezes_errado: 0 };
-
-    try {
-      const res = await gmFetch(`http://127.0.0.1:${port}/vault/${encodeURIComponent(filePath)}.md`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 5000,
-      });
-
-      if (!res.ok) return { exists: false, vezes_errado: 0 };
-
-      const content = await res.text();
-      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      if (!fmMatch) return { exists: true, vezes_errado: 0 };
-
-      const yaml = fmMatch[1];
-      const vezesMatch = yaml.match(/vezes_errado:\s*(\d+)/);
-      const vezes_errado = vezesMatch ? parseInt(vezesMatch[1], 10) : 0;
-
-      return { exists: true, vezes_errado: Math.max(0, vezes_errado) };
-    } catch {
-      return { exists: false, vezes_errado: 0 };
-    }
-  }
-
-  /**
-   * Monta o array de tags do Obsidian incluindo tags de erro recorrente.
-   */
-  function buildObsidianTags(questionData, vezes_errado) {
-    const tags = [
-      'tec',
-      slugify(questionData.materia || 'geral'),
-      slugify(questionData.banca || 'sem-banca'),
-      questionData.errou ? 'erro' : 'acerto',
-    ];
-
-    if (questionData.errou && vezes_errado >= 2) {
-      tags.push('erro-recorrente');
-    }
-    if (questionData.errou && vezes_errado >= 3) {
-      tags.push('erro-cronico');
-    }
-    if (questionData.errou && vezes_errado >= 5) {
-      tags.push('erro-critico');
-    }
-
-    return tags.filter(Boolean);
-  }
-
-  function buildObsidianNote(questionData, aiResult, vezes_errado = 0) {
+  function buildObsidianNote(questionData, aiResult) {
     const materia = questionData.materia || aiResult?.materia || 'Geral';
     const subtopico = questionData.assunto || aiResult?.subtopico || '';
     const banca = questionData.banca || '';
@@ -2304,13 +2125,6 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
     const comentario = cleanText(questionData.comentario) || '_N\u00E3o dispon\u00EDvel_';
     const erroId = cleanText(aiResult?.erro_identificado) || '_N\u00E3o gerado_';
 
-    const tags = buildObsidianTags(questionData, vezes_errado);
-    const tagsYaml = tags.map(t => `"${t}"`).join(', ');
-
-    const recorrenciaBadge = questionData.errou && vezes_errado > 0
-      ? `\n> \u26A0\uFE0F **Erro recorrente:** ${vezes_errado}x (total: ${vezes_errado + 1}x)\n`
-      : '';
-
     return `---
 id: "${id}"
 materia: "${materia}"
@@ -2318,9 +2132,8 @@ subtopico: "${subtopico}"
 banca: "${banca}"
 ano: ${ano || '""'}
 cargo: "${cargo}"
-tags: [${tagsYaml}]
+tags: [tec, ${slugify(materia)}, ${slugify(banca)}, ${questionData.errou ? 'erro' : 'acerto'}]
 resultado: "${questionData.errou ? 'erro' : 'acerto'}"
-vezes_errado: ${vezes_errado + (questionData.errou ? 1 : 0)}
 data: ${todayISO()}
 link: "${questionData.url}"
 ---
@@ -2328,7 +2141,6 @@ link: "${questionData.url}"
 > **Banca:** ${banca} | **Ano:** ${ano} | **Cargo:** ${cargo}
 > **Mat\u00E9ria:** [[${materia}]] | **Assunto:** ${subtopico}
 > [\uD83D\uDD17 Ver no TEC](${questionData.url})
-${recorrenciaBadge}
 
 ## Enunciado
 ${questionData.enunciado || '_N\u00E3o extra\u00EDdo_'}
@@ -2364,15 +2176,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     const subtopico = sanitizePath(questionData.assunto || aiResult?.subtopico || 'Geral');
     const id = questionData.id || Date.now();
     const filePath = `${basePath}/${materia}/${subtopico}/Q${id}`;
-
-    // Consulta nota existente para contar erros recorrentes
-    let vezes_errado = 0;
-    if (method === 'rest' && questionData.id) {
-      const existing = await getExistingNoteData(filePath);
-      vezes_errado = existing.vezes_errado;
-    }
-
-    const content = buildObsidianNote(questionData, aiResult, vezes_errado);
+    const content = buildObsidianNote(questionData, aiResult);
 
     if (method === 'rest') {
       const port = getSetting('obsidianPort');
@@ -2487,85 +2291,6 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   // \u2551                 10. SETTINGS PANEL                           \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  /**
-   * Shows a consolidated preview of ALL cards generated during a batch run.
-   * @param {Array<{questionData: object, aiResult: object}>} results
-   */
-  function showBatchPreviewModal(results, errors = []) {
-    return new Promise((resolve) => {
-      const overlay = document.createElement('div');
-      overlay.className = 'tec-modal-overlay';
-      overlay.style.zIndex = '100002'; // above toasts
-
-      const totalCards = results.reduce((sum, r) => sum + (r.aiResult?.cards?.length || 0), 0);
-      const errorCount = errors.length;
-
-      const errorsHTML = errorCount > 0 ? `
-        <div style="background:#fff3f3;border:1px solid #ef476f;border-radius:10px;margin-bottom:16px;overflow:hidden;">
-          <div style="background:#ef476f;padding:10px 14px;font-weight:700;font-size:13px;color:#fff;display:flex;justify-content:space-between;align-items:center;">
-            <span>⚠️ ${errorCount} questão(ões) com erro</span>
-          </div>
-          <div style="padding:12px;">
-            ${errors.map(e => `
-              <div style="font-size:12px;color:#c00;padding:4px 0;border-bottom:1px dashed #ffcdd2;">
-                <strong>Questão #${e.id}</strong> ${e.num !== '?' ? `(nº ${e.num})` : ''} — ${e.error}
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      ` : '';
-
-      const groupsHTML = results.map((r, idx) => {
-        const q = r.questionData;
-        const ai = r.aiResult;
-        const cardsHTML = (ai?.cards || []).map((c, i) => `
-          <div class="tec-card-preview" style="margin-bottom:8px;">
-            <div class="card-num">Card ${i + 1}</div>
-            <div class="card-front">🔹 ${c.frente}</div>
-            <div class="card-back">💡 ${c.verso}</div>
-            ${c.palavras_chave ? `<div class="card-kw" style="font-size:11px;color:#c4b5fd;margin-top:4px">🔑 ${c.palavras_chave}</div>` : ''}
-          </div>
-        `).join('');
-
-        return `
-          <div style="border:1px solid #e9ecef;border-radius:10px;margin-bottom:16px;overflow:hidden;">
-            <div style="background:#f8f9fa;padding:10px 14px;font-weight:700;font-size:13px;color:#4361ee;border-bottom:1px solid #e9ecef;display:flex;justify-content:space-between;align-items:center;">
-              <span>📋 Questão #${q.id || '?'} — ${q.materia || '-'} › ${q.assunto || '-'}</span>
-              <span style="font-size:11px;color:#888;font-weight:500;">${ai?.cards?.length || 0} card(s)</span>
-            </div>
-            <div style="padding:12px;">
-              ${cardsHTML || '<div style="font-size:13px;color:#888;padding:8px;"><em>Nenhum card gerado</em></div>'}
-            </div>
-          </div>
-        `;
-      }).join('');
-
-      overlay.innerHTML = `
-        <div class="tec-modal" style="width:760px;max-width:96vw;">
-          <div class="tec-modal-header">
-            <h2>🗂️ Cards do Batch — ${results.length} questões | ${totalCards} cards${errorCount > 0 ? ` | ❌ ${errorCount} erro(s)` : ''}</h2>
-            <button class="tec-modal-close" data-action="close">×</button>
-          </div>
-          <div class="tec-modal-body" style="max-height:70vh;overflow-y:auto;">
-            ${errorsHTML}
-            ${groupsHTML || (errorCount === 0 ? '<div style="text-align:center;padding:24px;color:#888;"><em>Nenhum resultado para exibir</em></div>' : '')}
-          </div>
-          <div class="tec-modal-footer">
-            <button class="tec-btn tec-btn-save" data-action="ok">✅ OK — Fechar</button>
-          </div>
-        </div>
-      `;
-
-      overlay.addEventListener('click', (e) => {
-        const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
-        if (action === 'close' || action === 'ok') { overlay.remove(); resolve(); }
-        if (e.target === overlay) { overlay.remove(); resolve(); }
-      });
-
-      document.body.appendChild(overlay);
-    });
-  }
-
   function showSettingsPanel() {
     const existing = document.querySelector('.tec-modal-overlay.tec-settings-overlay');
     if (existing) { existing.remove(); return; }
@@ -2586,7 +2311,6 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <select id="tec-cfg-ai-provider">
               <option value="gemini" ${getSetting('aiProvider') === 'gemini' ? 'selected' : ''}>Google Gemini (gratuito)</option>
               <option value="openrouter" ${getSetting('aiProvider') === 'openrouter' ? 'selected' : ''}>OpenRouter (multi-modelo)</option>
-              <option value="opencode" ${getSetting('aiProvider') === 'opencode' ? 'selected' : ''}>OpenCode Go</option>
             </select>
           </div>
 
@@ -2620,20 +2344,6 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             </div>
           </div>
 
-          <div id="tec-cfg-opencode-section" style="display:none">
-            <div class="tec-field">
-              <label>OpenCode API Key</label>
-              <input type="password" id="tec-cfg-opencode-key" value="${getSetting('opencodeApiKey')}" placeholder="...">
-              <small style="color:#888;font-size:11px">Obtenha em <a href="https://opencode.co" target="_blank" style="color:#60cdff">opencode.co</a></small>
-            </div>
-            <div class="tec-field">
-              <label>Modelo OpenCode</label>
-              <select id="tec-cfg-opencode-model">
-                ${OPENCODE_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('opencodeModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
-              </select>
-            </div>
-          </div>
-
           <hr class="tec-divider">
           <h3>\uD83D\uDD00 Pipeline Dual (Creator + Auditor)</h3>
           <div class="tec-field">
@@ -2642,7 +2352,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <option value="single" ${getSetting('pipelineMode') === 'single' ? 'selected' : ''}>Single (1 modelo, sem auditoria)</option>
               <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual (Creator \u2192 Auditor, mais preciso)</option>
             </select>
-            <small style="color:#888;font-size:11px">Dual requer OpenRouter ou OpenCode API key. Custo ~1.2\u00A2/quest\u00E3o.</small>
+            <small style="color:#888;font-size:11px">Dual requer OpenRouter API key. Custo ~1.2\u00A2/quest\u00E3o.</small>
           </div>
           <div id="tec-cfg-pipeline-section" style="display:none">
             <div class="tec-field">
@@ -2730,12 +2440,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     const providerSelect = overlay.querySelector('#tec-cfg-ai-provider');
     const geminiSection = overlay.querySelector('#tec-cfg-gemini-section');
     const openrouterSection = overlay.querySelector('#tec-cfg-openrouter-section');
-    const opencodeSection = overlay.querySelector('#tec-cfg-opencode-section');
     function toggleProviderSections() {
-      const val = providerSelect.value;
-      geminiSection.style.display = val === 'gemini' ? '' : 'none';
-      openrouterSection.style.display = val === 'openrouter' ? '' : 'none';
-      opencodeSection.style.display = val === 'opencode' ? '' : 'none';
+      const isGemini = providerSelect.value === 'gemini';
+      geminiSection.style.display = isGemini ? '' : 'none';
+      openrouterSection.style.display = isGemini ? 'none' : '';
     }
     providerSelect.addEventListener('change', toggleProviderSections);
     toggleProviderSections(); // set initial state
@@ -2770,8 +2478,6 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         setSetting('geminiModel', overlay.querySelector('#tec-cfg-gemini-model').value);
         setSetting('openrouterApiKey', overlay.querySelector('#tec-cfg-openrouter-key').value);
         setSetting('openrouterModel', overlay.querySelector('#tec-cfg-openrouter-model').value);
-        setSetting('opencodeApiKey', overlay.querySelector('#tec-cfg-opencode-key').value);
-        setSetting('opencodeModel', overlay.querySelector('#tec-cfg-opencode-model').value);
         setSetting('pipelineMode', overlay.querySelector('#tec-cfg-pipeline-mode').value);
         setSetting('creatorModel', overlay.querySelector('#tec-cfg-creator-model').value);
         setSetting('auditorModel', overlay.querySelector('#tec-cfg-auditor-model').value);
@@ -2890,17 +2596,12 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
 
     let loadingToast = null;
     try {
-      // Step 0+1: Expand professor comment if hidden, then extract
+      // Step 0: Expand professor comment if hidden
       loadingToast = showLoadingToast('\uD83D\uDCAC Expandindo coment\u00E1rio do professor...');
       await ensureCommentExpanded();
-
-      // Sometimes the comment loads lazily after a click/keypress — give it time
-      if (!_capturedComment || _capturedComment.length < 50) {
-        await delay(1500);
-        await ensureCommentExpanded();
-      }
       loadingToast.remove();
 
+      // Step 1: Extract
       loadingToast = showLoadingToast('\uD83D\uDD0D Extraindo dados da quest\u00E3o...');
       const questionData = extractQuestionData();
 
@@ -3157,8 +2858,6 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Batch...';
     let processed = 0, skipped = 0, errors = 0;
     const processedIds = new Set(); // Track processed question IDs to avoid duplicates
-    const batchResults = []; // Accumulate results for preview modal
-    const batchErrors = []; // Track failed questions
 
     // Create progress indicator
     const progressToast = document.createElement('div');
@@ -3215,12 +2914,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
                 getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
               ]);
               processed++;
-              batchResults.push({ questionData: qData, aiResult });
                 }
           } catch (err) {
             console.error(`\u274C Batch: Erro em Q${currentId}:`, err);
             errors++;
-            batchErrors.push({ id: currentId, num: qNum, error: err.message || String(err) });
           }
 
           // Update progress UI
@@ -3253,13 +2950,6 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       }
     } finally {
       progressToast.remove();
-      if (batchResults.length > 0 || batchErrors.length > 0) {
-        try {
-          await showBatchPreviewModal(batchResults, batchErrors);
-        } catch (e) {
-          console.error('Erro ao exibir preview batch:', e);
-        }
-      }
       batchRunning = false;
       if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
       // Persistent toast \u2014 stays until user clicks \u2715

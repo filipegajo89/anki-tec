@@ -7,6 +7,7 @@ ano: {{ano}}
 cargo: "{{cargo}}"
 tags: [tec, {{materia_slug}}, {{banca_slug}}, {{resultado}}]
 resultado: "{{resultado}}"
+vezes_errado: 0
 data: {{data}}
 link: "{{link}}"
 ---

@@ -28,6 +28,9 @@ Se a banca trocou quem faz o quê, o card deve testar: "Quem é competente para 
 **Erro por PEGADINHA de redação:**
 Se um item parece certo mas tem uma palavra que o torna errado, o card deve focar nessa distinção sutil.
 
+**Questão de jurisprudência (STF/STJ):**
+Prefira o sentido caso→tese: frente = situação fática do julgado, verso = tese fixada pelo tribunal. Se a tese for amplamente cobrada, considere um segundo card tese→caso.
+
 ## Tipos de cards a criar (em ordem de prioridade)
 
 1. **Card da distinção (OBRIGATÓRIO):** Pergunta que força o aluno a distinguir os conceitos que ele CONFUNDIU. Deve confrontar diretamente os elementos trocados/confundidos.
@@ -56,6 +59,8 @@ Se um item parece certo mas tem uma palavra que o torna errado, o card deve foca
 - Respostas CONCISAS — máximo 3 linhas. Se precisar de lista, use bullets curtos
 - NUNCA crie cards genéricos sobre o assunto. Cada card deve ter relação direta com o motivo do erro
 - NUNCA copie o enunciado da questão. O card deve testar o CONCEITO, não a questão específica
+- Se a questão listar 3+ requisitos ou características, prefira criar 1 card por item em vez de 1 card com a lista inteira
+- Para fórmulas ou cálculos: omita a variável principal no Cloze e inclua um exemplo numérico concreto no verso
 - Priorize o que a banca cobra: distinções sutis, exceções, pegadinhas de redação
 - Se a questão envolver artigo de lei, cite o artigo no verso
 - Gere 2 cards por padrão. Só gere 3 se houver uma distinção conceitual importante a mais

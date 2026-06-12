@@ -6,6 +6,47 @@ tags: [tec, estatisticas]
 # 📉 Análise de Erros — TEC Concursos
 
 > Análise detalhada dos seus erros para identificar padrões e pontos fracos.
+> Tags de recorrência: `#erro-recorrente` (2x+) | `#erro-cronico` (3x+) | `#erro-critico` (5x+)
+
+---
+
+## 🚨 Erros Recorrentes (Prioridade Máxima)
+
+### Críticos (5x+)
+```dataview
+TABLE WITHOUT ID
+  link(file.path, "Q" + id) AS "Questão",
+  materia AS "Matéria",
+  subtopico AS "Subtópico",
+  vezes_errado AS "Vezes"
+FROM "TEC"
+WHERE contains(tags, "erro-critico")
+SORT vezes_errado DESC
+```
+
+### Crônicos (3-4x)
+```dataview
+TABLE WITHOUT ID
+  link(file.path, "Q" + id) AS "Questão",
+  materia AS "Matéria",
+  subtopico AS "Subtópico",
+  vezes_errado AS "Vezes"
+FROM "TEC"
+WHERE contains(tags, "erro-cronico") AND !contains(tags, "erro-critico")
+SORT vezes_errado DESC
+```
+
+### Recorrentes (2x)
+```dataview
+TABLE WITHOUT ID
+  link(file.path, "Q" + id) AS "Questão",
+  materia AS "Matéria",
+  subtopico AS "Subtópico",
+  vezes_errado AS "Vezes"
+FROM "TEC"
+WHERE contains(tags, "erro-recorrente") AND !contains(tags, "erro-cronico")
+SORT vezes_errado DESC
+```
 
 ---
 

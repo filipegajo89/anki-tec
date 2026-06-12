@@ -19,7 +19,8 @@
 // @connect      localhost
 // @connect      generativelanguage.googleapis.com
 // @connect      openrouter.ai
-// @connect      api.opencode.co
+// @connect      opencode.ai
+// @connect      api.opencode.ai
 // @connect      www.tecconcursos.com.br
 // @connect      tecconcursos.com.br
 // @run-at       document-idle
@@ -39,8 +40,7 @@
     openrouterApiKey: 'YOUR_OPENROUTER_API_KEY_HERE',
     openrouterModel: 'qwen/qwen3-235b-a22b-2507',
     opencodeApiKey: 'YOUR_OPENCODE_API_KEY_HERE',
-    opencodeModel: 'opencode-go-1',
-    opencodeBaseUrl: 'https://api.opencode.co/v1/chat/completions',
+    opencodeModel: 'glm-5.1',
     obsidianVault: 'Filipe - Obs',
     obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
@@ -508,7 +508,7 @@
             // Re-check scope for new comment data
             if (vm.questao) {
               for (const [key, val] of Object.entries(vm.questao)) {
-                if (typeof val === 'string' && val.length > 100) {
+                if (typeof val === 'string' && val.length > 30) {
                   const plain = stripHtml(val);
                   const enunciadoPlain = stripHtml(vm.questao.enunciado || '');
                   if (plain !== enunciadoPlain && !plain.startsWith(enunciadoPlain.substring(0, 50))) {
@@ -578,16 +578,31 @@
         };
       }
 
-      const resolucaoLinks = [...document.querySelectorAll('a, button, span')].filter(el => {
+      // Try multiple selectors to find the comment toggle button
+      const commentSelectors = [
+        'a[ng-click*="comentario"]',
+        'button[ng-click*="comentario"]',
+        'a[ng-click*="resolucao"]',
+        'button[ng-click*="resolucao"]',
+        '[ng-click*="mostrarComentario"]',
+        '[ng-click*="toggleComentario"]',
+        '[ng-click*="abrirComentario"]',
+      ];
+      for (const sel of commentSelectors) {
+        const el = document.querySelector(sel);
+        if (el) { realClick(el); break; }
+      }
+
+      const resolucaoLinks = [...document.querySelectorAll('a, button, span, div')].filter(el => {
         const txt = el.textContent.trim();
-        return /ver resolu[\u00E7c]/i.test(txt) && txt.length < 40;
+        return /ver resolu[\u00E7c]|resolu\u00E7\u00E3o comentada|coment\.rio do professor|exibir coment\.rio/i.test(txt) && txt.length < 60;
       });
       for (const link of resolucaoLinks) { realClick(link); }
       try { document.activeElement?.blur(); } catch (_) {}
       document.body.focus();
       simulateKey('o', 79);
 
-      await delay(2000);
+      await delay(3500);
     } finally {
       unsafeWindow.XMLHttpRequest.prototype.open = origOpen;
       unsafeWindow.XMLHttpRequest.prototype.send = origSend;
@@ -1014,6 +1029,25 @@ Aplique rigorosamente: cada card testa UMA ÚNICA informação — um prazo, uma
 
 Prefira SEMPRE este formato para regras, leis e jurisprudências. Escreva uma afirmação AUTOCONTIDA, que faça sentido mesmo sem a questão original. A lacuna entre {{ }} deve ser um RÓTULO GENÉRICO do que falta (ex: {{tipo}}, {{regra}}, {{conceito}}), nunca a resposta já preenchida (ex: {{N:N}}, {{igual para todas as contas}}).
 
+#### Regra do Rótulo Genérico (obrigatório para Cloze)
+
+O texto dentro de {{ }} deve indicar APENAS a CATEGORIA da informação, NUNCA sua identidade. O aluno que lê a frente NÃO pode deduzir a resposta pelo rótulo da lacuna.
+
+❌ RUINS — rótulo é a resposta ou dá dica demais:
+- {{finalidades essenciais}} → o rótulo é literalmente o conceito; quem lê já sabe o que procurar
+- {{imunidade recíproca}} → o rótulo revela o instituto
+- {{ anterioridade anual }} → o rótulo é o nome da regra
+
+✅ BONS — rótulo genérico que oculta a resposta:
+- {{condição}}, {{requisito}}, {{critério}} → quando falta um pré-requisito
+- {{efeito}}, {{consequência}}, {{resultado}} → quando falta o desdobramento
+- {{regra}}, {{tratamento}}, {{regime}} → quando falta como se aplica
+- {{sujeito}}, {{competente}}, {{responsável}} → quando falta quem faz
+- {{prazo}}, {{tempo}}, {{período}} → quando falta uma data/duração
+- {{síntese}}, {{tese}}, {{entendimento}} → quando falta a conclusão de um julgado
+
+DICA: antes de aceitar o rótulo, pergunte-se: "Se eu soubesse ZERO do assunto, esse rótulo me daria a resposta?" Se sim, troque por um mais genérico.
+
 ❌ Ruim (Q&A genérico):
 Frente: O que diz a Súmula 539 do STJ sobre juros?
 Verso: É permitida a capitalização com periodicidade inferior a um ano.
@@ -1397,20 +1431,22 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const MAX_RETRIES = 5;
     let res;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      console.log(`🌐 OpenAI-compatible request → ${url} (tentativa ${attempt}/${MAX_RETRIES})`);
       res = await gmFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
           ...extraHeaders,
         },
         body: JSON.stringify(body),
-        timeout: 90000,
+        timeout: 300000,
       });
 
       if (res.ok) break;
 
-      if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+      if ((res.status === 429 || res.status === 503 || res.status === 502 || res.status === 504) && attempt < MAX_RETRIES) {
         const waitSec = res.status === 429 ? attempt * 8 : attempt * 5;
         console.warn(`⚠️ ${res.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
         await new Promise(r => setTimeout(r, waitSec * 1000));
@@ -1427,7 +1463,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   async function callOpencode(questionData) {
     const apiKey = getSetting('opencodeApiKey');
     const model = getSetting('opencodeModel');
-    const baseUrl = getSetting('opencodeBaseUrl');
+    const baseUrl = getOpencodeEndpoint(model);
     if (!apiKey) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
 
     const schemaDescription = `Responda SOMENTE com JSON válido neste formato exato (sem markdown, sem comentários):
@@ -1505,9 +1541,28 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
   ];
 
   const OPENCODE_MODELS = [
-    { id: 'opencode-go-1', label: 'OpenCode Go 1' },
-    { id: 'opencode-go-2', label: 'OpenCode Go 2' },
+    { id: 'glm-5.1',          label: 'GLM 5.1' },
+    { id: 'glm-5',            label: 'GLM 5' },
+    { id: 'kimi-k2.5',        label: 'Kimi K2.5' },
+    { id: 'kimi-k2.6',        label: 'Kimi K2.6' },
+    { id: 'deepseek-v4-pro',  label: 'DeepSeek V4 Pro' },
+    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+    { id: 'mimo-v2-pro',      label: 'MiMo V2 Pro' },
+    { id: 'mimo-v2-omni',     label: 'MiMo V2 Omni' },
+    { id: 'mimo-v2.5-pro',    label: 'MiMo V2.5 Pro' },
+    { id: 'mimo-v2.5',        label: 'MiMo V2.5' },
+    { id: 'minimax-m2.7',     label: 'MiniMax M2.7' },
+    { id: 'minimax-m2.5',     label: 'MiniMax M2.5' },
+    { id: 'qwen3.6-plus',     label: 'Qwen 3.6 Plus' },
+    { id: 'qwen3.5-plus',     label: 'Qwen 3.5 Plus' },
   ];
+
+  function getOpencodeEndpoint(model) {
+    if (model === 'minimax-m2.7' || model === 'minimax-m2.5') {
+      return 'https://opencode.ai/zen/go/v1/messages';
+    }
+    return 'https://opencode.ai/zen/go/v1/chat/completions';
+  }
 
   // Models for dual pipeline (creator + auditor)
   const PIPELINE_CREATOR_MODELS = [
@@ -1516,7 +1571,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     { id: 'moonshotai/kimi-k2.5',                label: 'Kimi K2.5 — IFEval 100% ($0.60/$2.00 M tok)' },
     { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok)' },
     { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
-    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: `OpenCode ${m.label}` })),
+    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: m.label })),
   ];
 
   function getOpenRouterReasoningConfig(model) {
@@ -1532,7 +1587,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     { id: 'google/gemini-3.1-pro-preview',       label: 'Gemini 3.1 Pro Preview — GPQA 94.1% ($1.25/$10 M tok)' },
     { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
     { id: 'anthropic/claude-haiku-4.5',          label: 'Claude Haiku 4.5 ($3.00/M tok)' },
-    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: `OpenCode ${m.label}` })),
+    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: m.label })),
   ];
 
   async function callOpenRouter(questionData) {
@@ -1657,8 +1712,12 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
    * Call OpenRouter with a specific model (used by creator and auditor).
    * Returns parsed JSON response.
    */
+  function isOpencodeModel(model) {
+    return OPENCODE_MODELS.some(m => m.id === model);
+  }
+
   async function callOpenRouterWithModel(model, systemPrompt, userPrompt, extraBody = {}) {
-    const isOpencode = model.startsWith('opencode-');
+    const isOpencode = isOpencodeModel(model);
     const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
     if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada.`);
 
@@ -1677,7 +1736,7 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
 
     let json;
     if (isOpencode) {
-      const baseUrl = getSetting('opencodeBaseUrl');
+      const baseUrl = getOpencodeEndpoint(model);
       json = await callOpenAICompatible(baseUrl, apiKey, body);
     } else {
       json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
@@ -1819,7 +1878,7 @@ ${questionData.comentario || 'Não disponível'}`;
    */
   async function callDualPipeline(questionData, onStatus = () => {}) {
     const creatorModel = getSetting('creatorModel');
-    const isOpencode = creatorModel.startsWith('opencode-');
+    const isOpencode = isOpencodeModel(creatorModel);
     const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
     if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada para o pipeline dual.`);
 
@@ -2167,7 +2226,63 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       .replace(/\s+$/, '');             // trailing whitespace
   }
 
-  function buildObsidianNote(questionData, aiResult) {
+  /**
+   * Consulta uma nota existente no Obsidian via REST API.
+   * Retorna { exists: boolean, vezes_errado: number }.
+   */
+  async function getExistingNoteData(filePath) {
+    const port = getSetting('obsidianPort');
+    const token = getSetting('obsidianToken');
+    if (!token) return { exists: false, vezes_errado: 0 };
+
+    try {
+      const res = await gmFetch(`http://127.0.0.1:${port}/vault/${encodeURIComponent(filePath)}.md`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 5000,
+      });
+
+      if (!res.ok) return { exists: false, vezes_errado: 0 };
+
+      const content = await res.text();
+      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+      if (!fmMatch) return { exists: true, vezes_errado: 0 };
+
+      const yaml = fmMatch[1];
+      const vezesMatch = yaml.match(/vezes_errado:\s*(\d+)/);
+      const vezes_errado = vezesMatch ? parseInt(vezesMatch[1], 10) : 0;
+
+      return { exists: true, vezes_errado: Math.max(0, vezes_errado) };
+    } catch {
+      return { exists: false, vezes_errado: 0 };
+    }
+  }
+
+  /**
+   * Monta o array de tags do Obsidian incluindo tags de erro recorrente.
+   */
+  function buildObsidianTags(questionData, vezes_errado) {
+    const tags = [
+      'tec',
+      slugify(questionData.materia || 'geral'),
+      slugify(questionData.banca || 'sem-banca'),
+      questionData.errou ? 'erro' : 'acerto',
+    ];
+
+    if (questionData.errou && vezes_errado >= 2) {
+      tags.push('erro-recorrente');
+    }
+    if (questionData.errou && vezes_errado >= 3) {
+      tags.push('erro-cronico');
+    }
+    if (questionData.errou && vezes_errado >= 5) {
+      tags.push('erro-critico');
+    }
+
+    return tags.filter(Boolean);
+  }
+
+  function buildObsidianNote(questionData, aiResult, vezes_errado = 0) {
     const materia = questionData.materia || aiResult?.materia || 'Geral';
     const subtopico = questionData.assunto || aiResult?.subtopico || '';
     const banca = questionData.banca || '';
@@ -2189,6 +2304,13 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
     const comentario = cleanText(questionData.comentario) || '_N\u00E3o dispon\u00EDvel_';
     const erroId = cleanText(aiResult?.erro_identificado) || '_N\u00E3o gerado_';
 
+    const tags = buildObsidianTags(questionData, vezes_errado);
+    const tagsYaml = tags.map(t => `"${t}"`).join(', ');
+
+    const recorrenciaBadge = questionData.errou && vezes_errado > 0
+      ? `\n> \u26A0\uFE0F **Erro recorrente:** ${vezes_errado}x (total: ${vezes_errado + 1}x)\n`
+      : '';
+
     return `---
 id: "${id}"
 materia: "${materia}"
@@ -2196,8 +2318,9 @@ subtopico: "${subtopico}"
 banca: "${banca}"
 ano: ${ano || '""'}
 cargo: "${cargo}"
-tags: [tec, ${slugify(materia)}, ${slugify(banca)}, ${questionData.errou ? 'erro' : 'acerto'}]
+tags: [${tagsYaml}]
 resultado: "${questionData.errou ? 'erro' : 'acerto'}"
+vezes_errado: ${vezes_errado + (questionData.errou ? 1 : 0)}
 data: ${todayISO()}
 link: "${questionData.url}"
 ---
@@ -2205,6 +2328,7 @@ link: "${questionData.url}"
 > **Banca:** ${banca} | **Ano:** ${ano} | **Cargo:** ${cargo}
 > **Mat\u00E9ria:** [[${materia}]] | **Assunto:** ${subtopico}
 > [\uD83D\uDD17 Ver no TEC](${questionData.url})
+${recorrenciaBadge}
 
 ## Enunciado
 ${questionData.enunciado || '_N\u00E3o extra\u00EDdo_'}
@@ -2240,7 +2364,15 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     const subtopico = sanitizePath(questionData.assunto || aiResult?.subtopico || 'Geral');
     const id = questionData.id || Date.now();
     const filePath = `${basePath}/${materia}/${subtopico}/Q${id}`;
-    const content = buildObsidianNote(questionData, aiResult);
+
+    // Consulta nota existente para contar erros recorrentes
+    let vezes_errado = 0;
+    if (method === 'rest' && questionData.id) {
+      const existing = await getExistingNoteData(filePath);
+      vezes_errado = existing.vezes_errado;
+    }
+
+    const content = buildObsidianNote(questionData, aiResult, vezes_errado);
 
     if (method === 'rest') {
       const port = getSetting('obsidianPort');
@@ -2354,6 +2486,85 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                 10. SETTINGS PANEL                           \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+
+  /**
+   * Shows a consolidated preview of ALL cards generated during a batch run.
+   * @param {Array<{questionData: object, aiResult: object}>} results
+   */
+  function showBatchPreviewModal(results, errors = []) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'tec-modal-overlay';
+      overlay.style.zIndex = '100002'; // above toasts
+
+      const totalCards = results.reduce((sum, r) => sum + (r.aiResult?.cards?.length || 0), 0);
+      const errorCount = errors.length;
+
+      const errorsHTML = errorCount > 0 ? `
+        <div style="background:#fff3f3;border:1px solid #ef476f;border-radius:10px;margin-bottom:16px;overflow:hidden;">
+          <div style="background:#ef476f;padding:10px 14px;font-weight:700;font-size:13px;color:#fff;display:flex;justify-content:space-between;align-items:center;">
+            <span>⚠️ ${errorCount} questão(ões) com erro</span>
+          </div>
+          <div style="padding:12px;">
+            ${errors.map(e => `
+              <div style="font-size:12px;color:#c00;padding:4px 0;border-bottom:1px dashed #ffcdd2;">
+                <strong>Questão #${e.id}</strong> ${e.num !== '?' ? `(nº ${e.num})` : ''} — ${e.error}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : '';
+
+      const groupsHTML = results.map((r, idx) => {
+        const q = r.questionData;
+        const ai = r.aiResult;
+        const cardsHTML = (ai?.cards || []).map((c, i) => `
+          <div class="tec-card-preview" style="margin-bottom:8px;">
+            <div class="card-num">Card ${i + 1}</div>
+            <div class="card-front">🔹 ${c.frente}</div>
+            <div class="card-back">💡 ${c.verso}</div>
+            ${c.palavras_chave ? `<div class="card-kw" style="font-size:11px;color:#c4b5fd;margin-top:4px">🔑 ${c.palavras_chave}</div>` : ''}
+          </div>
+        `).join('');
+
+        return `
+          <div style="border:1px solid #e9ecef;border-radius:10px;margin-bottom:16px;overflow:hidden;">
+            <div style="background:#f8f9fa;padding:10px 14px;font-weight:700;font-size:13px;color:#4361ee;border-bottom:1px solid #e9ecef;display:flex;justify-content:space-between;align-items:center;">
+              <span>📋 Questão #${q.id || '?'} — ${q.materia || '-'} › ${q.assunto || '-'}</span>
+              <span style="font-size:11px;color:#888;font-weight:500;">${ai?.cards?.length || 0} card(s)</span>
+            </div>
+            <div style="padding:12px;">
+              ${cardsHTML || '<div style="font-size:13px;color:#888;padding:8px;"><em>Nenhum card gerado</em></div>'}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      overlay.innerHTML = `
+        <div class="tec-modal" style="width:760px;max-width:96vw;">
+          <div class="tec-modal-header">
+            <h2>🗂️ Cards do Batch — ${results.length} questões | ${totalCards} cards${errorCount > 0 ? ` | ❌ ${errorCount} erro(s)` : ''}</h2>
+            <button class="tec-modal-close" data-action="close">×</button>
+          </div>
+          <div class="tec-modal-body" style="max-height:70vh;overflow-y:auto;">
+            ${errorsHTML}
+            ${groupsHTML || (errorCount === 0 ? '<div style="text-align:center;padding:24px;color:#888;"><em>Nenhum resultado para exibir</em></div>' : '')}
+          </div>
+          <div class="tec-modal-footer">
+            <button class="tec-btn tec-btn-save" data-action="ok">✅ OK — Fechar</button>
+          </div>
+        </div>
+      `;
+
+      overlay.addEventListener('click', (e) => {
+        const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
+        if (action === 'close' || action === 'ok') { overlay.remove(); resolve(); }
+        if (e.target === overlay) { overlay.remove(); resolve(); }
+      });
+
+      document.body.appendChild(overlay);
+    });
+  }
 
   function showSettingsPanel() {
     const existing = document.querySelector('.tec-modal-overlay.tec-settings-overlay');
@@ -2679,12 +2890,17 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
 
     let loadingToast = null;
     try {
-      // Step 0: Expand professor comment if hidden
+      // Step 0+1: Expand professor comment if hidden, then extract
       loadingToast = showLoadingToast('\uD83D\uDCAC Expandindo coment\u00E1rio do professor...');
       await ensureCommentExpanded();
+
+      // Sometimes the comment loads lazily after a click/keypress — give it time
+      if (!_capturedComment || _capturedComment.length < 50) {
+        await delay(1500);
+        await ensureCommentExpanded();
+      }
       loadingToast.remove();
 
-      // Step 1: Extract
       loadingToast = showLoadingToast('\uD83D\uDD0D Extraindo dados da quest\u00E3o...');
       const questionData = extractQuestionData();
 
@@ -2941,6 +3157,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Batch...';
     let processed = 0, skipped = 0, errors = 0;
     const processedIds = new Set(); // Track processed question IDs to avoid duplicates
+    const batchResults = []; // Accumulate results for preview modal
+    const batchErrors = []; // Track failed questions
 
     // Create progress indicator
     const progressToast = document.createElement('div');
@@ -2997,10 +3215,12 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
                 getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
               ]);
               processed++;
+              batchResults.push({ questionData: qData, aiResult });
                 }
           } catch (err) {
             console.error(`\u274C Batch: Erro em Q${currentId}:`, err);
             errors++;
+            batchErrors.push({ id: currentId, num: qNum, error: err.message || String(err) });
           }
 
           // Update progress UI
@@ -3033,6 +3253,13 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       }
     } finally {
       progressToast.remove();
+      if (batchResults.length > 0 || batchErrors.length > 0) {
+        try {
+          await showBatchPreviewModal(batchResults, batchErrors);
+        } catch (e) {
+          console.error('Erro ao exibir preview batch:', e);
+        }
+      }
       batchRunning = false;
       if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
       // Persistent toast \u2014 stays until user clicks \u2715
