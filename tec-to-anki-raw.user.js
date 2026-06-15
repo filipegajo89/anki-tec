@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.1.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (com seu raciocínio como contexto) e salva no Anki + Obsidian
+// @version      1.2.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (com seu raciocínio como contexto, anotável na hora do erro) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -256,6 +256,46 @@
       height: 100%; background: #4361ee; border-radius: 2px;
       transition: width .3s ease;
     }
+
+    /* ── Quick Thought Box (auto on wrong answer) ── */
+    #tec-quick-thought {
+      position: fixed; bottom: 88px; right: 24px; z-index: 99998;
+      width: 320px; background: #1a1a2e; color: #fff; border-radius: 14px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.4); font-family: system-ui, sans-serif;
+      border-left: 4px solid #ef476f; animation: tec-slide-in .3s ease; overflow: hidden;
+    }
+    #tec-quick-thought .qt-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px 6px; font-size: 13px; font-weight: 700;
+    }
+    #tec-quick-thought .qt-header .qt-qid { font-weight: 400; font-size: 11px; color: #aaa; }
+    #tec-quick-thought .qt-close {
+      background: none; border: none; color: #aaa; font-size: 18px; cursor: pointer;
+      padding: 0 4px; line-height: 1; border-radius: 6px;
+    }
+    #tec-quick-thought .qt-close:hover { color: #fff; }
+    #tec-quick-thought textarea {
+      width: calc(100% - 24px); margin: 0 12px; box-sizing: border-box;
+      min-height: 70px; resize: vertical; padding: 8px 10px; border: none; border-radius: 8px;
+      font-size: 13px; font-family: system-ui, sans-serif; line-height: 1.45;
+      background: #14141f; color: #fff;
+    }
+    #tec-quick-thought textarea:focus { outline: 1px solid #4361ee; }
+    #tec-quick-thought .qt-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px 12px; gap: 8px;
+    }
+    #tec-quick-thought .qt-saved { font-size: 11px; color: #06d6a0; opacity: 0; transition: opacity .2s; }
+    #tec-quick-thought .qt-saved.show { opacity: 1; }
+    #tec-quick-thought .qt-btns { display: flex; gap: 6px; }
+    #tec-quick-thought button.qt-act {
+      border: none; border-radius: 8px; padding: 6px 12px; cursor: pointer;
+      font-size: 12px; font-weight: 600;
+    }
+    #tec-quick-thought .qt-skip { background: #2a2a3e; color: #aaa; }
+    #tec-quick-thought .qt-skip:hover { background: #34344a; color: #fff; }
+    #tec-quick-thought .qt-save { background: #4361ee; color: #fff; }
+    #tec-quick-thought .qt-save:hover { background: #3a56d4; }
   `);
 
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
@@ -778,6 +818,28 @@
 
   function todayISO() {
     return new Date().toISOString().split('T')[0];
+  }
+
+  // ── Per-question stored thoughts (raciocinio capturado na hora do erro) ──
+  function thoughtKey(id) {
+    return `tec_thought_${id}`;
+  }
+
+  /** Read the thought previously saved for a question id (empty string if none). */
+  function getStoredThought(id) {
+    if (!id) return '';
+    return GM_getValue(thoughtKey(id), '') || '';
+  }
+
+  /** Persist (or clear, when empty) the thought attached to a question id. */
+  function setStoredThought(id, text) {
+    if (!id) return;
+    const value = (text || '').trim();
+    if (value) {
+      GM_setValue(thoughtKey(id), value);
+    } else {
+      GM_setValue(thoughtKey(id), '');
+    }
   }
 
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
@@ -2512,7 +2574,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               A IA vai usar isso como <b>fonte principal</b> para o card atacar sua dúvida real.
             </p>
             <textarea class="tec-thoughts-textarea" id="tec-thoughts-input"
-              placeholder="Ex: achei que a anterioridade também valia para alteração de prazo de pagamento... fiquei entre A e C e chutei."></textarea>
+              placeholder="Ex: achei que a anterioridade também valia para alteração de prazo de pagamento... fiquei entre A e C e chutei.">${(questionData.pensamentoAluno || getStoredThought(questionData.id) || '').replace(/</g, '&lt;')}</textarea>
             <div style="margin-top:6px;font-size:11px;color:#999;">Ctrl+Enter gera os cards · Esc pula</div>
           </div>
           <div class="tec-modal-footer">
@@ -2664,7 +2726,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               </div>
             </div>
             <div class="item-thoughts">
-              <textarea data-idx="${idx}" placeholder="💭 Seu raciocínio nesta questão (opcional — a IA usa como fonte principal do erro)"></textarea>
+              <textarea data-idx="${idx}" placeholder="💭 Seu raciocínio nesta questão (opcional — a IA usa como fonte principal do erro)">${(q.pensamentoAluno || '').replace(/</g, '&lt;')}</textarea>
             </div>
           </div>
         `;
@@ -2709,7 +2771,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         .filter(({ idx }) => checkboxes[idx].checked)
         .map(({ item, idx }) => {
           const thoughts = overlay.querySelector(`textarea[data-idx="${idx}"]`)?.value.trim();
-          if (thoughts) item.questionData.pensamentoAluno = thoughts;
+          if (thoughts) {
+            item.questionData.pensamentoAluno = thoughts;
+            setStoredThought(item.questionData.id, thoughts);
+          }
           return item.questionData;
         });
 
@@ -3170,6 +3235,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       loadingToast.remove();
       loadingToast = null;
 
+      // Reuse any reasoning already captured for this question (quick-thought box)
+      const preThought = getStoredThought(questionData.id);
+      if (preThought) questionData.pensamentoAluno = preThought;
+
       // Step 1.5: Ask for the user's reasoning (the REAL reason behind the error)
       if (getSetting('askThoughts')) {
         const existingCards = await countExistingAnkiCards(questionData.id);
@@ -3178,7 +3247,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
           showToast('Cancelado pelo usu\u00E1rio.', 'info');
           return;
         }
-        if (pensamento) questionData.pensamentoAluno = pensamento;
+        if (pensamento) {
+          questionData.pensamentoAluno = pensamento;
+          setStoredThought(questionData.id, pensamento);
+        }
       }
 
       // Step 2+3: Generate flashcards with AI + preview, looping when the user
@@ -3214,10 +3286,12 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             } else {
               delete questionData.pensamentoAluno;
             }
+            setStoredThought(questionData.id, decision.pensamento);
             regenerate = true;
           } else if (decision.pensamento && decision.pensamento !== questionData.pensamentoAluno) {
             // User edited the reasoning but saved directly \u2014 keep it for Obsidian
             questionData.pensamentoAluno = decision.pensamento;
+            setStoredThought(questionData.id, decision.pensamento);
           }
         }
       }
@@ -3490,6 +3564,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             await delay(500);
 
             const qData = extractQuestionData();
+            const savedThought = getStoredThought(qData.id);
+            if (savedThought) qData.pensamentoAluno = savedThought;
             if (qData.enunciado || qData.id) {
               collected.push(qData);
             }
@@ -3704,6 +3780,107 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   }
 
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+  // \u2551          15b. QUICK THOUGHT CAPTURE (auto ao errar)          \u2551
+  // \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d
+
+  let _quickThoughtLastId = null; // last question id we surfaced the box for
+
+  function removeQuickThoughtBox() {
+    document.getElementById('tec-quick-thought')?.remove();
+  }
+
+  /**
+   * Floating box that lets the user note WHY they erred, right after answering.
+   * The text is auto-saved (debounced) keyed by question id via GM storage, so it
+   * is already attached to the question when cards are later generated.
+   */
+  function showQuickThoughtBox(questionId) {
+    if (!questionId) return;
+    const existing = document.getElementById('tec-quick-thought');
+    if (existing) {
+      if (existing.dataset.qid === String(questionId)) return; // already open
+      existing.remove();
+    }
+
+    const box = document.createElement('div');
+    box.id = 'tec-quick-thought';
+    box.dataset.qid = String(questionId);
+    box.innerHTML = `
+      <div class="qt-header">
+        <span>\ud83d\udcad Por que voc\u00ea errou? <span class="qt-qid">#${questionId}</span></span>
+        <button class="qt-close" data-act="close" title="Fechar">\u00d7</button>
+      </div>
+      <textarea placeholder="Anote agora o motivo do erro \u2014 fica salvo nesta quest\u00e3o e vira a fonte principal do card depois."></textarea>
+      <div class="qt-footer">
+        <span class="qt-saved">\u2713 salvo</span>
+        <div class="qt-btns">
+          <button class="qt-act qt-skip" data-act="close">Pular</button>
+          <button class="qt-act qt-save" data-act="save">\ud83d\udcbe Salvar</button>
+        </div>
+      </div>
+    `;
+
+    const textarea = box.querySelector('textarea');
+    textarea.value = getStoredThought(questionId);
+    const savedFlag = box.querySelector('.qt-saved');
+
+    let hideTimer = null;
+    const flashSaved = () => {
+      savedFlag.classList.add('show');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => savedFlag.classList.remove('show'), 1200);
+    };
+
+    let debounce = null;
+    textarea.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => { setStoredThought(questionId, textarea.value); flashSaved(); }, 500);
+    });
+
+    box.addEventListener('click', (e) => {
+      const act = e.target.dataset.act;
+      if (act === 'save') {
+        setStoredThought(questionId, textarea.value);
+        flashSaved();
+        setTimeout(removeQuickThoughtBox, 400);
+      } else if (act === 'close') {
+        setStoredThought(questionId, textarea.value); // persist whatever was typed
+        removeQuickThoughtBox();
+      }
+    });
+
+    document.body.appendChild(box);
+  }
+
+  /**
+   * Poll the Angular scope; when the current question was just answered WRONG,
+   * surface the quick-thought box once. Skipped during single/batch processing.
+   */
+  function checkForWrongAnswer() {
+    if (batchRunning || isProcessing) return;
+
+    const { vm } = getAngularVm();
+    const q = vm?.questao;
+    const box = document.getElementById('tec-quick-thought');
+
+    if (!q || !q.idQuestao) return;
+    const id = String(q.idQuestao);
+
+    // Navigated to another question \u2192 drop a stale box (text already auto-saved)
+    if (box && box.dataset.qid !== id) removeQuickThoughtBox();
+
+    const answeredWrong = q.correcaoQuestao === false && q.alternativaSelecionada > 0;
+    if (!answeredWrong) {
+      if (_quickThoughtLastId && _quickThoughtLastId !== id) _quickThoughtLastId = null;
+      return;
+    }
+
+    if (id === _quickThoughtLastId) return; // already surfaced for this wrong answer
+    _quickThoughtLastId = id;
+    showQuickThoughtBox(id);
+  }
+
+  // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                  16. INITIALIZATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
@@ -3721,7 +3898,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     injectToolbar();
 
     // Log init
-    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.0.0 carregado em:', window.location.href);
+    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.2.0 carregado em:', window.location.href);
 
     // Show confirmation toast on load
     showToast('TEC\u2192Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB', 'success', 4000);
@@ -3729,6 +3906,9 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     // Check connections periodically (every 2 min)
     updateStatusDot();
     setInterval(updateStatusDot, 120000);
+
+    // Watch for wrong answers → surface the quick-thought box on the spot
+    setInterval(checkForWrongAnswer, 1500);
 
     // Re-inject toolbar on SPA navigation (AngularJS) — debounced
     let _reinjectTimer = null;
