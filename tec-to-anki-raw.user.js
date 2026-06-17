@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.3.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (raciocínio anotável/editável na hora do erro, exclusão de cards no preview, limite configurável) e salva no Anki + Obsidian
+// @version      1.4.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (gabarito+professor como autoridade soberana; relato do aluno só como alvo pedagógico) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -1117,6 +1117,17 @@
 
   const SYSTEM_PROMPT = `Você é um especialista em concursos públicos e criação de flashcards para Anki. A partir da questão, do comentário do professor e do "Erro Identificado", crie no máximo 2 flashcards focados exclusivamente na lacuna de conhecimento que causou o erro. Ignore conceitos da questão que o aluno já domina.
 
+## Autoridade do conteúdo (REGRA SOBERANA)
+
+A precisão jurídica vem EXCLUSIVAMENTE do comentário do professor e do gabarito oficial — eles são a autoridade soberana sobre o que é correto. O relato do aluno (quando houver) serve APENAS para identificar QUAL foi a dúvida/erro a atacar, NUNCA como fonte de doutrina. Se o relato contradisser o gabarito/comentário, o card segue o gabarito/comentário e corrige o aluno. Se o relato já estiver CORRETO, confirme-o — não o "super-corrija" para algo que o gabarito não sustenta.
+
+Antes de finalizar, faça uma AUTOCHECAGEM e refaça se necessário:
+1. Cada verso está de acordo com o gabarito e o comentário do professor?
+2. O campo "erro_identificado" é coerente com o verso de TODOS os cards (nunca afirma o oposto do que o card ensina)?
+3. Você inventou alguma "distinção" entre conceitos que na verdade são sinônimos/equivalentes? Se sim, troque por um card que ENSINA a equivalência.
+4. Os cards são coerentes ENTRE SI (um não afirma o que o outro nega)?
+5. Se o tema envolver prazos, o card trata do instituto certo — DECADÊNCIA (prazo para lançar/constituir) ou PRESCRIÇÃO (prazo para cobrar/executar)? Não troque um pelo outro.
+
 ## Princípio da Informação Mínima (Wozniak)
 
 Aplique rigorosamente: cada card testa UMA ÚNICA informação — um prazo, uma exceção, uma palavra-chave, uma tese do STF. Nunca agrupe dois fatos num mesmo card.
@@ -1186,11 +1197,13 @@ Identifique com precisão:
 - Qual o gabarito correto
 - POR QUE o aluno errou: qual confusão, troca, ou lacuna específica causou o erro
 
-Crie ATÉ 2 flashcards que corrigem EXATAMENTE essa confusão.
+Crie ATÉ 2 flashcards que corrigem EXATAMENTE essa lacuna.
+
+ATENÇÃO: nem todo erro é uma "confusão entre dois conceitos distintos". O mecanismo pode ser, entre outros: troca/inversão entre X e Y; **falha em perceber que dois termos são SINÔNIMOS/equivalentes** (o aluno achou que eram diferentes); desconhecimento simples de uma regra; exceção desconhecida; pegadinha de redação; ou lapso de leitura. Identifique o mecanismo REAL antes de escolher o formato — NÃO force uma "distinção" onde não há duas coisas a distinguir.
 
 ### REGRA DE OURO: foque no MECANISMO DO ERRO, não no tema geral
 
-O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR a confusão específica que fez o aluno errar.
+O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR exatamente o que fez o aluno errar.
 
 ### Exemplos de erros comuns e como abordar:
 
@@ -1209,15 +1222,21 @@ Se um item parece certo mas tem uma palavra que o torna errado, o card usa Cloze
 **Erro por GENERALIZAÇÃO (como "toda norma...", "sempre...", "nunca..."):**
 Cloze: "A regra X se aplica {{sempre / salvo quando}}..."
 
+**Erro por FALSA DISTINÇÃO (não perceber que dois termos são SINÔNIMOS/equivalentes):**
+Quando o aluno tratou como diferentes dois termos que designam a MESMA coisa (ex.: "lançamento direto" e "lançamento de ofício"), o card deve ENSINAR a equivalência — NUNCA inventar uma distinção inexistente nem citar fundamentos diferentes para cada termo. Cloze: "{{termo A}} é o mesmo que {{termo B}} (mesmo fundamento legal)."
+
+**Erro por DESCONHECIMENTO SIMPLES de uma regra (sem confusão com outro instituto):**
+Quando o aluno apenas não sabia a regra/prazo/requisito, faça um card direto sobre a regra correta. Não há "X vs Y" a distinguir — não fabrique um.
+
 **Questão de jurisprudência (STF/STJ):**
 Prefira o sentido caso→tese: frente = situação fática do julgado, verso = tese fixada pelo tribunal. Se a tese for amplamente cobrada em provas, um segundo card tese→caso consolida o reconhecimento inverso.
 
 ### Tipos de cards para questão ERRADA (em ordem de prioridade):
 
-1. **Card da distinção (OBRIGATÓRIO):** Force o aluno a distinguir os conceitos que ele CONFUNDIU. Prefira Cloze, salvo se um Q&A ou V/F ficar mais claro.
+1. **Card do mecanismo do erro (OBRIGATÓRIO):** ataque exatamente o mecanismo identificado. SE o erro foi confusão entre dois institutos, faça um card de distinção (force o aluno a distinguir X de Y). SE o erro foi não perceber que dois termos são sinônimos, faça um card que ENSINA a equivalência. SE foi desconhecimento simples, faça um card direto sobre a regra. Prefira Cloze, salvo se um Q&A ou V/F ficar mais claro.
 2. **Card da regra correta (se necessário):** Pergunta direta sobre o artigo, súmula ou regra que fundamenta a resposta correta.
 
-**No campo "erro_identificado":** descreva o mecanismo do erro (ex: "Confundiu competência da União com a dos Estados").
+**No campo "erro_identificado":** descreva o mecanismo REAL do erro, COERENTE com o que os cards ensinam e com o gabarito (ex.: "Confundiu competência da União com a dos Estados" OU "Não percebeu que 'lançamento direto' e 'de ofício' são sinônimos"). O erro_identificado NUNCA pode contradizer o verso de nenhum card, nem o gabarito, nem reproduzir uma premissa errada do relato do aluno.
 
 ---
 
@@ -1303,7 +1322,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
     properties: {
       materia: { type: 'string', description: 'Mat\u00E9ria do edital' },
       subtopico: { type: 'string', description: 'Subt\u00F3pico espec\u00EDfico' },
-      erro_identificado: { type: 'string', description: 'Se errou: descri\u00E7\u00E3o do mecanismo do erro. Se acertou: descri\u00E7\u00E3o da pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil.' },
+      erro_identificado: { type: 'string', description: 'Se errou: descri\u00E7\u00E3o do mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de TODOS os cards (jamais afirmar o oposto do que o card ensina) e com o gabarito; nunca reproduzir uma premissa errada do relato do aluno.' },
       cards: {
         type: 'array',
         items: {
@@ -1356,11 +1375,15 @@ ${altsText || 'N\u00E3o dispon\u00EDveis'}
 ### Coment\u00E1rio do Professor
 ${q.comentario || 'N\u00E3o dispon\u00EDvel'}
 ${q.pensamentoAluno ? `
-### \uD83D\uDCAD Relato do Aluno \u2014 PRIORIDADE M\u00C1XIMA
+### \uD83D\uDCAD Alvo pedag\u00F3gico do aluno (use S\u00D3 para mirar o card)
 O aluno descreveu o pr\u00F3prio racioc\u00EDnio ao responder esta quest\u00E3o:
 "${q.pensamentoAluno}"
 
-Este relato \u00E9 a fonte MAIS CONFI\u00C1VEL sobre o mecanismo REAL do erro/d\u00FAvida \u2014 mais confi\u00E1vel que qualquer hip\u00F3tese sua e que o foco do coment\u00E1rio do professor. Os cards DEVEM atacar diretamente a d\u00FAvida/confus\u00E3o descrita pelo aluno. Se o relato revelar uma confus\u00E3o diferente da que voc\u00EA deduziria sozinho, siga o relato.
+COMO USAR ESTE RELATO:
+- Ele \u00E9 a melhor fonte sobre QUAL foi a d\u00FAvida/erro do aluno \u2014 use-o para DIRECIONAR o card ao ponto exato que o derrubou.
+- Ele N\u00C3O \u00E9 fonte de doutrina. O aluno \u00E9 quem errou; o relato pode conter a premissa jur\u00EDdica equivocada que causou o erro.
+- A CORRE\u00C7\u00C3O do conte\u00FAdo vem SEMPRE do coment\u00E1rio do professor + gabarito oficial, que PREVALECEM sobre qualquer afirma\u00E7\u00E3o jur\u00EDdica do relato.
+- Se o relato contiver afirma\u00E7\u00E3o INCORRETA, o card deve CORRIGI-LA conforme o gabarito \u2014 NUNCA reproduzi-la. Se o relato j\u00E1 estiver CORRETO, confirme-o; n\u00E3o o "super-corrija".
 ` : ''}
 ---
 \u26A0\uFE0F LIMITE DESTA QUEST\u00C3O: gere no M\u00C1XIMO ${maxCards} card(s). Este n\u00FAmero substitui qualquer limite mencionado nas instru\u00E7\u00F5es gerais. Continue respeitando o Princ\u00EDpio da Informa\u00E7\u00E3o M\u00EDnima \u2014 se menos cards j\u00E1 cobrirem a lacuna, gere menos; nunca invente cards s\u00F3 para atingir o limite.
@@ -1579,7 +1602,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 {
   "materia": "string - matéria do edital",
   "subtopico": "string - subtópico específico",
-  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance",
+  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
   "cards": [
     {
       "tipo": "string - Cloze ou Q&A",
@@ -1708,7 +1731,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 {
   "materia": "string - mat\u00E9ria do edital",
   "subtopico": "string - subt\u00F3pico espec\u00EDfico",
-  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil",
+  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
   "cards": [
     {
       "tipo": "string - Cloze ou Q&A",
@@ -1797,6 +1820,11 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 3. **Coerência com o comentário do professor:** O card contradiz o que o professor explicou?
 4. **Clareza:** A pergunta é clara e a resposta é objetiva?
 5. **Relevância:** O card ataca o ponto central (mecanismo do erro ou pegadinha)?
+6. **Coerência com o erro_identificado:** O campo "erro_identificado" bate com o que os versos ensinam? Se ele afirma o OPOSTO de um verso (ex.: diz "X e Y são distintos" enquanto o verso diz "X e Y são sinônimos", ou nega o que o verso afirma), há contradição interna.
+7. **Coerência entre cards:** Os cards são compatíveis entre si? Se um card afirma A e outro nega A, há contradição — rejeite o(s) card(s) conflitante(s).
+8. **Decadência x prescrição:** Se o tema envolver prazos, o card trata do instituto correto (decadência = prazo para lançar/constituir; prescrição = prazo para cobrar/executar)? Trocar um pelo outro é erro grave.
+
+AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos). O relato do aluno serve SÓ para julgar relevância (se o card mira a dúvida certa); ele JAMAIS valida um card juridicamente incorreto.
 
 ## Critérios de REJEIÇÃO (qualquer um = REJEITADO):
 - Informação juridicamente incorreta ou desatualizada
@@ -1804,6 +1832,10 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 - Inversão de conceitos (atribuir a X o que é de Y)
 - Resposta ambígua ou genérica demais
 - Pergunta que não testa o conceito relevante
+- Contradição interna entre o verso de um card e o campo erro_identificado
+- Contradição entre dois cards do mesmo lote
+- Troca entre decadência e prescrição
+- Card que reproduz uma premissa incorreta do relato do aluno em vez de corrigi-la
 
 ## Formato de resposta
 
@@ -1872,7 +1904,7 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
 {
   "materia": "string - matéria do edital",
   "subtopico": "string - subtópico específico",
-  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance",
+  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
   "cards": [
     {
       "frente_texto_limpo": "string - pergunta em texto puro, sem HTML",
@@ -1931,6 +1963,9 @@ ${cards.map(c => `### Card ${c.index}
 **Frente:** ${c.frente}
 **Verso:** ${c.verso}`).join('\n\n')}
 
+### Campo "erro_identificado" (mecanismo do erro — DEVE ser coerente com os versos acima)
+${creatorResult.erro_identificado || 'N/A'}
+
 ---
 ## Contexto da questão
 - **Banca:** ${questionData.banca || 'N/A'}
@@ -1938,13 +1973,13 @@ ${cards.map(c => `### Card ${c.index}
 - **Gabarito:** ${questionData.gabarito || 'N/A'}
 - **Resposta do aluno:** ${questionData.respostaAluno || 'N/A'}
 
-### Comentário do Professor
+### Comentário do Professor (AUTORIDADE de correção)
 ${questionData.comentario || 'Não disponível'}${questionData.pensamentoAluno ? `
 
-### 💭 Relato do Aluno (raciocínio dele durante a questão)
+### 💭 Relato do Aluno (apenas para entender QUAL erro o card deveria atacar)
 ${questionData.pensamentoAluno}
 
-Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por esse critério.` : ''}`;
+Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele NÃO é fonte de doutrina e NÃO valida um card incorreto: um card que "ataca a dúvida do relato" mas contém erro jurídico, contradiz o gabarito, ou reproduz a premissa errada do aluno deve ser REJEITADO.` : ''}`;
   }
 
   /**
@@ -2032,7 +2067,8 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
       auditorResult = await callAuditor(filteredPayload);
     } catch (err) {
       console.warn('⚠️ Auditor falhou, aceitando todos os cards:', err.message);
-      showToast('⚠️ Auditor indisponível — cards aceitos sem validação.', 'warning', 5000);
+      showToast('⚠️ Auditor indisponível — cards aceitos sem validação (marcados p/ revisão).', 'warning', 5000);
+      for (const c of creatorResult.cards) { c._needsReview = true; c._rejectReason = 'Auditor indisponível — não validado'; }
       return creatorResult;
     }
     if (auditorResult._usage) totalCost += trackPipelineCost(auditorResult._usage, getSetting('auditorModel'));
@@ -2050,13 +2086,20 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
       }
     }
 
+    // Cards approved in round 1 were audited against the creator's erro_identificado;
+    // only swap in the retry's version when ALL surviving cards come from the retry,
+    // so the final 💡 box stays coherent with the cards actually kept.
+    const round1ApprovedCount = approved.length;
+
     // ── Retry rejected cards once ──
+    let retryErroIdentificado = null;
     if (rejected.length > 0) {
       onStatus(`🔄 Regenerando ${rejected.length} card(s) rejeitado(s)...`);
       const feedback = rejected.map((r, i) => `Card ${i + 1}: ${r.justificativa}`).join('\n');
 
       try {
         const retryResult = await callCreator(questionData, feedback);
+        if (retryResult.erro_identificado) retryErroIdentificado = retryResult.erro_identificado;
         if (retryResult._usage) totalCost += trackPipelineCost(retryResult._usage, getSetting('creatorModel'));
 
         // Re-audit the retried cards
@@ -2067,7 +2110,8 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
           retryAudit = await callAuditor(retryFiltered);
           if (retryAudit._usage) totalCost += trackPipelineCost(retryAudit._usage, getSetting('auditorModel'));
         } catch {
-          // If re-audit fails, accept retried cards
+          // If re-audit fails, accept retried cards (flagged for manual review)
+          for (const c of retryResult.cards) { c._needsReview = true; c._rejectReason = 'Re-auditoria indisponível — não validado'; }
           approved.push(...retryResult.cards);
           retryAudit = null;
         }
@@ -2099,7 +2143,7 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
     const finalResult = {
       materia: creatorResult.materia,
       subtopico: creatorResult.subtopico,
-      erro_identificado: creatorResult.erro_identificado,
+      erro_identificado: (round1ApprovedCount === 0 && retryErroIdentificado) ? retryErroIdentificado : creatorResult.erro_identificado,
       cards: approved,
       _pipelineCost: totalCost,
       _creatorModel: getSetting('creatorModel'),
@@ -2575,7 +2619,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             ${dupWarning}
             <p style="margin:0 0 10px;font-size:13px;color:#555;line-height:1.5;">
               Descreva o que você pensou ao responder: em que você ficou em dúvida, o que confundiu, por que marcou ${questionData.respostaAluno || 'sua resposta'}.
-              A IA vai usar isso como <b>fonte principal</b> para o card atacar sua dúvida real.
+              A IA usa isso para entender <b>o que</b> você errou e mirar o card na sua dúvida real. A correção do conteúdo vem sempre do gabarito e do comentário do professor.
             </p>
             <textarea class="tec-thoughts-textarea" id="tec-thoughts-input"
               placeholder="Ex: achei que a anterioridade também valia para alteração de prazo de pagamento... fiquei entre A e C e chutei.">${(questionData.pensamentoAluno || getStoredThought(questionData.id) || '').replace(/</g, '&lt;')}</textarea>
@@ -2748,7 +2792,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               </div>
             </div>
             <div class="item-thoughts">
-              <textarea data-idx="${idx}" placeholder="💭 Seu raciocínio nesta questão (opcional — a IA usa como fonte principal do erro)">${(q.pensamentoAluno || '').replace(/</g, '&lt;')}</textarea>
+              <textarea data-idx="${idx}" placeholder="💭 Seu raciocínio nesta questão (opcional — a IA usa para entender o que você errou e mirar o card)">${(q.pensamentoAluno || '').replace(/</g, '&lt;')}</textarea>
             </div>
           </div>
         `;
@@ -3842,7 +3886,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         <span>\ud83d\udcad Por que voc\u00ea errou? <span class="qt-qid">#${questionId}</span></span>
         <button class="qt-close" data-act="close" title="Fechar">\u00d7</button>
       </div>
-      <textarea placeholder="Anote agora o motivo do erro \u2014 fica salvo nesta quest\u00e3o e vira a fonte principal do card depois."></textarea>
+      <textarea placeholder="Anote agora o motivo do erro \u2014 fica salvo nesta quest\u00e3o e ajuda a IA a mirar o card no que voc\u00ea errou."></textarea>
       <div class="qt-footer">
         <span class="qt-saved">\u2713 salvo</span>
         <div class="qt-btns">
@@ -3945,7 +3989,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     injectToolbar();
 
     // Log init
-    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.3.0 carregado em:', window.location.href);
+    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.4.0 carregado em:', window.location.href);
 
     // Show confirmation toast on load
     showToast('TEC\u2192Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB', 'success', 4000);
