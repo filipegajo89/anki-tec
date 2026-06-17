@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.4.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (gabarito+professor como autoridade soberana; relato do aluno só como alvo pedagógico) e salva no Anki + Obsidian
+// @version      1.5.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo do Anki, anti-ambiguidade da frente, orçamento de destaque) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -1127,6 +1127,8 @@ Antes de finalizar, faça uma AUTOCHECAGEM e refaça se necessário:
 3. Você inventou alguma "distinção" entre conceitos que na verdade são sinônimos/equivalentes? Se sim, troque por um card que ENSINA a equivalência.
 4. Os cards são coerentes ENTRE SI (um não afirma o que o outro nega)?
 5. Se o tema envolver prazos, o card trata do instituto certo — DECADÊNCIA (prazo para lançar/constituir) ou PRESCRIÇÃO (prazo para cobrar/executar)? Não troque um pelo outro.
+6. A frente tem UMA resposta correta inequívoca? Leia a frente como se soubesse o assunto: se mais de uma resposta razoável caberia na lacuna, a frase está AMBÍGUA — adicione contexto/restrição à frase (NÃO um rótulo mais vago) até a resposta ser única.
+7. Cada card Cloze tem só UMA lacuna {{ }}? Se há dois fatos a testar, faça dois cards.
 
 ## Princípio da Informação Mínima (Wozniak)
 
@@ -1158,6 +1160,15 @@ O texto dentro de {{ }} deve indicar APENAS a CATEGORIA da informação, NUNCA s
 - {{síntese}}, {{tese}}, {{entendimento}} → quando falta a conclusão de um julgado
 
 DICA: antes de aceitar o rótulo, pergunte-se: "Se eu soubesse ZERO do assunto, esse rótulo me daria a resposta?" Se sim, troque por um mais genérico.
+
+#### Equilíbrio anti-ambiguidade (igualmente obrigatório)
+
+Há um segundo risco, oposto ao cueing: um rótulo genérico DEMAIS pode tornar a frente AMBÍGUA — várias respostas plausíveis cabem na lacuna e o aluno não sabe O QUE recuperar (e marca "errei" sobre um acerto). A especificidade NÃO deve vir do rótulo (que vazaria a resposta), mas do CONTEXTO da frase. Teste de mão dupla para toda lacuna:
+1. Anti-cueing: o rótulo entrega a resposta? Se sim, generalize o rótulo.
+2. Anti-ambiguidade: dado o resto da frase, existe UMA única resposta correta defensável? Se mais de uma caberia, ADICIONE contexto/restrição à frase (uma cláusula que fixe a dimensão exata), não um rótulo mais vago.
+
+❌ Ambíguo: "A capitalização de juros é {{regra}} em contratos após 31/03/2000." (cabem "permitida", "vedada salvo pactuação", "condicionada"...)
+✅ Inequívoco: "A capitalização de juros com periodicidade inferior a um ano é {{regra}} em contratos celebrados após 31/03/2000, segundo a Súmula 539 do STJ." (só "permitida" se encaixa)
 
 ❌ Ruim (Q&A genérico):
 Frente: O que diz a Súmula 539 do STJ sobre juros?
@@ -1263,6 +1274,8 @@ Identifique com precisão:
 - O card precisa ser AUTOCONTIDO: quem o lê deve entender o erro e a distinção sem voltar à questão
 - **Tipo**: indique no campo "tipo" se é "Cloze" ou "Q&A". Você pode combinar 1 Cloze + 1 Q&A quando isso ensinar melhor
 - **Cloze**: use {{rotulo_generico}} para marcar a informação oculta; nunca coloque a resposta dentro das chaves. O verso deve começar pela resposta curta e pode trazer 1 explicação breve logo abaixo
+- **Uma lacuna por card Cloze:** use no MÁXIMO 1 lacuna {{ }} por card. Se a frase tem dois fatos a testar (ex.: uma regra E um prazo), faça dois cards, cada um com uma lacuna
+- **Âncora para fatos áridos:** para PRAZOS, PERCENTUAIS e DATAS, inclua no verso 1 âncora concreta de 1 linha — um micro-exemplo datado (ex.: "FG em 2020 → decai em 31/12/2025") ou um contraste curto com o instituto vizinho (decadência = constituir / prescrição = cobrar). Só quando houver gancho natural; não invente mnemônico artificial
 - **Q&A**: frente cirúrgica, verso começando pela resposta curta. Depois, se necessário, acrescente 1 explicação breve. Não use "Segundo o STF..." se isso entrega a resposta
 - Use perguntas COMPARATIVAS quando o erro envolver troca de conceitos
 - NUNCA crie cards genéricos sobre o assunto. Cada card deve ter relação direta com o motivo do erro
@@ -1290,9 +1303,9 @@ Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos
 ### Regras de formatação:
 - Em cards Cloze: use <mark> na lacuna assim: <mark>{{rotulo_generico}}</mark> para destacar visualmente a informação oculta
 - No verso, prefira a estrutura: <div class="answer-line">resposta curta</div> + <div class="explanation">explicação breve</div>
-- Use <b> em TODA menção a conceitos jurídicos importantes no verso
-- Use <span class="neg"> SEMPRE que houver negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto")
-- Use <mark> com moderação (1-3 palavras por card) apenas nas palavras que são o NÚCLEO da distinção
+- **ORÇAMENTO DE DESTAQUE (evite poluição visual):** no MÁXIMO 1 <mark> por card — exatamente na palavra que fecha a lacuna do erro identificado; no MÁXIMO 2-3 <b> por card (só os conceitos centrais); <span class="neg"> apenas na negação/exceção que é o PIVÔ do erro. Se quase tudo está destacado, nada se destaca (o realce perde a função de guiar o olho).
+- Em cards de distinção/pegadinha, o <mark> do verso deve cair na FEATURE DISCRIMINANTE (a palavra que diferencia X de Y, ou a palavra-armadilha) — não numa palavra qualquer
+- Use <span class="neg"> para negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto"), respeitando o orçamento acima
 - Na FRENTE do card, use <b> para o termo central da pergunta e <mark> para destaques pontuais
 - Listas com <ul><li> são preferíveis a texto corrido quando há 3+ itens
 - NUNCA use tags de formatação no campo palavras_chave (é plain text)
@@ -1823,6 +1836,7 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 6. **Coerência com o erro_identificado:** O campo "erro_identificado" bate com o que os versos ensinam? Se ele afirma o OPOSTO de um verso (ex.: diz "X e Y são distintos" enquanto o verso diz "X e Y são sinônimos", ou nega o que o verso afirma), há contradição interna.
 7. **Coerência entre cards:** Os cards são compatíveis entre si? Se um card afirma A e outro nega A, há contradição — rejeite o(s) card(s) conflitante(s).
 8. **Decadência x prescrição:** Se o tema envolver prazos, o card trata do instituto correto (decadência = prazo para lançar/constituir; prescrição = prazo para cobrar/executar)? Trocar um pelo outro é erro grave.
+9. **Frente inequívoca:** a frente tem UMA resposta correta defensável dado o contexto? Se a lacuna for ambígua (várias respostas razoáveis caberiam), o card é mal formulado — a frase precisa de mais contexto, não de rótulo mais vago.
 
 AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos). O relato do aluno serve SÓ para julgar relevância (se o card mira a dúvida certa); ele JAMAIS valida um card juridicamente incorreto.
 
@@ -1835,6 +1849,7 @@ AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos).
 - Contradição interna entre o verso de um card e o campo erro_identificado
 - Contradição entre dois cards do mesmo lote
 - Troca entre decadência e prescrição
+- Frente ambígua (mais de uma resposta razoável cabe na lacuna)
 - Card que reproduz uma premissa incorreta do relato do aluno em vez de corrigi-la
 
 ## Formato de resposta
@@ -2229,6 +2244,8 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
 .erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
   font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
 hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
+.cloze { font-weight: 800; color: #fbbf24; }
+.cloze-hint { color: #fbbf24; font-style: italic; }
 /* Modo claro */
 .card.night_mode_off, :root[class*="light"] .card {
   color: #1f2937; background: #ffffff;
@@ -2248,6 +2265,8 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 :root[class*="light"] .contexto { color: #6b7280; border-bottom-color: #e5e7eb; }
 :root[class*="light"] .fonte { color: #9ca3af; }
 :root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
+:root[class*="light"] .cloze { color: #b45309; }
+:root[class*="light"] .cloze-hint { color: #b45309; }
 :root[class*="light"] hr { border-top-color: #dee2e6; }`;
   }
 
@@ -2266,6 +2285,107 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 <div class="fonte">{{Fonte}}</div>
 </div>`,
     };
+  }
+
+  /** Name of the native-Cloze companion note type (derived from the Basic one). */
+  function getClozeModelName() {
+    return `${getSetting('ankiModelName')} Cloze`;
+  }
+
+  /** Native Anki Cloze template: {{cloze:Text}} on both sides + extras on the back. */
+  function getAnkiClozeTemplate() {
+    return {
+      Name: 'Cloze',
+      Front: '<div class="card"><div class="contexto">{{Contexto}}</div><div class="frente">{{cloze:Text}}</div></div>',
+      Back: `<div class="card">
+<div class="contexto">{{Contexto}}</div>
+<div class="frente">{{cloze:Text}}</div>
+{{#BackExtra}}<hr><div class="verso">{{BackExtra}}</div>{{/BackExtra}}
+{{#PalavrasChave}}<div class="palavras-chave">{{PalavrasChave}}</div>{{/PalavrasChave}}
+{{#ErroIdentificado}}<div class="erro">💡 {{ErroIdentificado}}</div>{{/ErroIdentificado}}
+{{#Modelo}}<div class="modelo">🤖 {{Modelo}}</div>{{/Modelo}}
+<div class="fonte">{{Fonte}}</div>
+</div>`,
+    };
+  }
+
+  /** First line of the back (the short answer), used as the native cloze answer. */
+  function extractShortAnswer(versoTextoLimpo) {
+    return stripHtml(versoTextoLimpo || '')
+      .replace(/\r/g, '')
+      .split(/\n\s*\n/)[0]
+      .split('\n')[0]
+      .trim()
+      .replace(/[.;:]+$/, '')
+      .trim();
+  }
+
+  /** Cloze syntax uses :: and {{ }} as delimiters — strip them from the answer (never legitimate there). */
+  function sanitizeClozeAnswer(answer) {
+    return (answer || '').replace(/::/g, ':').replace(/[{}]/g, '').trim();
+  }
+
+  /** Back Extra for a cloze card: keep the explanation, drop the now-redundant answer-line. */
+  function clozeBackExtra(card) {
+    const verso = card.verso_html || card.verso || '';
+    const expl = verso.match(/<div class="explanation">[\s\S]*$/);
+    if (expl) return expl[0];
+    // No explanation block: if the verso is just the answer-line, the cloze reveal suffices.
+    if (/class="answer-line"/.test(verso)) return '';
+    return verso;
+  }
+
+  /**
+   * Convert a pseudo-cloze card (statement with {{rotulo}} + separate short answer)
+   * into a native Anki cloze field. Returns { text, backExtra } or null when it
+   * can't (no placeholder / no answer) — caller then falls back to the Basic type.
+   */
+  function buildClozeFields(card) {
+    const frente = card.frente_html || card.frente || '';
+    if (!/\{\{[^}]+\}\}/.test(frente)) return null;
+    const answer = sanitizeClozeAnswer(extractShortAnswer(card.verso_texto_limpo || card.verso || ''));
+    if (!answer) return null;
+
+    let n = 0;
+    const text = frente.replace(/\{\{([^}]+)\}\}/g, (_, label) => {
+      n++;
+      const clean = (label || '').replace(/<[^>]+>/g, '').trim() || 'lacuna';
+      // First blank becomes the native cloze (answer revealed in context on the back).
+      if (n === 1) return `{{c1::${answer}::${clean}}}`;
+      // Extra blanks (should be rare — prompt enforces 1/card): show as a plain hint, no extra card.
+      return `<span class="cloze-hint">[${clean}]</span>`;
+    });
+
+    // Drop a <mark> wrapping the cloze itself — the native .cloze styling already highlights it
+    // (and yellow <mark> bg + gold cloze text would clash).
+    const cleanText = text.replace(/<mark>\s*(\{\{c1::[\s\S]*?\}\})\s*<\/mark>/g, '$1');
+
+    return { text: cleanText, backExtra: clozeBackExtra(card) };
+  }
+
+  /** Ensure the native-Cloze note type exists (create or refresh template/css). */
+  async function ensureAnkiClozeModel() {
+    const modelName = getClozeModelName();
+    const models = await ankiInvoke('modelNames');
+    const tpl = getAnkiClozeTemplate();
+    const css = getAnkiModelCss();
+    if (models.includes(modelName)) {
+      try {
+        await ankiInvoke('updateModelStyling', { model: { name: modelName, css } });
+        await ankiInvoke('updateModelTemplates', {
+          model: { name: modelName, templates: { [tpl.Name]: { Front: tpl.Front, Back: tpl.Back } } },
+        });
+      } catch (e) { console.warn('[TEC→Anki] Não foi possível atualizar o modelo Cloze:', e); }
+      return;
+    }
+    await ankiInvoke('createModel', {
+      modelName,
+      inOrderFields: ['Text', 'BackExtra', 'PalavrasChave', 'Contexto', 'Fonte', 'ErroIdentificado', 'Modelo'],
+      css,
+      isCloze: true,
+      cardTemplates: [tpl],
+    });
+    console.log(`[TEC→Anki] Note type Cloze nativo criado: ${modelName}`);
   }
 
   async function ensureAnkiModel() {
@@ -2331,7 +2451,16 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       ? `${prefix}::${sanitizePath(materia)}::${sanitizePath(subtopico)}`
       : `${prefix}::${sanitizePath(materia)}`;
 
+    const clozeModelName = getClozeModelName();
     await ensureAnkiModel();
+
+    // Decide per card whether it becomes a native cloze; build payloads up front
+    // so we only ensure the Cloze note type when it's actually used.
+    const cardsToInsert = aiResult.cards.map(card => ({
+      card,
+      cloze: card.tipo === 'Cloze' ? buildClozeFields(card) : null,
+    }));
+    if (cardsToInsert.some(c => c.cloze)) await ensureAnkiClozeModel();
     await ensureAnkiDeck(deckName);
 
     const tags = [
@@ -2347,29 +2476,42 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       : questionData.url;
     const contexto = `${materia}${subtopico ? ' \u203A ' + subtopico : ''}`;
 
-    const notes = aiResult.cards.map(card => {
+    const modeloStr = (() => {
+      if (aiResult._creatorModel) {
+        const creator = aiResult._creatorModel.split('/').pop();
+        const auditor = (aiResult._auditorModel || '').split('/').pop();
+        return auditor ? `${creator} → ${auditor}` : creator;
+      }
+      return (aiResult._generatorModel || '').split('/').pop();
+    })();
+    const palavrasChaveHtml = (card) => (card.palavras_chave || '')
+      .split(/\s*\|\s*/).filter(Boolean).map(kw => `<span class="kw">${kw.trim()}</span>`).join(' ');
+
+    const notes = cardsToInsert.map(({ card, cloze }) => {
       const cardTags = [...tags];
       if (card._needsReview) cardTags.push('revisar');
       if (getSetting('pipelineMode') === 'dual') cardTags.push('dual-pipeline');
+      if (cloze) cardTags.push('cloze-nativo');
+      const common = {
+        PalavrasChave: palavrasChaveHtml(card),
+        Contexto: contexto,
+        Fonte: fonte,
+        ErroIdentificado: aiResult.erro_identificado || '',
+        Modelo: modeloStr,
+      };
+      if (cloze) {
+        return {
+          deckName,
+          modelName: clozeModelName,
+          fields: { Text: cloze.text, BackExtra: cloze.backExtra, ...common },
+          tags: cardTags,
+          options: { allowDuplicate: false, duplicateScope: 'deck' },
+        };
+      }
       return {
         deckName,
         modelName,
-        fields: {
-          Frente: card.frente_html || card.frente,
-          Verso: card.verso_html || card.verso,
-          PalavrasChave: (card.palavras_chave || '').split(/\s*\|\s*/).filter(Boolean).map(kw => `<span class="kw">${kw.trim()}</span>`).join(' '),
-          Contexto: contexto,
-          Fonte: fonte,
-          ErroIdentificado: aiResult.erro_identificado || '',
-          Modelo: (() => {
-            if (aiResult._creatorModel) {
-              const creator = aiResult._creatorModel.split('/').pop();
-              const auditor = (aiResult._auditorModel || '').split('/').pop();
-              return auditor ? `${creator} → ${auditor}` : creator;
-            }
-            return (aiResult._generatorModel || '').split('/').pop();
-          })(),
-        },
+        fields: { Frente: card.frente_html || card.frente, Verso: card.verso_html || card.verso, ...common },
         tags: cardTags,
         options: { allowDuplicate: false, duplicateScope: 'deck' },
       };
@@ -3989,7 +4131,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     injectToolbar();
 
     // Log init
-    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.4.0 carregado em:', window.location.href);
+    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.5.0 carregado em:', window.location.href);
 
     // Show confirmation toast on load
     showToast('TEC\u2192Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB', 'success', 4000);

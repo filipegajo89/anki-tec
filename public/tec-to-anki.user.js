@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.1.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (com seu raciocínio como contexto) e salva no Anki + Obsidian
+// @version      1.5.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo do Anki, anti-ambiguidade da frente, orçamento de destaque) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -52,6 +52,7 @@
     enableObsidian: true,
     showPreview: true,
     askThoughts: true, // ask "qual foi seu raciocínio?" before generating cards
+    maxCardsPerQuestion: 2, // upper bound of cards the AI may generate per question
     pipelineMode: 'single', // 'single' or 'dual'
     creatorModel: 'moonshotai/kimi-k2.5',
     auditorModel: 'google/gemini-3.1-pro-preview',
@@ -256,6 +257,46 @@
       height: 100%; background: #4361ee; border-radius: 2px;
       transition: width .3s ease;
     }
+
+    /* ── Quick Thought Box (auto on wrong answer) ── */
+    #tec-quick-thought {
+      position: fixed; bottom: 88px; right: 24px; z-index: 99998;
+      width: 320px; background: #1a1a2e; color: #fff; border-radius: 14px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.4); font-family: system-ui, sans-serif;
+      border-left: 4px solid #ef476f; animation: tec-slide-in .3s ease; overflow: hidden;
+    }
+    #tec-quick-thought .qt-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px 6px; font-size: 13px; font-weight: 700;
+    }
+    #tec-quick-thought .qt-header .qt-qid { font-weight: 400; font-size: 11px; color: #aaa; }
+    #tec-quick-thought .qt-close {
+      background: none; border: none; color: #aaa; font-size: 18px; cursor: pointer;
+      padding: 0 4px; line-height: 1; border-radius: 6px;
+    }
+    #tec-quick-thought .qt-close:hover { color: #fff; }
+    #tec-quick-thought textarea {
+      width: calc(100% - 24px); margin: 0 12px; box-sizing: border-box;
+      min-height: 70px; resize: vertical; padding: 8px 10px; border: none; border-radius: 8px;
+      font-size: 13px; font-family: system-ui, sans-serif; line-height: 1.45;
+      background: #14141f; color: #fff;
+    }
+    #tec-quick-thought textarea:focus { outline: 1px solid #4361ee; }
+    #tec-quick-thought .qt-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px 12px; gap: 8px;
+    }
+    #tec-quick-thought .qt-saved { font-size: 11px; color: #06d6a0; opacity: 0; transition: opacity .2s; }
+    #tec-quick-thought .qt-saved.show { opacity: 1; }
+    #tec-quick-thought .qt-btns { display: flex; gap: 6px; }
+    #tec-quick-thought button.qt-act {
+      border: none; border-radius: 8px; padding: 6px 12px; cursor: pointer;
+      font-size: 12px; font-weight: 600;
+    }
+    #tec-quick-thought .qt-skip { background: #2a2a3e; color: #aaa; }
+    #tec-quick-thought .qt-skip:hover { background: #34344a; color: #fff; }
+    #tec-quick-thought .qt-save { background: #4361ee; color: #fff; }
+    #tec-quick-thought .qt-save:hover { background: #3a56d4; }
   `);
 
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
@@ -780,6 +821,28 @@
     return new Date().toISOString().split('T')[0];
   }
 
+  // ── Per-question stored thoughts (raciocinio capturado na hora do erro) ──
+  function thoughtKey(id) {
+    return `tec_thought_${id}`;
+  }
+
+  /** Read the thought previously saved for a question id (empty string if none). */
+  function getStoredThought(id) {
+    if (!id) return '';
+    return GM_getValue(thoughtKey(id), '') || '';
+  }
+
+  /** Persist (or clear, when empty) the thought attached to a question id. */
+  function setStoredThought(id, text) {
+    if (!id) return;
+    const value = (text || '').trim();
+    if (value) {
+      GM_setValue(thoughtKey(id), value);
+    } else {
+      GM_setValue(thoughtKey(id), '');
+    }
+  }
+
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                    4. TOAST SYSTEM                           \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
@@ -1054,6 +1117,19 @@
 
   const SYSTEM_PROMPT = `Você é um especialista em concursos públicos e criação de flashcards para Anki. A partir da questão, do comentário do professor e do "Erro Identificado", crie no máximo 2 flashcards focados exclusivamente na lacuna de conhecimento que causou o erro. Ignore conceitos da questão que o aluno já domina.
 
+## Autoridade do conteúdo (REGRA SOBERANA)
+
+A precisão jurídica vem EXCLUSIVAMENTE do comentário do professor e do gabarito oficial — eles são a autoridade soberana sobre o que é correto. O relato do aluno (quando houver) serve APENAS para identificar QUAL foi a dúvida/erro a atacar, NUNCA como fonte de doutrina. Se o relato contradisser o gabarito/comentário, o card segue o gabarito/comentário e corrige o aluno. Se o relato já estiver CORRETO, confirme-o — não o "super-corrija" para algo que o gabarito não sustenta.
+
+Antes de finalizar, faça uma AUTOCHECAGEM e refaça se necessário:
+1. Cada verso está de acordo com o gabarito e o comentário do professor?
+2. O campo "erro_identificado" é coerente com o verso de TODOS os cards (nunca afirma o oposto do que o card ensina)?
+3. Você inventou alguma "distinção" entre conceitos que na verdade são sinônimos/equivalentes? Se sim, troque por um card que ENSINA a equivalência.
+4. Os cards são coerentes ENTRE SI (um não afirma o que o outro nega)?
+5. Se o tema envolver prazos, o card trata do instituto certo — DECADÊNCIA (prazo para lançar/constituir) ou PRESCRIÇÃO (prazo para cobrar/executar)? Não troque um pelo outro.
+6. A frente tem UMA resposta correta inequívoca? Leia a frente como se soubesse o assunto: se mais de uma resposta razoável caberia na lacuna, a frase está AMBÍGUA — adicione contexto/restrição à frase (NÃO um rótulo mais vago) até a resposta ser única.
+7. Cada card Cloze tem só UMA lacuna {{ }}? Se há dois fatos a testar, faça dois cards.
+
 ## Princípio da Informação Mínima (Wozniak)
 
 Aplique rigorosamente: cada card testa UMA ÚNICA informação — um prazo, uma exceção, uma palavra-chave, uma tese do STF. Nunca agrupe dois fatos num mesmo card.
@@ -1084,6 +1160,15 @@ O texto dentro de {{ }} deve indicar APENAS a CATEGORIA da informação, NUNCA s
 - {{síntese}}, {{tese}}, {{entendimento}} → quando falta a conclusão de um julgado
 
 DICA: antes de aceitar o rótulo, pergunte-se: "Se eu soubesse ZERO do assunto, esse rótulo me daria a resposta?" Se sim, troque por um mais genérico.
+
+#### Equilíbrio anti-ambiguidade (igualmente obrigatório)
+
+Há um segundo risco, oposto ao cueing: um rótulo genérico DEMAIS pode tornar a frente AMBÍGUA — várias respostas plausíveis cabem na lacuna e o aluno não sabe O QUE recuperar (e marca "errei" sobre um acerto). A especificidade NÃO deve vir do rótulo (que vazaria a resposta), mas do CONTEXTO da frase. Teste de mão dupla para toda lacuna:
+1. Anti-cueing: o rótulo entrega a resposta? Se sim, generalize o rótulo.
+2. Anti-ambiguidade: dado o resto da frase, existe UMA única resposta correta defensável? Se mais de uma caberia, ADICIONE contexto/restrição à frase (uma cláusula que fixe a dimensão exata), não um rótulo mais vago.
+
+❌ Ambíguo: "A capitalização de juros é {{regra}} em contratos após 31/03/2000." (cabem "permitida", "vedada salvo pactuação", "condicionada"...)
+✅ Inequívoco: "A capitalização de juros com periodicidade inferior a um ano é {{regra}} em contratos celebrados após 31/03/2000, segundo a Súmula 539 do STJ." (só "permitida" se encaixa)
 
 ❌ Ruim (Q&A genérico):
 Frente: O que diz a Súmula 539 do STJ sobre juros?
@@ -1123,11 +1208,13 @@ Identifique com precisão:
 - Qual o gabarito correto
 - POR QUE o aluno errou: qual confusão, troca, ou lacuna específica causou o erro
 
-Crie ATÉ 2 flashcards que corrigem EXATAMENTE essa confusão.
+Crie ATÉ 2 flashcards que corrigem EXATAMENTE essa lacuna.
+
+ATENÇÃO: nem todo erro é uma "confusão entre dois conceitos distintos". O mecanismo pode ser, entre outros: troca/inversão entre X e Y; **falha em perceber que dois termos são SINÔNIMOS/equivalentes** (o aluno achou que eram diferentes); desconhecimento simples de uma regra; exceção desconhecida; pegadinha de redação; ou lapso de leitura. Identifique o mecanismo REAL antes de escolher o formato — NÃO force uma "distinção" onde não há duas coisas a distinguir.
 
 ### REGRA DE OURO: foque no MECANISMO DO ERRO, não no tema geral
 
-O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR a confusão específica que fez o aluno errar.
+O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR exatamente o que fez o aluno errar.
 
 ### Exemplos de erros comuns e como abordar:
 
@@ -1146,15 +1233,21 @@ Se um item parece certo mas tem uma palavra que o torna errado, o card usa Cloze
 **Erro por GENERALIZAÇÃO (como "toda norma...", "sempre...", "nunca..."):**
 Cloze: "A regra X se aplica {{sempre / salvo quando}}..."
 
+**Erro por FALSA DISTINÇÃO (não perceber que dois termos são SINÔNIMOS/equivalentes):**
+Quando o aluno tratou como diferentes dois termos que designam a MESMA coisa (ex.: "lançamento direto" e "lançamento de ofício"), o card deve ENSINAR a equivalência — NUNCA inventar uma distinção inexistente nem citar fundamentos diferentes para cada termo. Cloze: "{{termo A}} é o mesmo que {{termo B}} (mesmo fundamento legal)."
+
+**Erro por DESCONHECIMENTO SIMPLES de uma regra (sem confusão com outro instituto):**
+Quando o aluno apenas não sabia a regra/prazo/requisito, faça um card direto sobre a regra correta. Não há "X vs Y" a distinguir — não fabrique um.
+
 **Questão de jurisprudência (STF/STJ):**
 Prefira o sentido caso→tese: frente = situação fática do julgado, verso = tese fixada pelo tribunal. Se a tese for amplamente cobrada em provas, um segundo card tese→caso consolida o reconhecimento inverso.
 
 ### Tipos de cards para questão ERRADA (em ordem de prioridade):
 
-1. **Card da distinção (OBRIGATÓRIO):** Force o aluno a distinguir os conceitos que ele CONFUNDIU. Prefira Cloze, salvo se um Q&A ou V/F ficar mais claro.
+1. **Card do mecanismo do erro (OBRIGATÓRIO):** ataque exatamente o mecanismo identificado. SE o erro foi confusão entre dois institutos, faça um card de distinção (force o aluno a distinguir X de Y). SE o erro foi não perceber que dois termos são sinônimos, faça um card que ENSINA a equivalência. SE foi desconhecimento simples, faça um card direto sobre a regra. Prefira Cloze, salvo se um Q&A ou V/F ficar mais claro.
 2. **Card da regra correta (se necessário):** Pergunta direta sobre o artigo, súmula ou regra que fundamenta a resposta correta.
 
-**No campo "erro_identificado":** descreva o mecanismo do erro (ex: "Confundiu competência da União com a dos Estados").
+**No campo "erro_identificado":** descreva o mecanismo REAL do erro, COERENTE com o que os cards ensinam e com o gabarito (ex.: "Confundiu competência da União com a dos Estados" OU "Não percebeu que 'lançamento direto' e 'de ofício' são sinônimos"). O erro_identificado NUNCA pode contradizer o verso de nenhum card, nem o gabarito, nem reproduzir uma premissa errada do relato do aluno.
 
 ---
 
@@ -1181,6 +1274,8 @@ Identifique com precisão:
 - O card precisa ser AUTOCONTIDO: quem o lê deve entender o erro e a distinção sem voltar à questão
 - **Tipo**: indique no campo "tipo" se é "Cloze" ou "Q&A". Você pode combinar 1 Cloze + 1 Q&A quando isso ensinar melhor
 - **Cloze**: use {{rotulo_generico}} para marcar a informação oculta; nunca coloque a resposta dentro das chaves. O verso deve começar pela resposta curta e pode trazer 1 explicação breve logo abaixo
+- **Uma lacuna por card Cloze:** use no MÁXIMO 1 lacuna {{ }} por card. Se a frase tem dois fatos a testar (ex.: uma regra E um prazo), faça dois cards, cada um com uma lacuna
+- **Âncora para fatos áridos:** para PRAZOS, PERCENTUAIS e DATAS, inclua no verso 1 âncora concreta de 1 linha — um micro-exemplo datado (ex.: "FG em 2020 → decai em 31/12/2025") ou um contraste curto com o instituto vizinho (decadência = constituir / prescrição = cobrar). Só quando houver gancho natural; não invente mnemônico artificial
 - **Q&A**: frente cirúrgica, verso começando pela resposta curta. Depois, se necessário, acrescente 1 explicação breve. Não use "Segundo o STF..." se isso entrega a resposta
 - Use perguntas COMPARATIVAS quando o erro envolver troca de conceitos
 - NUNCA crie cards genéricos sobre o assunto. Cada card deve ter relação direta com o motivo do erro
@@ -1208,9 +1303,9 @@ Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos
 ### Regras de formatação:
 - Em cards Cloze: use <mark> na lacuna assim: <mark>{{rotulo_generico}}</mark> para destacar visualmente a informação oculta
 - No verso, prefira a estrutura: <div class="answer-line">resposta curta</div> + <div class="explanation">explicação breve</div>
-- Use <b> em TODA menção a conceitos jurídicos importantes no verso
-- Use <span class="neg"> SEMPRE que houver negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto")
-- Use <mark> com moderação (1-3 palavras por card) apenas nas palavras que são o NÚCLEO da distinção
+- **ORÇAMENTO DE DESTAQUE (evite poluição visual):** no MÁXIMO 1 <mark> por card — exatamente na palavra que fecha a lacuna do erro identificado; no MÁXIMO 2-3 <b> por card (só os conceitos centrais); <span class="neg"> apenas na negação/exceção que é o PIVÔ do erro. Se quase tudo está destacado, nada se destaca (o realce perde a função de guiar o olho).
+- Em cards de distinção/pegadinha, o <mark> do verso deve cair na FEATURE DISCRIMINANTE (a palavra que diferencia X de Y, ou a palavra-armadilha) — não numa palavra qualquer
+- Use <span class="neg"> para negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto"), respeitando o orçamento acima
 - Na FRENTE do card, use <b> para o termo central da pergunta e <mark> para destaques pontuais
 - Listas com <ul><li> são preferíveis a texto corrido quando há 3+ itens
 - NUNCA use tags de formatação no campo palavras_chave (é plain text)
@@ -1240,7 +1335,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
     properties: {
       materia: { type: 'string', description: 'Mat\u00E9ria do edital' },
       subtopico: { type: 'string', description: 'Subt\u00F3pico espec\u00EDfico' },
-      erro_identificado: { type: 'string', description: 'Se errou: descri\u00E7\u00E3o do mecanismo do erro. Se acertou: descri\u00E7\u00E3o da pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil.' },
+      erro_identificado: { type: 'string', description: 'Se errou: descri\u00E7\u00E3o do mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de TODOS os cards (jamais afirmar o oposto do que o card ensina) e com o gabarito; nunca reproduzir uma premissa errada do relato do aluno.' },
       cards: {
         type: 'array',
         items: {
@@ -1261,6 +1356,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
   };
 
   function buildGeminiPrompt(q) {
+    const maxCards = Math.max(1, parseInt(getSetting('maxCardsPerQuestion'), 10) || 2);
     const altsText = q.alternativas.map(a => {
       let line = `${a.letra}) ${a.texto}`;
       if (a.selecionada) line += ' \u2190 ALUNO MARCOU ESTA';
@@ -1292,14 +1388,20 @@ ${altsText || 'N\u00E3o dispon\u00EDveis'}
 ### Coment\u00E1rio do Professor
 ${q.comentario || 'N\u00E3o dispon\u00EDvel'}
 ${q.pensamentoAluno ? `
-### \uD83D\uDCAD Relato do Aluno \u2014 PRIORIDADE M\u00C1XIMA
+### \uD83D\uDCAD Alvo pedag\u00F3gico do aluno (use S\u00D3 para mirar o card)
 O aluno descreveu o pr\u00F3prio racioc\u00EDnio ao responder esta quest\u00E3o:
 "${q.pensamentoAluno}"
 
-Este relato \u00E9 a fonte MAIS CONFI\u00C1VEL sobre o mecanismo REAL do erro/d\u00FAvida \u2014 mais confi\u00E1vel que qualquer hip\u00F3tese sua e que o foco do coment\u00E1rio do professor. Os cards DEVEM atacar diretamente a d\u00FAvida/confus\u00E3o descrita pelo aluno. Se o relato revelar uma confus\u00E3o diferente da que voc\u00EA deduziria sozinho, siga o relato.
+COMO USAR ESTE RELATO:
+- Ele \u00E9 a melhor fonte sobre QUAL foi a d\u00FAvida/erro do aluno \u2014 use-o para DIRECIONAR o card ao ponto exato que o derrubou.
+- Ele N\u00C3O \u00E9 fonte de doutrina. O aluno \u00E9 quem errou; o relato pode conter a premissa jur\u00EDdica equivocada que causou o erro.
+- A CORRE\u00C7\u00C3O do conte\u00FAdo vem SEMPRE do coment\u00E1rio do professor + gabarito oficial, que PREVALECEM sobre qualquer afirma\u00E7\u00E3o jur\u00EDdica do relato.
+- Se o relato contiver afirma\u00E7\u00E3o INCORRETA, o card deve CORRIGI-LA conforme o gabarito \u2014 NUNCA reproduzi-la. Se o relato j\u00E1 estiver CORRETO, confirme-o; n\u00E3o o "super-corrija".
 ` : ''}
 ---
-Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie no m\u00E1ximo 2 cards AUTOCONTIDOS, podendo combinar 1 Cloze + 1 Q&A quando isso deixar a distin\u00E7\u00E3o mais clara.`;
+\u26A0\uFE0F LIMITE DESTA QUEST\u00C3O: gere no M\u00C1XIMO ${maxCards} card(s). Este n\u00FAmero substitui qualquer limite mencionado nas instru\u00E7\u00F5es gerais. Continue respeitando o Princ\u00EDpio da Informa\u00E7\u00E3o M\u00EDnima \u2014 se menos cards j\u00E1 cobrirem a lacuna, gere menos; nunca invente cards s\u00F3 para atingir o limite.
+
+Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie no m\u00E1ximo ${maxCards} card(s) AUTOCONTIDOS${maxCards >= 2 ? ', podendo combinar Cloze + Q&A quando isso deixar a distin\u00E7\u00E3o mais clara' : ''}.`;
   }
 
   function normalizeKeywords(value) {
@@ -1513,7 +1615,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 {
   "materia": "string - matéria do edital",
   "subtopico": "string - subtópico específico",
-  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance",
+  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
   "cards": [
     {
       "tipo": "string - Cloze ou Q&A",
@@ -1642,7 +1744,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
 {
   "materia": "string - mat\u00E9ria do edital",
   "subtopico": "string - subt\u00F3pico espec\u00EDfico",
-  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil",
+  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
   "cards": [
     {
       "tipo": "string - Cloze ou Q&A",
@@ -1731,6 +1833,12 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 3. **Coerência com o comentário do professor:** O card contradiz o que o professor explicou?
 4. **Clareza:** A pergunta é clara e a resposta é objetiva?
 5. **Relevância:** O card ataca o ponto central (mecanismo do erro ou pegadinha)?
+6. **Coerência com o erro_identificado:** O campo "erro_identificado" bate com o que os versos ensinam? Se ele afirma o OPOSTO de um verso (ex.: diz "X e Y são distintos" enquanto o verso diz "X e Y são sinônimos", ou nega o que o verso afirma), há contradição interna.
+7. **Coerência entre cards:** Os cards são compatíveis entre si? Se um card afirma A e outro nega A, há contradição — rejeite o(s) card(s) conflitante(s).
+8. **Decadência x prescrição:** Se o tema envolver prazos, o card trata do instituto correto (decadência = prazo para lançar/constituir; prescrição = prazo para cobrar/executar)? Trocar um pelo outro é erro grave.
+9. **Frente inequívoca:** a frente tem UMA resposta correta defensável dado o contexto? Se a lacuna for ambígua (várias respostas razoáveis caberiam), o card é mal formulado — a frase precisa de mais contexto, não de rótulo mais vago.
+
+AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos). O relato do aluno serve SÓ para julgar relevância (se o card mira a dúvida certa); ele JAMAIS valida um card juridicamente incorreto.
 
 ## Critérios de REJEIÇÃO (qualquer um = REJEITADO):
 - Informação juridicamente incorreta ou desatualizada
@@ -1738,6 +1846,11 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 - Inversão de conceitos (atribuir a X o que é de Y)
 - Resposta ambígua ou genérica demais
 - Pergunta que não testa o conceito relevante
+- Contradição interna entre o verso de um card e o campo erro_identificado
+- Contradição entre dois cards do mesmo lote
+- Troca entre decadência e prescrição
+- Frente ambígua (mais de uma resposta razoável cabe na lacuna)
+- Card que reproduz uma premissa incorreta do relato do aluno em vez de corrigi-la
 
 ## Formato de resposta
 
@@ -1806,7 +1919,7 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
 {
   "materia": "string - matéria do edital",
   "subtopico": "string - subtópico específico",
-  "erro_identificado": "string - se errou: mecanismo do erro. Se acertou: pegadinha/nuance",
+  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
   "cards": [
     {
       "frente_texto_limpo": "string - pergunta em texto puro, sem HTML",
@@ -1865,6 +1978,9 @@ ${cards.map(c => `### Card ${c.index}
 **Frente:** ${c.frente}
 **Verso:** ${c.verso}`).join('\n\n')}
 
+### Campo "erro_identificado" (mecanismo do erro — DEVE ser coerente com os versos acima)
+${creatorResult.erro_identificado || 'N/A'}
+
 ---
 ## Contexto da questão
 - **Banca:** ${questionData.banca || 'N/A'}
@@ -1872,13 +1988,13 @@ ${cards.map(c => `### Card ${c.index}
 - **Gabarito:** ${questionData.gabarito || 'N/A'}
 - **Resposta do aluno:** ${questionData.respostaAluno || 'N/A'}
 
-### Comentário do Professor
+### Comentário do Professor (AUTORIDADE de correção)
 ${questionData.comentario || 'Não disponível'}${questionData.pensamentoAluno ? `
 
-### 💭 Relato do Aluno (raciocínio dele durante a questão)
+### 💭 Relato do Aluno (apenas para entender QUAL erro o card deveria atacar)
 ${questionData.pensamentoAluno}
 
-Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por esse critério.` : ''}`;
+Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele NÃO é fonte de doutrina e NÃO valida um card incorreto: um card que "ataca a dúvida do relato" mas contém erro jurídico, contradiz o gabarito, ou reproduz a premissa errada do aluno deve ser REJEITADO.` : ''}`;
   }
 
   /**
@@ -1966,7 +2082,8 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
       auditorResult = await callAuditor(filteredPayload);
     } catch (err) {
       console.warn('⚠️ Auditor falhou, aceitando todos os cards:', err.message);
-      showToast('⚠️ Auditor indisponível — cards aceitos sem validação.', 'warning', 5000);
+      showToast('⚠️ Auditor indisponível — cards aceitos sem validação (marcados p/ revisão).', 'warning', 5000);
+      for (const c of creatorResult.cards) { c._needsReview = true; c._rejectReason = 'Auditor indisponível — não validado'; }
       return creatorResult;
     }
     if (auditorResult._usage) totalCost += trackPipelineCost(auditorResult._usage, getSetting('auditorModel'));
@@ -1984,13 +2101,20 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
       }
     }
 
+    // Cards approved in round 1 were audited against the creator's erro_identificado;
+    // only swap in the retry's version when ALL surviving cards come from the retry,
+    // so the final 💡 box stays coherent with the cards actually kept.
+    const round1ApprovedCount = approved.length;
+
     // ── Retry rejected cards once ──
+    let retryErroIdentificado = null;
     if (rejected.length > 0) {
       onStatus(`🔄 Regenerando ${rejected.length} card(s) rejeitado(s)...`);
       const feedback = rejected.map((r, i) => `Card ${i + 1}: ${r.justificativa}`).join('\n');
 
       try {
         const retryResult = await callCreator(questionData, feedback);
+        if (retryResult.erro_identificado) retryErroIdentificado = retryResult.erro_identificado;
         if (retryResult._usage) totalCost += trackPipelineCost(retryResult._usage, getSetting('creatorModel'));
 
         // Re-audit the retried cards
@@ -2001,7 +2125,8 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
           retryAudit = await callAuditor(retryFiltered);
           if (retryAudit._usage) totalCost += trackPipelineCost(retryAudit._usage, getSetting('auditorModel'));
         } catch {
-          // If re-audit fails, accept retried cards
+          // If re-audit fails, accept retried cards (flagged for manual review)
+          for (const c of retryResult.cards) { c._needsReview = true; c._rejectReason = 'Re-auditoria indisponível — não validado'; }
           approved.push(...retryResult.cards);
           retryAudit = null;
         }
@@ -2033,7 +2158,7 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
     const finalResult = {
       materia: creatorResult.materia,
       subtopico: creatorResult.subtopico,
-      erro_identificado: creatorResult.erro_identificado,
+      erro_identificado: (round1ApprovedCount === 0 && retryErroIdentificado) ? retryErroIdentificado : creatorResult.erro_identificado,
       cards: approved,
       _pipelineCost: totalCost,
       _creatorModel: getSetting('creatorModel'),
@@ -2119,6 +2244,8 @@ Os cards devem atacar a dúvida descrita nesse relato — avalie-os também por 
 .erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
   font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
 hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
+.cloze { font-weight: 800; color: #fbbf24; }
+.cloze-hint { color: #fbbf24; font-style: italic; }
 /* Modo claro */
 .card.night_mode_off, :root[class*="light"] .card {
   color: #1f2937; background: #ffffff;
@@ -2138,6 +2265,8 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 :root[class*="light"] .contexto { color: #6b7280; border-bottom-color: #e5e7eb; }
 :root[class*="light"] .fonte { color: #9ca3af; }
 :root[class*="light"] .erro { background: #fff3cd; color: #856404; border-left-color: #856404; }
+:root[class*="light"] .cloze { color: #b45309; }
+:root[class*="light"] .cloze-hint { color: #b45309; }
 :root[class*="light"] hr { border-top-color: #dee2e6; }`;
   }
 
@@ -2156,6 +2285,107 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 <div class="fonte">{{Fonte}}</div>
 </div>`,
     };
+  }
+
+  /** Name of the native-Cloze companion note type (derived from the Basic one). */
+  function getClozeModelName() {
+    return `${getSetting('ankiModelName')} Cloze`;
+  }
+
+  /** Native Anki Cloze template: {{cloze:Text}} on both sides + extras on the back. */
+  function getAnkiClozeTemplate() {
+    return {
+      Name: 'Cloze',
+      Front: '<div class="card"><div class="contexto">{{Contexto}}</div><div class="frente">{{cloze:Text}}</div></div>',
+      Back: `<div class="card">
+<div class="contexto">{{Contexto}}</div>
+<div class="frente">{{cloze:Text}}</div>
+{{#BackExtra}}<hr><div class="verso">{{BackExtra}}</div>{{/BackExtra}}
+{{#PalavrasChave}}<div class="palavras-chave">{{PalavrasChave}}</div>{{/PalavrasChave}}
+{{#ErroIdentificado}}<div class="erro">💡 {{ErroIdentificado}}</div>{{/ErroIdentificado}}
+{{#Modelo}}<div class="modelo">🤖 {{Modelo}}</div>{{/Modelo}}
+<div class="fonte">{{Fonte}}</div>
+</div>`,
+    };
+  }
+
+  /** First line of the back (the short answer), used as the native cloze answer. */
+  function extractShortAnswer(versoTextoLimpo) {
+    return stripHtml(versoTextoLimpo || '')
+      .replace(/\r/g, '')
+      .split(/\n\s*\n/)[0]
+      .split('\n')[0]
+      .trim()
+      .replace(/[.;:]+$/, '')
+      .trim();
+  }
+
+  /** Cloze syntax uses :: and {{ }} as delimiters — strip them from the answer (never legitimate there). */
+  function sanitizeClozeAnswer(answer) {
+    return (answer || '').replace(/::/g, ':').replace(/[{}]/g, '').trim();
+  }
+
+  /** Back Extra for a cloze card: keep the explanation, drop the now-redundant answer-line. */
+  function clozeBackExtra(card) {
+    const verso = card.verso_html || card.verso || '';
+    const expl = verso.match(/<div class="explanation">[\s\S]*$/);
+    if (expl) return expl[0];
+    // No explanation block: if the verso is just the answer-line, the cloze reveal suffices.
+    if (/class="answer-line"/.test(verso)) return '';
+    return verso;
+  }
+
+  /**
+   * Convert a pseudo-cloze card (statement with {{rotulo}} + separate short answer)
+   * into a native Anki cloze field. Returns { text, backExtra } or null when it
+   * can't (no placeholder / no answer) — caller then falls back to the Basic type.
+   */
+  function buildClozeFields(card) {
+    const frente = card.frente_html || card.frente || '';
+    if (!/\{\{[^}]+\}\}/.test(frente)) return null;
+    const answer = sanitizeClozeAnswer(extractShortAnswer(card.verso_texto_limpo || card.verso || ''));
+    if (!answer) return null;
+
+    let n = 0;
+    const text = frente.replace(/\{\{([^}]+)\}\}/g, (_, label) => {
+      n++;
+      const clean = (label || '').replace(/<[^>]+>/g, '').trim() || 'lacuna';
+      // First blank becomes the native cloze (answer revealed in context on the back).
+      if (n === 1) return `{{c1::${answer}::${clean}}}`;
+      // Extra blanks (should be rare — prompt enforces 1/card): show as a plain hint, no extra card.
+      return `<span class="cloze-hint">[${clean}]</span>`;
+    });
+
+    // Drop a <mark> wrapping the cloze itself — the native .cloze styling already highlights it
+    // (and yellow <mark> bg + gold cloze text would clash).
+    const cleanText = text.replace(/<mark>\s*(\{\{c1::[\s\S]*?\}\})\s*<\/mark>/g, '$1');
+
+    return { text: cleanText, backExtra: clozeBackExtra(card) };
+  }
+
+  /** Ensure the native-Cloze note type exists (create or refresh template/css). */
+  async function ensureAnkiClozeModel() {
+    const modelName = getClozeModelName();
+    const models = await ankiInvoke('modelNames');
+    const tpl = getAnkiClozeTemplate();
+    const css = getAnkiModelCss();
+    if (models.includes(modelName)) {
+      try {
+        await ankiInvoke('updateModelStyling', { model: { name: modelName, css } });
+        await ankiInvoke('updateModelTemplates', {
+          model: { name: modelName, templates: { [tpl.Name]: { Front: tpl.Front, Back: tpl.Back } } },
+        });
+      } catch (e) { console.warn('[TEC→Anki] Não foi possível atualizar o modelo Cloze:', e); }
+      return;
+    }
+    await ankiInvoke('createModel', {
+      modelName,
+      inOrderFields: ['Text', 'BackExtra', 'PalavrasChave', 'Contexto', 'Fonte', 'ErroIdentificado', 'Modelo'],
+      css,
+      isCloze: true,
+      cardTemplates: [tpl],
+    });
+    console.log(`[TEC→Anki] Note type Cloze nativo criado: ${modelName}`);
   }
 
   async function ensureAnkiModel() {
@@ -2221,7 +2451,16 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       ? `${prefix}::${sanitizePath(materia)}::${sanitizePath(subtopico)}`
       : `${prefix}::${sanitizePath(materia)}`;
 
+    const clozeModelName = getClozeModelName();
     await ensureAnkiModel();
+
+    // Decide per card whether it becomes a native cloze; build payloads up front
+    // so we only ensure the Cloze note type when it's actually used.
+    const cardsToInsert = aiResult.cards.map(card => ({
+      card,
+      cloze: card.tipo === 'Cloze' ? buildClozeFields(card) : null,
+    }));
+    if (cardsToInsert.some(c => c.cloze)) await ensureAnkiClozeModel();
     await ensureAnkiDeck(deckName);
 
     const tags = [
@@ -2237,29 +2476,42 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       : questionData.url;
     const contexto = `${materia}${subtopico ? ' \u203A ' + subtopico : ''}`;
 
-    const notes = aiResult.cards.map(card => {
+    const modeloStr = (() => {
+      if (aiResult._creatorModel) {
+        const creator = aiResult._creatorModel.split('/').pop();
+        const auditor = (aiResult._auditorModel || '').split('/').pop();
+        return auditor ? `${creator} → ${auditor}` : creator;
+      }
+      return (aiResult._generatorModel || '').split('/').pop();
+    })();
+    const palavrasChaveHtml = (card) => (card.palavras_chave || '')
+      .split(/\s*\|\s*/).filter(Boolean).map(kw => `<span class="kw">${kw.trim()}</span>`).join(' ');
+
+    const notes = cardsToInsert.map(({ card, cloze }) => {
       const cardTags = [...tags];
       if (card._needsReview) cardTags.push('revisar');
       if (getSetting('pipelineMode') === 'dual') cardTags.push('dual-pipeline');
+      if (cloze) cardTags.push('cloze-nativo');
+      const common = {
+        PalavrasChave: palavrasChaveHtml(card),
+        Contexto: contexto,
+        Fonte: fonte,
+        ErroIdentificado: aiResult.erro_identificado || '',
+        Modelo: modeloStr,
+      };
+      if (cloze) {
+        return {
+          deckName,
+          modelName: clozeModelName,
+          fields: { Text: cloze.text, BackExtra: cloze.backExtra, ...common },
+          tags: cardTags,
+          options: { allowDuplicate: false, duplicateScope: 'deck' },
+        };
+      }
       return {
         deckName,
         modelName,
-        fields: {
-          Frente: card.frente_html || card.frente,
-          Verso: card.verso_html || card.verso,
-          PalavrasChave: (card.palavras_chave || '').split(/\s*\|\s*/).filter(Boolean).map(kw => `<span class="kw">${kw.trim()}</span>`).join(' '),
-          Contexto: contexto,
-          Fonte: fonte,
-          ErroIdentificado: aiResult.erro_identificado || '',
-          Modelo: (() => {
-            if (aiResult._creatorModel) {
-              const creator = aiResult._creatorModel.split('/').pop();
-              const auditor = (aiResult._auditorModel || '').split('/').pop();
-              return auditor ? `${creator} → ${auditor}` : creator;
-            }
-            return (aiResult._generatorModel || '').split('/').pop();
-          })(),
-        },
+        fields: { Frente: card.frente_html || card.frente, Verso: card.verso_html || card.verso, ...common },
         tags: cardTags,
         options: { allowDuplicate: false, duplicateScope: 'deck' },
       };
@@ -2509,10 +2761,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             ${dupWarning}
             <p style="margin:0 0 10px;font-size:13px;color:#555;line-height:1.5;">
               Descreva o que você pensou ao responder: em que você ficou em dúvida, o que confundiu, por que marcou ${questionData.respostaAluno || 'sua resposta'}.
-              A IA vai usar isso como <b>fonte principal</b> para o card atacar sua dúvida real.
+              A IA usa isso para entender <b>o que</b> você errou e mirar o card na sua dúvida real. A correção do conteúdo vem sempre do gabarito e do comentário do professor.
             </p>
             <textarea class="tec-thoughts-textarea" id="tec-thoughts-input"
-              placeholder="Ex: achei que a anterioridade também valia para alteração de prazo de pagamento... fiquei entre A e C e chutei."></textarea>
+              placeholder="Ex: achei que a anterioridade também valia para alteração de prazo de pagamento... fiquei entre A e C e chutei.">${(questionData.pensamentoAluno || getStoredThought(questionData.id) || '').replace(/</g, '&lt;')}</textarea>
             <div style="margin-top:6px;font-size:11px;color:#999;">Ctrl+Enter gera os cards · Esc pula</div>
           </div>
           <div class="tec-modal-footer">
@@ -2553,14 +2805,20 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       const materia = questionData.materia || aiResult?.materia || '';
       const subtopico = questionData.assunto || aiResult?.subtopico || '';
 
-      const cardsHTML = (aiResult?.cards || []).map((c, i) => `
-        <div class="tec-card-preview">
-          <div class="card-num">Card ${i + 1}</div>
+      const cardItemHTML = (c, i) => `
+        <div class="tec-card-preview" data-card-idx="${i}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div class="card-num">Card ${i + 1}</div>
+            <button data-action="del-card" data-idx="${i}" title="Excluir este card" style="background:none;border:none;color:#ef476f;cursor:pointer;font-size:14px;padding:2px 6px;border-radius:6px;line-height:1;">\uD83D\uDDD1\uFE0F</button>
+          </div>
           <div class="card-front">\uD83D\uDD39 ${c.frente}</div>
           <div class="card-back">\uD83D\uDCA1 ${c.verso}</div>
           ${c.palavras_chave ? `<div class="card-kw" style="font-size:11px;color:#c4b5fd;margin-top:4px">\uD83D\uDD11 ${c.palavras_chave}</div>` : ''}
         </div>
-      `).join('');
+      `;
+      const renderCardsList = () => (aiResult?.cards?.length)
+        ? aiResult.cards.map(cardItemHTML).join('')
+        : '<div class="content"><em>Nenhum card \u2014 todos exclu\u00EDdos. Voc\u00EA ainda pode salvar (s\u00F3 a nota no Obsidian) ou cancelar.</em></div>';
 
       overlay.innerHTML = `
         <div class="tec-modal">
@@ -2589,8 +2847,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             </div>
 
             <div class="tec-section">
-              <h3>\uD83D\uDCDD Flashcards Gerados (${aiResult?.cards?.length || 0})</h3>
-              ${cardsHTML || '<div class="content"><em>Nenhum card gerado</em></div>'}
+              <h3>\uD83D\uDCDD Flashcards Gerados (<span id="tec-preview-cards-count">${aiResult?.cards?.length || 0}</span>)</h3>
+              <div id="tec-preview-cards-list">${renderCardsList()}</div>
             </div>
 
             <div class="tec-section">
@@ -2619,7 +2877,19 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       };
 
       overlay.addEventListener('click', (e) => {
-        const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
+        const trigger = e.target.closest('[data-action]');
+        const action = trigger?.dataset.action;
+        if (action === 'del-card') {
+          const idx = parseInt(trigger.dataset.idx, 10);
+          if (!isNaN(idx) && aiResult?.cards) {
+            aiResult.cards.splice(idx, 1);
+            const list = overlay.querySelector('#tec-preview-cards-list');
+            const count = overlay.querySelector('#tec-preview-cards-count');
+            if (list) list.innerHTML = renderCardsList();
+            if (count) count.textContent = aiResult.cards.length;
+          }
+          return;
+        }
         if (action === 'close' || action === 'cancel') finish('cancel');
         else if (action === 'save') finish('save');
         else if (action === 'regen') finish('regen');
@@ -2664,7 +2934,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               </div>
             </div>
             <div class="item-thoughts">
-              <textarea data-idx="${idx}" placeholder="💭 Seu raciocínio nesta questão (opcional — a IA usa como fonte principal do erro)"></textarea>
+              <textarea data-idx="${idx}" placeholder="💭 Seu raciocínio nesta questão (opcional — a IA usa para entender o que você errou e mirar o card)">${(q.pensamentoAluno || '').replace(/</g, '&lt;')}</textarea>
             </div>
           </div>
         `;
@@ -2709,7 +2979,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         .filter(({ idx }) => checkboxes[idx].checked)
         .map(({ item, idx }) => {
           const thoughts = overlay.querySelector(`textarea[data-idx="${idx}"]`)?.value.trim();
-          if (thoughts) item.questionData.pensamentoAluno = thoughts;
+          if (thoughts) {
+            item.questionData.pensamentoAluno = thoughts;
+            setStoredThought(item.questionData.id, thoughts);
+          }
           return item.questionData;
         });
 
@@ -2965,6 +3238,13 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <label class="tec-toggle"><input type="checkbox" id="tec-cfg-ask-thoughts" ${getSetting('askThoughts') ? 'checked' : ''}> Perguntar meu raciocínio antes de gerar cards</label>
           </div>
           <div class="tec-field">
+            <label>Máximo de cards por questão</label>
+            <select id="tec-cfg-max-cards">
+              ${[1, 2, 3, 4, 5].map(n => '<option value="' + n + '"' + (parseInt(getSetting('maxCardsPerQuestion'), 10) === n ? ' selected' : '') + '>' + n + (n === 1 ? ' card' : ' cards') + (n === 2 ? ' (padrão)' : '') + '</option>').join('')}
+            </select>
+            <small style="color:#888;font-size:11px">A IA gera até esse número — menos se o erro for simples (Wozniak).</small>
+          </div>
+          <div class="tec-field">
             <label class="tec-toggle"><input type="checkbox" id="tec-cfg-enable-anki" ${getSetting('enableAnki') ? 'checked' : ''}> Salvar no Anki</label>
           </div>
           <div class="tec-field">
@@ -3042,6 +3322,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         setSetting('ankiModelName', overlay.querySelector('#tec-cfg-anki-model').value || 'TEC Concursos');
         setSetting('showPreview', overlay.querySelector('#tec-cfg-preview').checked);
         setSetting('askThoughts', overlay.querySelector('#tec-cfg-ask-thoughts').checked);
+        setSetting('maxCardsPerQuestion', parseInt(overlay.querySelector('#tec-cfg-max-cards').value, 10) || 2);
         setSetting('enableAnki', overlay.querySelector('#tec-cfg-enable-anki').checked);
         setSetting('enableObsidian', overlay.querySelector('#tec-cfg-enable-obs').checked);
         showToast('Configura\u00E7\u00F5es salvas!', 'success');
@@ -3083,6 +3364,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       <button class="tec-btn-batch" id="tec-btn-batch" title="Processar todos os erros do caderno">
         \uD83D\uDCCB Erros
       </button>
+      <button class="tec-btn-icon" id="tec-btn-thought" title="Anotar/editar meu racioc\u00EDnio nesta quest\u00E3o">\uD83D\uDCAD</button>
       <button class="tec-btn-icon" id="tec-btn-settings" title="Configura\u00E7\u00F5es">\u2699\uFE0F</button>
       <div class="tec-status-dot" id="tec-status-dot" title="Status das conex\u00F5es"></div>
     `;
@@ -3091,6 +3373,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
 
     document.getElementById('tec-btn-save').addEventListener('click', () => processCurrentQuestion());
     document.getElementById('tec-btn-batch').addEventListener('click', () => processBatchQuestions());
+    document.getElementById('tec-btn-thought').addEventListener('click', () => openThoughtForCurrentQuestion());
     document.getElementById('tec-btn-settings').addEventListener('click', () => showSettingsPanel());
 
     statusDot = document.getElementById('tec-status-dot');
@@ -3170,6 +3453,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       loadingToast.remove();
       loadingToast = null;
 
+      // Reuse any reasoning already captured for this question (quick-thought box)
+      const preThought = getStoredThought(questionData.id);
+      if (preThought) questionData.pensamentoAluno = preThought;
+
       // Step 1.5: Ask for the user's reasoning (the REAL reason behind the error)
       if (getSetting('askThoughts')) {
         const existingCards = await countExistingAnkiCards(questionData.id);
@@ -3178,7 +3465,10 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
           showToast('Cancelado pelo usu\u00E1rio.', 'info');
           return;
         }
-        if (pensamento) questionData.pensamentoAluno = pensamento;
+        if (pensamento) {
+          questionData.pensamentoAluno = pensamento;
+          setStoredThought(questionData.id, pensamento);
+        }
       }
 
       // Step 2+3: Generate flashcards with AI + preview, looping when the user
@@ -3214,10 +3504,12 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             } else {
               delete questionData.pensamentoAluno;
             }
+            setStoredThought(questionData.id, decision.pensamento);
             regenerate = true;
           } else if (decision.pensamento && decision.pensamento !== questionData.pensamentoAluno) {
             // User edited the reasoning but saved directly \u2014 keep it for Obsidian
             questionData.pensamentoAluno = decision.pensamento;
+            setStoredThought(questionData.id, decision.pensamento);
           }
         }
       }
@@ -3490,6 +3782,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             await delay(500);
 
             const qData = extractQuestionData();
+            const savedThought = getStoredThought(qData.id);
+            if (savedThought) qData.pensamentoAluno = savedThought;
             if (qData.enunciado || qData.id) {
               collected.push(qData);
             }
@@ -3704,6 +3998,122 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   }
 
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+  // \u2551          15b. QUICK THOUGHT CAPTURE (auto ao errar)          \u2551
+  // \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d
+
+  let _quickThoughtLastId = null; // last question id we surfaced the box for
+
+  function removeQuickThoughtBox() {
+    document.getElementById('tec-quick-thought')?.remove();
+  }
+
+  /**
+   * Floating box that lets the user note WHY they erred, right after answering.
+   * The text is auto-saved (debounced) keyed by question id via GM storage, so it
+   * is already attached to the question when cards are later generated.
+   */
+  function showQuickThoughtBox(questionId) {
+    if (!questionId) return;
+    const existing = document.getElementById('tec-quick-thought');
+    if (existing) {
+      if (existing.dataset.qid === String(questionId)) return; // already open
+      existing.remove();
+    }
+
+    const box = document.createElement('div');
+    box.id = 'tec-quick-thought';
+    box.dataset.qid = String(questionId);
+    box.innerHTML = `
+      <div class="qt-header">
+        <span>\ud83d\udcad Por que voc\u00ea errou? <span class="qt-qid">#${questionId}</span></span>
+        <button class="qt-close" data-act="close" title="Fechar">\u00d7</button>
+      </div>
+      <textarea placeholder="Anote agora o motivo do erro \u2014 fica salvo nesta quest\u00e3o e ajuda a IA a mirar o card no que voc\u00ea errou."></textarea>
+      <div class="qt-footer">
+        <span class="qt-saved">\u2713 salvo</span>
+        <div class="qt-btns">
+          <button class="qt-act qt-skip" data-act="close">Pular</button>
+          <button class="qt-act qt-save" data-act="save">\ud83d\udcbe Salvar</button>
+        </div>
+      </div>
+    `;
+
+    const textarea = box.querySelector('textarea');
+    textarea.value = getStoredThought(questionId);
+    const savedFlag = box.querySelector('.qt-saved');
+
+    let hideTimer = null;
+    const flashSaved = () => {
+      savedFlag.classList.add('show');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => savedFlag.classList.remove('show'), 1200);
+    };
+
+    let debounce = null;
+    textarea.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => { setStoredThought(questionId, textarea.value); flashSaved(); }, 500);
+    });
+
+    box.addEventListener('click', (e) => {
+      const act = e.target.dataset.act;
+      if (act === 'save') {
+        setStoredThought(questionId, textarea.value);
+        flashSaved();
+        setTimeout(removeQuickThoughtBox, 400);
+      } else if (act === 'close') {
+        setStoredThought(questionId, textarea.value); // persist whatever was typed
+        removeQuickThoughtBox();
+      }
+    });
+
+    document.body.appendChild(box);
+  }
+
+  /**
+   * Poll the Angular scope; when the current question was just answered WRONG,
+   * surface the quick-thought box once. Skipped during single/batch processing.
+   */
+  function checkForWrongAnswer() {
+    if (batchRunning || isProcessing) return;
+
+    const { vm } = getAngularVm();
+    const q = vm?.questao;
+    const box = document.getElementById('tec-quick-thought');
+
+    if (!q || !q.idQuestao) return;
+    const id = String(q.idQuestao);
+
+    // Navigated to another question \u2192 drop a stale box (text already auto-saved)
+    if (box && box.dataset.qid !== id) removeQuickThoughtBox();
+
+    const answeredWrong = q.correcaoQuestao === false && q.alternativaSelecionada > 0;
+    if (!answeredWrong) {
+      if (_quickThoughtLastId && _quickThoughtLastId !== id) _quickThoughtLastId = null;
+      return;
+    }
+
+    if (id === _quickThoughtLastId) return; // already surfaced for this wrong answer
+    _quickThoughtLastId = id;
+    showQuickThoughtBox(id);
+  }
+
+  /**
+   * Toolbar 💭 action: (re)open the quick-thought box for the current question,
+   * so the user can edit a reasoning they already saved (or add one anytime).
+   */
+  function openThoughtForCurrentQuestion() {
+    const { vm } = getAngularVm();
+    const id = vm?.questao?.idQuestao
+      ? String(vm.questao.idQuestao)
+      : (document.body.innerText.match(/#(\d{5,})/)?.[1] || null);
+    if (!id) { showToast('Não consegui identificar a questão atual.', 'warning'); return; }
+    _quickThoughtLastId = id; // keep the auto-watcher from re-opening a duplicate
+    showQuickThoughtBox(id);
+    setTimeout(() => document.querySelector('#tec-quick-thought textarea')?.focus(), 60);
+  }
+
+  // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                  16. INITIALIZATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
@@ -3721,7 +4131,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     injectToolbar();
 
     // Log init
-    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.0.0 carregado em:', window.location.href);
+    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.5.0 carregado em:', window.location.href);
 
     // Show confirmation toast on load
     showToast('TEC\u2192Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB', 'success', 4000);
@@ -3729,6 +4139,9 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     // Check connections periodically (every 2 min)
     updateStatusDot();
     setInterval(updateStatusDot, 120000);
+
+    // Watch for wrong answers → surface the quick-thought box on the spot
+    setInterval(checkForWrongAnswer, 1500);
 
     // Re-inject toolbar on SPA navigation (AngularJS) — debounced
     let _reinjectTimer = null;
