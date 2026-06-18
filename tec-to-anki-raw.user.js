@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.5.0
+// @version      1.6.0
 // @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo do Anki, anti-ambiguidade da frente, orçamento de destaque) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -2458,7 +2458,10 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
     // so we only ensure the Cloze note type when it's actually used.
     const cardsToInsert = aiResult.cards.map(card => ({
       card,
-      cloze: card.tipo === 'Cloze' ? buildClozeFields(card) : null,
+      // Detect cloze by the actual {{...}} placeholder, NOT card.tipo: the dual
+      // pipeline (callCreator) never sets tipo, so relying on it skipped native cloze.
+      // buildClozeFields returns null when there's no placeholder → falls back to Basic.
+      cloze: buildClozeFields(card),
     }));
     if (cardsToInsert.some(c => c.cloze)) await ensureAnkiClozeModel();
     await ensureAnkiDeck(deckName);
@@ -2469,6 +2472,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       questionData.ano || '',
       slugify(materia),
       questionData.errou ? 'erro' : 'acerto',
+      `criado::${todayISO()}`, // data de criação do card (tag hierárquica)
     ].filter(Boolean);
 
     const fonte = questionData.id
@@ -4131,7 +4135,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     injectToolbar();
 
     // Log init
-    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.5.0 carregado em:', window.location.href);
+    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.6.0 carregado em:', window.location.href);
 
     // Show confirmation toast on load
     showToast('TEC\u2192Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB', 'success', 4000);
