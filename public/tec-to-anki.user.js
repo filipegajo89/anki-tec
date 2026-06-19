@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.6.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo do Anki, anti-ambiguidade da frente, orçamento de destaque) e salva no Anki + Obsidian
+// @version      1.7.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo com travas anti-contaminação, answer-line legível) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -1274,6 +1274,7 @@ Identifique com precisão:
 - O card precisa ser AUTOCONTIDO: quem o lê deve entender o erro e a distinção sem voltar à questão
 - **Tipo**: indique no campo "tipo" se é "Cloze" ou "Q&A". Você pode combinar 1 Cloze + 1 Q&A quando isso ensinar melhor
 - **Cloze**: use {{rotulo_generico}} para marcar a informação oculta; nunca coloque a resposta dentro das chaves. O verso deve começar pela resposta curta e pode trazer 1 explicação breve logo abaixo
+- **Cloze — a resposta PREENCHE a lacuna (crítico):** no Anki a lacuna {{ }} da frente é substituída pela RESPOSTA CURTA (a primeira linha do verso). Logo: (a) a resposta tem que ser um TERMO/EXPRESSÃO CURTA, NUNCA uma frase ou explicação — senão a lacuna fica preenchida com um parágrafo inteiro e a frase do card vira um amontoado ilegível; (b) ao preencher mentalmente a lacuna com a resposta, a frente deve formar UMA frase coerente, sem duplicar conteúdo; (c) a frente NÃO pode conter a resposta fora da lacuna (vazamento). A explicação/contraste vai SEMPRE depois, na explanation — nunca dentro da lacuna nem como a "resposta curta"
 - **Uma lacuna por card Cloze:** use no MÁXIMO 1 lacuna {{ }} por card. Se a frase tem dois fatos a testar (ex.: uma regra E um prazo), faça dois cards, cada um com uma lacuna
 - **Âncora para fatos áridos:** para PRAZOS, PERCENTUAIS e DATAS, inclua no verso 1 âncora concreta de 1 linha — um micro-exemplo datado (ex.: "FG em 2020 → decai em 31/12/2025") ou um contraste curto com o instituto vizinho (decadência = constituir / prescrição = cobrar). Só quando houver gancho natural; não invente mnemônico artificial
 - **Q&A**: frente cirúrgica, verso começando pela resposta curta. Depois, se necessário, acrescente 1 explicação breve. Não use "Segundo o STF..." se isso entrega a resposta
@@ -1302,7 +1303,7 @@ Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos
 
 ### Regras de formatação:
 - Em cards Cloze: use <mark> na lacuna assim: <mark>{{rotulo_generico}}</mark> para destacar visualmente a informação oculta
-- No verso, prefira a estrutura: <div class="answer-line">resposta curta</div> + <div class="explanation">explicação breve</div>
+- No verso, use SEMPRE a estrutura: <div class="answer-line">RESPOSTA CURTA</div> + <div class="explanation">explicação</div>. A answer-line é SÓ a resposta direta/termo — NO MÁXIMO uma oração curta (≈ até 12 palavras). NUNCA jogue o contraste/explicação inteiro na answer-line (senão vira um bloco enorme e ilegível). Para distinções, a answer-line traz só a conclusão curta; o detalhe vai na explanation, com <mark>/<b> nas palavras discriminantes
 - **ORÇAMENTO DE DESTAQUE (evite poluição visual):** no MÁXIMO 1 <mark> por card — exatamente na palavra que fecha a lacuna do erro identificado; no MÁXIMO 2-3 <b> por card (só os conceitos centrais); <span class="neg"> apenas na negação/exceção que é o PIVÔ do erro. Se quase tudo está destacado, nada se destaca (o realce perde a função de guiar o olho).
 - Em cards de distinção/pegadinha, o <mark> do verso deve cair na FEATURE DISCRIMINANTE (a palavra que diferencia X de Y, ou a palavra-armadilha) — não numa palavra qualquer
 - Use <span class="neg"> para negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto"), respeitando o orçamento acima
@@ -1837,6 +1838,8 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 7. **Coerência entre cards:** Os cards são compatíveis entre si? Se um card afirma A e outro nega A, há contradição — rejeite o(s) card(s) conflitante(s).
 8. **Decadência x prescrição:** Se o tema envolver prazos, o card trata do instituto correto (decadência = prazo para lançar/constituir; prescrição = prazo para cobrar/executar)? Trocar um pelo outro é erro grave.
 9. **Frente inequívoca:** a frente tem UMA resposta correta defensável dado o contexto? Se a lacuna for ambígua (várias respostas razoáveis caberiam), o card é mal formulado — a frase precisa de mais contexto, não de rótulo mais vago.
+10. **Cloze bem formado (crítico):** se a frente tem lacuna {{...}}, a RESPOSTA é a primeira linha do verso e ela PREENCHERÁ a lacuna no Anki. Verifique: (a) a resposta é um TERMO/EXPRESSÃO CURTA — NÃO uma frase, explicação ou parágrafo; (b) preenchendo a lacuna com a resposta, a frente forma UMA frase coerente, sem duplicar conteúdo; (c) a frente NÃO contém a resposta fora da lacuna (vazamento). Se a "resposta curta" for, na verdade, uma frase longa/explicação, ou se preencher a lacuna deixaria a frase embaralhada, REJEITE.
+11. **answer-line curta:** a primeira linha do verso (answer-line) deve ser a resposta direta/termo, não o contraste/explicação inteiro. Se a answer-line for um parágrafo, REJEITE.
 
 AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos). O relato do aluno serve SÓ para julgar relevância (se o card mira a dúvida certa); ele JAMAIS valida um card juridicamente incorreto.
 
@@ -1850,6 +1853,9 @@ AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos).
 - Contradição entre dois cards do mesmo lote
 - Troca entre decadência e prescrição
 - Frente ambígua (mais de uma resposta razoável cabe na lacuna)
+- Cloze cuja resposta (1ª linha do verso) é uma frase/explicação longa em vez de um termo curto
+- Cloze cuja frente revela a resposta fora da lacuna (vazamento)
+- answer-line com o contraste/explicação inteiro em vez da resposta curta
 - Card que reproduz uma premissa incorreta do relato do aluno em vez de corrigi-la
 
 ## Formato de resposta
@@ -2218,8 +2224,8 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
 .frente b { color: #60a5fa; }
 .frente mark { background: #fde047; color: #111827; padding: 1px 4px; border-radius: 3px; }
 .verso { font-size: 1.02em; color: #d4d4d4; margin-top: 4px; }
-.answer-line { font-size: 1.3em; font-weight: 800; color: #fca5a5; margin: 0 0 12px; }
-.answer-line b, .answer-line .neg { color: inherit; }
+.answer-line { font-size: 1.12em; font-weight: 700; color: #f3f4f6; margin: 0 0 10px; }
+.answer-line mark { font-weight: 800; }
 .explanation { color: #e5e7eb; line-height: 1.75; }
 .explanation-block + .explanation-block { margin-top: 10px; }
 .verso b { color: #93c5fd; font-weight: 700; }
@@ -2254,7 +2260,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 :root[class*="light"] .frente b { color: #1d4ed8; }
 :root[class*="light"] .frente mark { background: #fde047; color: #111827; }
 :root[class*="light"] .verso { color: #1f2937; }
-:root[class*="light"] .answer-line { color: #b42318; }
+:root[class*="light"] .answer-line { color: #111827; }
 :root[class*="light"] .explanation { color: #111827; }
 :root[class*="light"] .verso b { color: #1d4ed8; }
 :root[class*="light"] .verso .neg { color: #b42318; }
@@ -2325,26 +2331,60 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
     return (answer || '').replace(/::/g, ':').replace(/[{}]/g, '').trim();
   }
 
-  /** Back Extra for a cloze card: keep the explanation, drop the now-redundant answer-line. */
+  /**
+   * The short term that fills the cloze blank. Prefer the answer-line content, fall
+   * back to the first line of plain text, and keep ONLY the first sentence/clause —
+   * the cloze answer must be a term, never an explanation paragraph.
+   */
+  function clozeAnswerFromCard(card) {
+    const verso = card.verso_html || card.verso || '';
+    const al = verso.match(/<div class="answer-line">([\s\S]*?)<\/div>/i);
+    let ans = al ? stripHtml(al[1]) : extractShortAnswer(card.verso_texto_limpo || card.verso || '');
+    ans = (ans || '').replace(/\s+/g, ' ').trim();
+    // Keep only the first sentence/clause (drop anything after ". ", "; " or ": ").
+    ans = ans.split(/(?:\.\s|;\s|:\s)/)[0].trim().replace(/[.,;:]+$/, '').trim();
+    return ans;
+  }
+
+  /** Back Extra for a cloze card: explanation, plus any tail the answer-line carried beyond the answer. */
   function clozeBackExtra(card) {
     const verso = card.verso_html || card.verso || '';
-    const expl = verso.match(/<div class="explanation">[\s\S]*$/);
+    const expl = verso.match(/<div class="explanation">[\s\S]*$/i);
     if (expl) return expl[0];
-    // No explanation block: if the verso is just the answer-line, the cloze reveal suffices.
-    if (/class="answer-line"/.test(verso)) return '';
+    // No explanation block. Keep any detail the answer-line had beyond the first
+    // sentence (the cloze answer); otherwise nothing — the reveal shows it in context.
+    const al = verso.match(/<div class="answer-line">([\s\S]*?)<\/div>/i);
+    if (al) {
+      const tail = stripHtml(al[1]).replace(/\s+/g, ' ').trim()
+        .split(/(?:\.\s|;\s)/).slice(1).join('. ').trim();
+      return tail ? `<div class="explanation">${tail}</div>` : '';
+    }
     return verso;
   }
 
   /**
    * Convert a pseudo-cloze card (statement with {{rotulo}} + separate short answer)
    * into a native Anki cloze field. Returns { text, backExtra } or null when it
-   * can't (no placeholder / no answer) — caller then falls back to the Basic type.
+   * can't / shouldn't (no placeholder, no answer, or a malformed/leaky answer) —
+   * caller then falls back to the Basic type and flags the card for review.
    */
   function buildClozeFields(card) {
     const frente = card.frente_html || card.frente || '';
     if (!/\{\{[^}]+\}\}/.test(frente)) return null;
-    const answer = sanitizeClozeAnswer(extractShortAnswer(card.verso_texto_limpo || card.verso || ''));
+    const answer = sanitizeClozeAnswer(clozeAnswerFromCard(card));
     if (!answer) return null;
+
+    // ── Travas anti-contaminação ──
+    // 1. A resposta tem que ser um TERMO CURTO. Se vier longa (explicação inteira),
+    //    não gera cloze (cai no Básico) para nunca produzir um card embaralhado.
+    const wordCount = answer.split(/\s+/).filter(Boolean).length;
+    if (answer.length > 80 || wordCount > 12) return null;
+    // 2. Vazamento: se a frente (fora da lacuna) já contém a resposta, o cloze
+    //    estaria estragado (resposta visível na frente). Não gera.
+    if (answer.length >= 6) {
+      const frenteSemLacuna = stripHtml(frente.replace(/\{\{[^}]+\}\}/g, ' ')).toLowerCase();
+      if (frenteSemLacuna.includes(answer.toLowerCase())) return null;
+    }
 
     let n = 0;
     const text = frente.replace(/\{\{([^}]+)\}\}/g, (_, label) => {
@@ -2456,13 +2496,18 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 
     // Decide per card whether it becomes a native cloze; build payloads up front
     // so we only ensure the Cloze note type when it's actually used.
-    const cardsToInsert = aiResult.cards.map(card => ({
-      card,
-      // Detect cloze by the actual {{...}} placeholder, NOT card.tipo: the dual
-      // pipeline (callCreator) never sets tipo, so relying on it skipped native cloze.
-      // buildClozeFields returns null when there's no placeholder → falls back to Basic.
-      cloze: buildClozeFields(card),
-    }));
+    const cardsToInsert = aiResult.cards.map(card => {
+      // Detect cloze by the actual {{...}} placeholder, NOT card.tipo (the dual
+      // pipeline never sets tipo). buildClozeFields returns null when there's no
+      // placeholder, or when the answer is malformed/leaky (trava) → Basic fallback.
+      const cloze = buildClozeFields(card);
+      const looksCloze = /\{\{[^}]+\}\}/.test(card.frente_html || card.frente || '');
+      if (looksCloze && !cloze) {
+        card._needsReview = true;
+        card._rejectReason = card._rejectReason || 'Cloze malformado (resposta longa ou vazada) — salvo como Básico para revisão';
+      }
+      return { card, cloze };
+    });
     if (cardsToInsert.some(c => c.cloze)) await ensureAnkiClozeModel();
     await ensureAnkiDeck(deckName);
 
@@ -4135,7 +4180,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     injectToolbar();
 
     // Log init
-    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.6.0 carregado em:', window.location.href);
+    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.7.0 carregado em:', window.location.href);
 
     // Show confirmation toast on load
     showToast('TEC\u2192Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB', 'success', 4000);
