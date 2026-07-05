@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.7.0
+// @version      1.8.0
 // @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo com travas anti-contaminação, answer-line legível) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -9,6 +9,8 @@
 // @match        *://www.tecconcursos.com.br/*
 // @match        *://tecconcursos.com.br/*
 // @icon         https://www.tecconcursos.com.br/favicon.ico
+// @updateURL    https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js
+// @downloadURL  https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -23,6 +25,7 @@
 // @connect      api.opencode.ai
 // @connect      www.tecconcursos.com.br
 // @connect      tecconcursos.com.br
+// @connect      raw.githubusercontent.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -32,6 +35,9 @@
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+
+  const SCRIPT_VERSION = '1.8.0';
+  const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
     aiProvider: 'gemini', // 'gemini', 'openrouter' or 'opencode'
@@ -940,6 +946,87 @@
   }
 
   /**
+   * Classifica um item de histórico como resolução ('err' | 'ok') ou null.
+   * Exige marcador de data/tempo para NÃO confundir com o array de alternativas
+   * (que também tem campo `correta`).
+   */
+  function classifyResolucao(it) {
+    if (!it || typeof it !== 'object') return null;
+    // Objeto de QUESTÃO também tem correcaoQuestao + datas — não é uma resolução.
+    // Sem este filtro, o array de questões de um caderno passa como histórico.
+    if (it.idQuestao != null || (it.id != null && it.enunciado != null) || Array.isArray(it.alternativas)) return null;
+    const hasDate = ['data', 'dataResolucao', 'dataHora', 'dataDeResolucao', 'criadoEm', 'dataResposta']
+      .some(k => it[k] != null);
+    const hasTime = ['tempo', 'tempoResolucao', 'tempoGasto', 'duracao', 'tempoEmSegundos']
+      .some(k => it[k] != null);
+    if (!hasDate && !hasTime) return null;
+    for (const k of ['correcao', 'correcaoQuestao', 'acertou', 'correta', 'acerto', 'correto', 'resolvidaCorretamente']) {
+      if (typeof it[k] === 'boolean') return it[k] ? 'ok' : 'err';
+    }
+    for (const k of ['resultado', 'situacao', 'status', 'correcaoTexto']) {
+      const v = it[k];
+      if (typeof v === 'string') {
+        if (/errou|errad|incorret/i.test(v)) return 'err';
+        if (/acert|corret/i.test(v)) return 'ok';
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Lê o histórico REAL de resoluções do TEC desta questão e conta quantas
+   * vezes o aluno ERROU. É a fonte de verdade para vezes_errado — inclui a
+   * tentativa atual e erros anteriores ao próprio script.
+   * Retorna um número >= 0, ou null se não foi possível determinar com confiança.
+   */
+  function extractTecErrorCount(q, vm) {
+    // ── 1. Angular scope: procurar um array que pareça histórico de resoluções ──
+    const containers = [q, vm?.questao, vm, vm?.desempenho, vm?.estatistica, vm?.estatisticas];
+    for (const c of containers) {
+      if (!c || typeof c !== 'object') continue;
+      for (const key of Object.keys(c)) {
+        // A CHAVE precisa parecer histórico de resoluções — sem isso, qualquer
+        // array do controller (questões do caderno, comentários) vira candidato.
+        if (!/resolu|histor|tentativ|desempenho|respost/i.test(key)) continue;
+        const arr = c[key];
+        if (!Array.isArray(arr) || arr.length === 0) continue;
+        // Só confia se TODOS os itens forem classificáveis como resolução
+        // (com data/tempo) — evita falso-positivo com alternativas, tags, etc.
+        let errs = 0, allOk = true;
+        for (const it of arr) {
+          const cls = classifyResolucao(it);
+          if (!cls) { allOk = false; break; }
+          if (cls === 'err') errs++;
+        }
+        if (allOk) {
+          console.log(`📊 Histórico TEC via scope (${key}): ${errs} erro(s) em ${arr.length} resolução(ões)`);
+          return errs;
+        }
+      }
+    }
+
+    // ── 2. DOM: painel "Meu Desempenho" DESTA questão (nunca o body inteiro —
+    //    em páginas de listagem o body mistura o histórico de outras questões) ──
+    const label = [...document.querySelectorAll('h1,h2,h3,h4,h5,strong,span,div,a,button')].find(el =>
+      el.children.length === 0 && /^\s*meu\s+desempenho\s*$/i.test(el.textContent || ''));
+    if (label) {
+      let node = label.parentElement;
+      for (let i = 0; node && i < 6; i++) {
+        const txt = node.innerText || '';
+        if (/\d{2}\/\d{2}\/\d{4}\s*[-–]\s*(Errou|Acertou)/i.test(txt)) {
+          const errMatches = txt.match(/\d{2}\/\d{2}\/\d{4}\s*[-–]\s*Errou/gi) || [];
+          const okMatches = txt.match(/\d{2}\/\d{2}\/\d{4}\s*[-–]\s*Acertou/gi) || [];
+          console.log(`📊 Histórico TEC via DOM (painel): ${errMatches.length} erro(s) em ${errMatches.length + okMatches.length} resolução(ões)`);
+          return errMatches.length;
+        }
+        node = node.parentElement;
+      }
+    }
+
+    return null; // indeterminado → cai no incremento local
+  }
+
+  /**
    * Main extraction function \u2014 reads the current question.
    * Primary source: Angular scope (vm.questao) \u2014 always matches TEC exactly.
    * Fallback: DOM scraping for anything Angular doesn't provide.
@@ -1107,6 +1194,9 @@
       data.url = `https://www.tecconcursos.com.br/questoes/${data.id}`;
     }
 
+    // \u2500\u2500 9. Hist\u00F3rico REAL de erros no TEC (fonte de verdade do vezes_errado) \u2500\u2500
+    data.vezesErradoTec = extractTecErrorCount(q, vm);
+
     console.log(`\uD83D\uDCCB Dados extra\u00EDdos: Q${data.id} | ${data.materia} > ${data.assunto} | ${data.tipo}`);
     return data;
   }
@@ -1144,7 +1234,7 @@ Prefira SEMPRE este formato para regras, leis e jurisprudências. Escreva uma af
 
 #### Regra do Rótulo Genérico (obrigatório para Cloze)
 
-O texto dentro de {{ }} deve indicar APENAS a CATEGORIA da informação, NUNCA sua identidade. O aluno que lê a frente NÃO pode deduzir a resposta pelo rótulo da lacuna.
+O texto dentro de {{ }} deve indicar APENAS a CATEGORIA da informação, NUNCA sua identidade. O aluno que lê a frente NÃO pode deduzir a resposta pelo rótulo da lacuna. FORMA do rótulo: 1-2 palavras, sem pontuação e sem listas — rótulos com 3+ palavras ou pontuação são substituídos automaticamente por {{lacuna}} e o card perde a categoria.
 
 ❌ RUINS — rótulo é a resposta ou dá dica demais:
 - {{finalidades essenciais}} → o rótulo é literalmente o conceito; quem lê já sabe o que procurar
@@ -1180,6 +1270,11 @@ Verso: permitida
 
 Em contratos após 31/03/2000, admite-se capitalização inferior a um ano. (Súmula 539 STJ)
 
+#### Cloze de literalidade (lei seca) — CTN, CF, LC 87/96, LC 116/03, legislação estadual
+
+Quando o comentário do professor citar o TEXTO de um dispositivo legal, a frente do card deve REPRODUZIR a redação literal do dispositivo — não parafrasear — com a lacuna exatamente no termo-pivô que as bancas trocam: verbo modal ("poderá" vs "deverá"), quantificador ("somente", "salvo disposição de lei em contrário"), sujeito competente ou prazo. Declare a esfera normativa na própria frase (norma geral do CTN / LC federal / lei estadual): provas de SEFAZ cobram exatamente a divergência entre a norma geral e a lei local. Nesses cards, palavras_chave = o trecho literal adjacente à lacuna.
+✅ "Nos termos do CTN, art. 161, § 2º, os juros de mora {{regra}} na pendência de consulta formulada pelo devedor dentro do prazo legal." (verso: não se aplicam)
+
 ### PRIORIDADE 2 — Q&A cirúrgico
 
 Use apenas quando Cloze não for natural. Regras obrigatórias:
@@ -1192,6 +1287,19 @@ Frente: Qual princípio veda cobrar tributo no mesmo exercício da lei que o cri
 Verso: Anterioridade anual.
 
 Impede a cobrança no mesmo exercício da lei instituidora. (CF art. 150, III, b)
+
+### PRIORIDADE 3 — Julgue (estilo certo/errado de banca)
+
+Use para pegadinhas de redação e generalizações indevidas, principalmente quando a questão de origem for Certo/Errado (CEBRASPE). A frente traz UMA assertiva INÉDITA — uma paráfrase nova que embute a pegadinha que derrubou o aluno, NUNCA o enunciado original — precedida do comando "Julgue (C/E):". Regras obrigatórias:
+- A assertiva deve ser plausível e ter EXATAMENTE 1 ponto de decisão (uma palavra/expressão que a torna certa ou errada)
+- O verso NOMEIA a palavra-crítica: answer-line = "ERRADO — pivô: <termo>" (ou "CERTO — pivô: <termo>"); a explicação traz a regra correta
+- Verso que não nomeia a palavra-crítica torna o card inválido (julgar C/E sem saber POR QUÊ é chute, não recuperação)
+
+✅ Bom (Julgue):
+Frente: Julgue (C/E): A concessão de anistia política é ato discricionário da Administração.
+Verso: ERRADO — pivô: discricionário (é vinculado)
+
+Comprovados os requisitos legais, é dever da Administração declará-la. (STF, RMS 25988)
 
 ## O que fazer
 
@@ -1219,32 +1327,35 @@ O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR exatamente 
 ### Exemplos de erros comuns e como abordar:
 
 **Erro por TROCA/INVERSÃO de conceitos:**
-Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Prefira Cloze comparativo, mas use Q&A ou V/F se o Cloze ficar artificial.
+Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Prefira Cloze comparativo, mas use Q&A ou Julgue se o Cloze ficar artificial.
 
 **Erro por EXCEÇÃO desconhecida:**
 Se o aluno generalizou uma regra que tem exceção, o card deve focar na exceção via Cloze: "A regra X se aplica, EXCETO quando {{situação}}."
 
 **Erro por CONFUSÃO de competência/sujeito:**
-Se a banca trocou quem faz o quê, o card testa via Cloze: "É competente para X: {{A ou B}}?"
+Se a banca trocou quem faz o quê, o card testa via Cloze com rótulo genérico: "É competente para instituir o ITCMD: {{ente competente}}." (verso: Estados e DF). NUNCA liste as opções dentro das chaves ("{{A ou B}}") — isso entrega a resposta pela metade e vaza no rótulo.
 
 **Erro por PEGADINHA de redação:**
 Se um item parece certo mas tem uma palavra que o torna errado, o card usa Cloze para fixar a palavra crítica.
 
 **Erro por GENERALIZAÇÃO (como "toda norma...", "sempre...", "nunca..."):**
-Cloze: "A regra X se aplica {{sempre / salvo quando}}..."
+Cloze: "A regra X se aplica {{alcance}}." (verso: "sempre", "nunca" ou "salvo <exceção curta>"). Se a exceção não couber numa resposta curta, prefira um card Julgue com a generalização indevida como palavra-crítica.
 
 **Erro por FALSA DISTINÇÃO (não perceber que dois termos são SINÔNIMOS/equivalentes):**
-Quando o aluno tratou como diferentes dois termos que designam a MESMA coisa (ex.: "lançamento direto" e "lançamento de ofício"), o card deve ENSINAR a equivalência — NUNCA inventar uma distinção inexistente nem citar fundamentos diferentes para cada termo. Cloze: "{{termo A}} é o mesmo que {{termo B}} (mesmo fundamento legal)."
+Quando o aluno tratou como diferentes dois termos que designam a MESMA coisa (ex.: "lançamento direto" e "lançamento de ofício"), o card deve ENSINAR a equivalência — NUNCA inventar uma distinção inexistente nem citar fundamentos diferentes para cada termo. Cloze com UMA lacuna só, deixando um dos termos visível: "Lançamento direto é sinônimo de lançamento {{modalidade}} (mesmo fundamento legal)." (verso: de ofício). NUNCA oculte os dois termos da equivalência ao mesmo tempo.
 
 **Erro por DESCONHECIMENTO SIMPLES de uma regra (sem confusão com outro instituto):**
 Quando o aluno apenas não sabia a regra/prazo/requisito, faça um card direto sobre a regra correta. Não há "X vs Y" a distinguir — não fabrique um.
 
 **Questão de jurisprudência (STF/STJ):**
-Prefira o sentido caso→tese: frente = situação fática do julgado, verso = tese fixada pelo tribunal. Se a tese for amplamente cobrada em provas, um segundo card tese→caso consolida o reconhecimento inverso.
+Prefira o sentido caso→tese: frente = situação fática do julgado, verso = tese fixada pelo tribunal. Se a tese for amplamente cobrada em provas, um segundo card tese→caso consolida o reconhecimento inverso. Regras obrigatórias:
+- O verso usa o VERBO DE COMANDO exato do precedente ("é inconstitucional", "não incide", "compete", "é vedada") — é a DIREÇÃO da tese que a banca inverte para criar o item errado. A lacuna preferencial do Cloze é essa direção: "{{entendimento}}" sobre incide/não incide, constitucional/inconstitucional
+- Identifique o precedente pelo rótulo canônico quando o comentário fornecer (Súmula nº X, Súmula Vinculante nº X, Tema de Repercussão Geral nº X, ADI nº X), em <span class="ref">
+- NUNCA atribua uma tese sem dizer o tribunal — trocar STF por STJ é pegadinha clássica
 
 ### Tipos de cards para questão ERRADA (em ordem de prioridade):
 
-1. **Card do mecanismo do erro (OBRIGATÓRIO):** ataque exatamente o mecanismo identificado. SE o erro foi confusão entre dois institutos, faça um card de distinção (force o aluno a distinguir X de Y). SE o erro foi não perceber que dois termos são sinônimos, faça um card que ENSINA a equivalência. SE foi desconhecimento simples, faça um card direto sobre a regra. Prefira Cloze, salvo se um Q&A ou V/F ficar mais claro.
+1. **Card do mecanismo do erro (OBRIGATÓRIO):** ataque exatamente o mecanismo identificado. SE o erro foi confusão entre dois institutos, faça um card de distinção (force o aluno a distinguir X de Y). SE o erro foi não perceber que dois termos são sinônimos, faça um card que ENSINA a equivalência. SE foi desconhecimento simples, faça um card direto sobre a regra. Prefira Cloze, salvo se um Q&A ou Julgue ficar mais claro.
 2. **Card da regra correta (se necessário):** Pergunta direta sobre o artigo, súmula ou regra que fundamenta a resposta correta.
 
 **No campo "erro_identificado":** descreva o mecanismo REAL do erro, COERENTE com o que os cards ensinam e com o gabarito (ex.: "Confundiu competência da União com a dos Estados" OU "Não percebeu que 'lançamento direto' e 'de ofício' são sinônimos"). O erro_identificado NUNCA pode contradizer o verso de nenhum card, nem o gabarito, nem reproduzir uma premissa errada do relato do aluno.
@@ -1262,7 +1373,7 @@ Identifique com precisão:
 
 ### Tipos de cards para questão ACERTADA (em ordem de prioridade):
 
-1. **Card da pegadinha (OBRIGATÓRIO):** Exponha a armadilha da banca. Use Cloze se ficar natural; caso contrário, use Q&A ou V/F autocontido.
+1. **Card da pegadinha (OBRIGATÓRIO):** Exponha a armadilha da banca. Use Cloze se ficar natural; caso contrário, use Q&A ou Julgue autocontido.
 2. **Card da nuance (se necessário):** Teste a distinção sutil que tornava a questão difícil sem depender da redação da questão original.
 
 **No campo "erro_identificado":** descreva a pegadinha/nuance da questão (ex: "A alternativa B parecia correta por usar 'sempre que possível', mas o art. X não admite exceção neste caso").
@@ -1272,7 +1383,7 @@ Identifique com precisão:
 - **MÁXIMO 2 cards** — se a confusão for simples, 1 card basta
 - O PRIMEIRO card SEMPRE deve atacar o ponto central: a confusão (se errou) ou a pegadinha/nuance (se acertou)
 - O card precisa ser AUTOCONTIDO: quem o lê deve entender o erro e a distinção sem voltar à questão
-- **Tipo**: indique no campo "tipo" se é "Cloze" ou "Q&A". Você pode combinar 1 Cloze + 1 Q&A quando isso ensinar melhor
+- **Tipo**: indique no campo "tipo" se é "Cloze", "Q&A" ou "Julgue". Você pode combinar formatos (ex.: 1 Cloze + 1 Julgue) quando isso ensinar melhor
 - **Cloze**: use {{rotulo_generico}} para marcar a informação oculta; nunca coloque a resposta dentro das chaves. O verso deve começar pela resposta curta e pode trazer 1 explicação breve logo abaixo
 - **Cloze — a resposta PREENCHE a lacuna (crítico):** no Anki a lacuna {{ }} da frente é substituída pela RESPOSTA CURTA (a primeira linha do verso). Logo: (a) a resposta tem que ser um TERMO/EXPRESSÃO CURTA, NUNCA uma frase ou explicação — senão a lacuna fica preenchida com um parágrafo inteiro e a frase do card vira um amontoado ilegível; (b) ao preencher mentalmente a lacuna com a resposta, a frente deve formar UMA frase coerente, sem duplicar conteúdo; (c) a frente NÃO pode conter a resposta fora da lacuna (vazamento). A explicação/contraste vai SEMPRE depois, na explanation — nunca dentro da lacuna nem como a "resposta curta"
 - **Uma lacuna por card Cloze:** use no MÁXIMO 1 lacuna {{ }} por card. Se a frase tem dois fatos a testar (ex.: uma regra E um prazo), faça dois cards, cada um com uma lacuna
@@ -1281,7 +1392,7 @@ Identifique com precisão:
 - Use perguntas COMPARATIVAS quando o erro envolver troca de conceitos
 - NUNCA crie cards genéricos sobre o assunto. Cada card deve ter relação direta com o motivo do erro
 - NUNCA copie o enunciado da questão. O card deve testar o CONCEITO, não a questão específica
-- Se a distinção importante não couber num Cloze limpo, prefira um Q&A ou V/F curto e claro
+- Se a distinção importante não couber num Cloze limpo, prefira um Q&A ou Julgue curto e claro
 - Se a questão envolver artigo de lei, cite o artigo no verso
 - materia: nome oficial como em editais (Direito Constitucional, Direito Tributário, etc.)
 - ATENÇÃO na classificação de matéria: classifique pelo CONTEÚDO TÉCNICO do tema
@@ -1304,7 +1415,7 @@ Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos
 ### Regras de formatação:
 - Em cards Cloze: use <mark> na lacuna assim: <mark>{{rotulo_generico}}</mark> para destacar visualmente a informação oculta
 - No verso, use SEMPRE a estrutura: <div class="answer-line">RESPOSTA CURTA</div> + <div class="explanation">explicação</div>. A answer-line é SÓ a resposta direta/termo — NO MÁXIMO uma oração curta (≈ até 12 palavras). NUNCA jogue o contraste/explicação inteiro na answer-line (senão vira um bloco enorme e ilegível). Para distinções, a answer-line traz só a conclusão curta; o detalhe vai na explanation, com <mark>/<b> nas palavras discriminantes
-- **ORÇAMENTO DE DESTAQUE (evite poluição visual):** no MÁXIMO 1 <mark> por card — exatamente na palavra que fecha a lacuna do erro identificado; no MÁXIMO 2-3 <b> por card (só os conceitos centrais); <span class="neg"> apenas na negação/exceção que é o PIVÔ do erro. Se quase tudo está destacado, nada se destaca (o realce perde a função de guiar o olho).
+- **ORÇAMENTO DE DESTAQUE (evite poluição visual):** no MÁXIMO 1 <mark> por FACE do card — na FRENTE, o único <mark> é o da lacuna (<mark>{{rotulo}}</mark>); no VERSO, o único <mark> vai na feature discriminante (a palavra que diferencia X de Y ou a palavra-armadilha). Além disso: no MÁXIMO 2-3 <b> por card (só os conceitos centrais); <span class="neg"> apenas na negação/exceção que é o PIVÔ do erro. Se quase tudo está destacado, nada se destaca (o realce perde a função de guiar o olho).
 - Em cards de distinção/pegadinha, o <mark> do verso deve cair na FEATURE DISCRIMINANTE (a palavra que diferencia X de Y, ou a palavra-armadilha) — não numa palavra qualquer
 - Use <span class="neg"> para negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto"), respeitando o orçamento acima
 - Na FRENTE do card, use <b> para o termo central da pergunta e <mark> para destaques pontuais
@@ -1342,11 +1453,11 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
         items: {
           type: 'object',
           properties: {
-            tipo: { type: 'string', enum: ['Cloze', 'Q&A'], description: 'Formato do card: Cloze para afirmação autocontida com {{rotulo_generico}}, Q&A para pergunta direta, V/F ou distinção breve' },
+            tipo: { type: 'string', enum: ['Cloze', 'Q&A', 'Julgue'], description: 'Formato do card: Cloze para afirmação autocontida com {{rotulo_generico}}, Q&A para pergunta direta ou distinção breve, Julgue para assertiva certo/errado com palavra-crítica nomeada no verso' },
             frente_texto_limpo: { type: 'string', description: 'Card autocontido em texto puro. Se for Cloze, use {{rotulo_generico}}, nunca a resposta preenchida.' },
-            verso_texto_limpo: { type: 'string', description: 'Primeira linha com resposta curta em texto puro. Depois, se necessário, uma explicação breve.' },
+            verso_texto_limpo: { type: 'string', description: '1ª linha = SÓ a resposta curta (termo/expressão, máx. 12 palavras). Depois LINHA EM BRANCO e a explicação breve em parágrafo separado. NUNCA misture explicação na 1ª linha.' },
             frente_html: { type: 'string', description: 'Mesmo conteúdo da frente com HTML e destaque visual; se for Cloze, use <mark>{{rotulo_generico}}</mark>.' },
-            verso_html: { type: 'string', description: 'Verso em HTML, idealmente com <div class="answer-line">resposta curta</div> e <div class="explanation">explicação breve</div>.' },
+            verso_html: { type: 'string', description: 'Verso em HTML, OBRIGATORIAMENTE com <div class="answer-line">APENAS a resposta curta</div> seguido de <div class="explanation">explicação breve</div>. A explicação NUNCA vai dentro da answer-line.' },
             palavras_chave: { type: 'string', description: 'Express\u00F5es can\u00F4nicas da lei/doutrina que identificam este conceito jur\u00EDdico, separadas por " | ". Vazio se n\u00E3o houver.' },
           },
           required: ['tipo', 'frente_texto_limpo', 'verso_texto_limpo', 'frente_html', 'verso_html', 'palavras_chave'],
@@ -1355,6 +1466,61 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
     },
     required: ['materia', 'subtopico', 'erro_identificado', 'cards'],
   };
+
+  /**
+   * Contrato JSON dos criadores de card — fonte ÚNICA para os pipelines raw
+   * (OpenRouter/OpenCode) e dual (creator). Divergência entre cópias já causou
+   * regressão: o schema do dual sem as travas gerava answer-line com a
+   * explicação inteira, que contaminava a lacuna do Cloze.
+   */
+  const CARD_JSON_CONTRACT = `Responda SOMENTE com JSON válido neste formato exato (sem markdown, sem comentários):
+{
+  "materia": "string - matéria do edital",
+  "subtopico": "string - subtópico específico",
+  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
+  "cards": [
+    {
+      "tipo": "string - Cloze, Q&A ou Julgue",
+      "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e NUNCA a resposta preenchida",
+      "verso_texto_limpo": "string - 1ª linha = SÓ a resposta curta (termo/expressão, máx. 12 palavras), depois LINHA EM BRANCO e a explicação breve em parágrafo separado. NUNCA misture explicação na 1ª linha",
+      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
+      "verso_html": "string - verso em HTML: <div class=\\"answer-line\\">APENAS a resposta curta</div> seguido de <div class=\\"explanation\\">explicação breve</div>; a explicação NUNCA vai dentro da answer-line",
+      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
+    }
+  ]
+}`;
+
+  /** Perfis de pegadinha por banca — calibram o estilo do card à mecânica real da prova. */
+  const BANCA_PROFILES = [
+    {
+      re: /cespe|cebraspe/i,
+      nome: 'CEBRASPE',
+      perfil: `- Mecânica típica: itens Certo/Errado com generalização indevida ("sempre", "somente", "apenas", "qualquer", "independentemente"), inversão de sujeito/competência e restrição ou ampliação indevida de rol.
+- O card deve fixar o QUANTIFICADOR/palavra de alcance exata da norma e treinar a detecção da palavra que estraga o item.
+- Quando a pegadinha for de redação, prefira 1 card Julgue com a palavra-crítica nomeada no verso.`,
+    },
+    {
+      re: /fgv/i,
+      nome: 'FGV',
+      perfil: `- Mecânica típica: casos práticos com distratores sofisticados — troca de prazos, percentuais e sujeitos entre alternativas plausíveis.
+- O card deve aplicar a regra a um mini-caso concreto e fixar o PAR correto-vs-isca (por que a alternativa sedutora está errada).
+- Para prazos/percentuais/alíquotas, inclua a âncora numérica concreta no verso.`,
+    },
+    {
+      re: /fcc/i,
+      nome: 'FCC',
+      perfil: `- Mecânica típica: literalidade de lei — a alternativa errada é quase a letra da lei com UMA palavra trocada ("poderá"→"deverá", "isento"→"imune", "lei"→"decreto").
+- O card deve usar transcrição LITERAL do dispositivo com a lacuna exatamente no termo trocável (Cloze de literalidade).`,
+    },
+  ];
+
+  function getBancaProfile(banca) {
+    const b = BANCA_PROFILES.find(p => p.re.test(banca || ''));
+    return b ? `
+### Perfil da banca — ${b.nome} (calibre o estilo do card para a mecânica desta banca)
+${b.perfil}
+` : '';
+  }
 
   function buildGeminiPrompt(q) {
     const maxCards = Math.max(1, parseInt(getSetting('maxCardsPerQuestion'), 10) || 2);
@@ -1374,7 +1540,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
 **Mat\u00E9ria:** ${q.materia || 'N/A'}
 **Assunto:** ${q.assunto || 'N/A'}
 **Tipo:** ${q.tipo === 'certo_errado' ? 'Certo/Errado' : 'M\u00FAltipla Escolha'}
-
+${getBancaProfile(q.banca)}
 ### Enunciado
 ${q.enunciado || 'N\u00E3o dispon\u00EDvel'}
 
@@ -1388,7 +1554,12 @@ ${altsText || 'N\u00E3o dispon\u00EDveis'}
 
 ### Coment\u00E1rio do Professor
 ${q.comentario || 'N\u00E3o dispon\u00EDvel'}
-${q.pensamentoAluno ? `
+${q.cardsExistentes && q.cardsExistentes.length ? `
+### \u26A0\uFE0F Cards que J\u00C1 EXISTEM para esta quest\u00E3o \u2014 e o aluno errou DE NOVO apesar deles
+${q.cardsExistentes.map(f => `- ${f}`).join('\n')}
+
+Estes cards N\u00C3O evitaram o novo erro: o encoding deles falhou. \u00C9 PROIBIDO repeti-los ou reformul\u00E1-los superficialmente. Gere um \u00E2ngulo NOVO: outro formato (se era Cloze, use Julgue ou Q&A de discrimina\u00E7\u00E3o), o sentido INVERSO do mapeamento (se o card antigo pergunta X\u2192Y, pergunte Y\u2192X), ou a exce\u00E7\u00E3o/nuance que o card antigo n\u00E3o cobre.
+` : ''}${q.pensamentoAluno ? `
 ### \uD83D\uDCAD Alvo pedag\u00F3gico do aluno (use S\u00D3 para mirar o card)
 O aluno descreveu o pr\u00F3prio racioc\u00EDnio ao responder esta quest\u00E3o:
 "${q.pensamentoAluno}"
@@ -1402,7 +1573,7 @@ COMO USAR ESTE RELATO:
 ---
 \u26A0\uFE0F LIMITE DESTA QUEST\u00C3O: gere no M\u00C1XIMO ${maxCards} card(s). Este n\u00FAmero substitui qualquer limite mencionado nas instru\u00E7\u00F5es gerais. Continue respeitando o Princ\u00EDpio da Informa\u00E7\u00E3o M\u00EDnima \u2014 se menos cards j\u00E1 cobrirem a lacuna, gere menos; nunca invente cards s\u00F3 para atingir o limite.
 
-Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie no m\u00E1ximo ${maxCards} card(s) AUTOCONTIDOS${maxCards >= 2 ? ', podendo combinar Cloze + Q&A quando isso deixar a distin\u00E7\u00E3o mais clara' : ''}.`;
+Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo do erro' : 'a pegadinha/nuance que tornava a quest\u00E3o dif\u00EDcil'} e crie no m\u00E1ximo ${maxCards} card(s) AUTOCONTIDOS${maxCards >= 2 ? ', podendo combinar formatos (Cloze, Q&A, Julgue) quando isso deixar a distin\u00E7\u00E3o mais clara' : ''}.`;
   }
 
   function normalizeKeywords(value) {
@@ -1466,7 +1637,27 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const blocks = trimmed.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean);
     if (!blocks.length) return trimmed;
 
-    const answerLine = blocks.shift().replace(/\n/g, '<br>');
+    let answerLine = blocks.shift();
+
+    // Modelo não separou com linha em branco: a 1ª LINHA é a resposta; o resto é explicação.
+    const lines = answerLine.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length > 1) {
+      answerLine = lines.shift();
+      blocks.unshift(lines.join('\n'));
+    }
+
+    // Resposta com a explicação embutida na MESMA linha ("vinculado. Comprovados os
+    // requisitos..."): corta na 1ª frase e move o resto para a explicação. Só age em
+    // linha longa (>12 palavras) para não quebrar respostas legítimas com "art. X".
+    if (answerLine.split(/\s+/).length > 12) {
+      const m = answerLine.match(/^(.{3,90}?[.;])\s+(?=[A-ZÀ-ÖØ-Ý(])([\s\S]+)$/);
+      if (m) {
+        answerLine = m[1].replace(/[.;]+$/, '');
+        blocks.unshift(m[2]);
+      }
+    }
+
+    answerLine = answerLine.replace(/\n/g, '<br>');
     const explanation = blocks.length
       ? `<div class="explanation">${blocks.map(block => `<div class="explanation-block">${block.replace(/\n/g, '<br>')}</div>`).join('')}</div>`
       : '';
@@ -1612,27 +1803,10 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const baseUrl = getOpencodeEndpoint(model);
     if (!apiKey) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
 
-    const schemaDescription = `Responda SOMENTE com JSON válido neste formato exato (sem markdown, sem comentários):
-{
-  "materia": "string - matéria do edital",
-  "subtopico": "string - subtópico específico",
-  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
-  "cards": [
-    {
-      "tipo": "string - Cloze ou Q&A",
-      "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e nunca a resposta preenchida",
-      "verso_texto_limpo": "string - primeira linha com resposta curta; depois, se necessário, uma explicação breve",
-      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
-      "verso_html": "string - verso em HTML, idealmente com <div class=\"answer-line\">resposta curta</div> e <div class=\"explanation\">explicação breve</div>",
-      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
-    }
-  ]
-}`;
-
     const body = {
       model,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
+        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + CARD_JSON_CONTRACT },
         { role: 'user', content: buildGeminiPrompt(questionData) },
       ],
       temperature: 0.3,
@@ -1741,27 +1915,10 @@ Com base nas informa\u00E7\u00F5es acima, identifique o mecanismo do erro e crie
     const model = getSetting('openrouterModel');
     if (!apiKey) throw new Error('API key do OpenRouter n\u00E3o configurada. Abra as configura\u00E7\u00F5es (\u2699\uFE0F).');
 
-    const schemaDescription = `Responda SOMENTE com JSON v\u00E1lido neste formato exato (sem markdown, sem coment\u00E1rios):
-{
-  "materia": "string - mat\u00E9ria do edital",
-  "subtopico": "string - subt\u00F3pico espec\u00EDfico",
-  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
-  "cards": [
-    {
-      "tipo": "string - Cloze ou Q&A",
-      "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e nunca a resposta preenchida",
-      "verso_texto_limpo": "string - primeira linha com resposta curta; depois, se necessário, uma explicação breve",
-      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
-      "verso_html": "string - verso em HTML, idealmente com <div class=\\"answer-line\\">resposta curta</div> e <div class=\\"explanation\\">explicação breve</div>",
-      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
-    }
-  ]
-}`;
-
     const body = {
       model,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + schemaDescription },
+        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + CARD_JSON_CONTRACT },
         { role: 'user', content: buildGeminiPrompt(questionData) },
       ],
       temperature: 0.3,
@@ -1839,7 +1996,12 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 8. **Decadência x prescrição:** Se o tema envolver prazos, o card trata do instituto correto (decadência = prazo para lançar/constituir; prescrição = prazo para cobrar/executar)? Trocar um pelo outro é erro grave.
 9. **Frente inequívoca:** a frente tem UMA resposta correta defensável dado o contexto? Se a lacuna for ambígua (várias respostas razoáveis caberiam), o card é mal formulado — a frase precisa de mais contexto, não de rótulo mais vago.
 10. **Cloze bem formado (crítico):** se a frente tem lacuna {{...}}, a RESPOSTA é a primeira linha do verso e ela PREENCHERÁ a lacuna no Anki. Verifique: (a) a resposta é um TERMO/EXPRESSÃO CURTA — NÃO uma frase, explicação ou parágrafo; (b) preenchendo a lacuna com a resposta, a frente forma UMA frase coerente, sem duplicar conteúdo; (c) a frente NÃO contém a resposta fora da lacuna (vazamento). Se a "resposta curta" for, na verdade, uma frase longa/explicação, ou se preencher a lacuna deixaria a frase embaralhada, REJEITE.
-11. **answer-line curta:** a primeira linha do verso (answer-line) deve ser a resposta direta/termo, não o contraste/explicação inteiro. Se a answer-line for um parágrafo, REJEITE.
+11. **answer-line curta (regra OBJETIVA):** a primeira linha do verso (answer-line) deve ser a resposta direta/termo. Se tiver MAIS DE 12 PALAVRAS, mais de uma oração, ou embutir a explicação/contraste, REJEITE. Quando o payload trouxer "Answer-line renderizada", audite ELA — é o que o Anki mostra e o que preenche a lacuna do Cloze.
+12. **Rótulo da lacuna sem cueing:** o texto dentro de {{ }} na frente deve ser uma CATEGORIA genérica de 1-2 palavras ({{prazo}}, {{regra}}, {{ente competente}}). Se o rótulo entrega a resposta, lista opções ("{{A ou B}}") ou tem 3+ palavras/pontuação, REJEITE.
+13. **1 lacuna, 1 fato:** card Cloze com 2 ou mais lacunas {{ }}, ou card que testa dois fatos independentes, REJEITE (peça a divisão em dois cards).
+14. **Literalidade de lei seca:** se o card se apresenta como texto de dispositivo legal, confira a fidelidade ao trecho citado no comentário do professor. Paráfrase disfarçada de literalidade = REJEITADO.
+15. **Direção da tese (jurisprudência):** o verbo de comando do card confere com o comentário (incide↔não incide, constitucional↔inconstitucional, pode↔não pode)? O tribunal está correto (STF↔STJ)? Inversão = REJEITADO.
+16. **Julgue:** assertiva com mais de um ponto de decisão, ou verso que não NOMEIA a palavra-crítica que decide o item, REJEITE.
 
 AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos). O relato do aluno serve SÓ para julgar relevância (se o card mira a dúvida certa); ele JAMAIS valida um card juridicamente incorreto.
 
@@ -1867,6 +2029,8 @@ Responda SOMENTE com JSON válido:
     { "index": 1, "status": "REJEITADO", "justificativa": "string - razão precisa da rejeição" }
   ]
 }
+
+OBRIGATÓRIO: o array "cards" deve conter UM veredito para CADA card recebido (índices 0..N-1, sem omitir nenhum). Card sem veredito é tratado como falha sua.
 
 Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um card incorreto ao Anki.`;
 
@@ -1921,21 +2085,6 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
    */
   async function callCreator(questionData, feedback = null) {
     const model = getSetting('creatorModel');
-    const schemaDescription = `Responda SOMENTE com JSON válido neste formato exato (sem markdown, sem comentários):
-{
-  "materia": "string - matéria do edital",
-  "subtopico": "string - subtópico específico",
-  "erro_identificado": "string - se errou: mecanismo REAL do erro. Se acertou: pegadinha/nuance. DEVE ser coerente com o verso de todos os cards e com o gabarito; nunca reproduza premissa errada do relato",
-  "cards": [
-    {
-      "frente_texto_limpo": "string - pergunta em texto puro, sem HTML",
-      "verso_texto_limpo": "string - resposta em texto puro, sem HTML (max 3 linhas)",
-      "frente_html": "string - mesma pergunta com formatação HTML (<b>, <mark>, <span class=\\"neg\\">)",
-      "verso_html": "string - mesma resposta com formatação HTML",
-      "palavras_chave": "string - expressões canônicas separadas por | . Vazio se não houver"
-    }
-  ]
-}`;
 
     let userPrompt = buildGeminiPrompt(questionData);
     if (feedback) {
@@ -1944,7 +2093,7 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
 
     const result = await callOpenRouterWithModel(
       model,
-      SYSTEM_PROMPT + '\n\n' + schemaDescription,
+      SYSTEM_PROMPT + '\n\n' + CARD_JSON_CONTRACT,
       userPrompt
     );
 
@@ -1972,17 +2121,32 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
    * Reduces token payload from ~4100 to ~800 tokens.
    */
   function filterForAuditor(creatorResult, questionData) {
-    const cards = creatorResult.cards.map((card, i) => ({
-      index: i,
-      frente: card.frente_texto_limpo,
-      verso: card.verso_texto_limpo,
-    }));
+    const cards = creatorResult.cards.map((card, i) => {
+      // A answer-line do verso_html é o que o Anki renderiza e o que preenche a
+      // lacuna do Cloze — o auditor precisa vê-la, não só o texto limpo.
+      const al = (card.verso_html || '').match(/<div class="answer-line">([\s\S]*?)<\/div>/i);
+      const answerLineRender = al ? stripHtml(al[1]).replace(/\s+/g, ' ').trim() : '';
+      return {
+        index: i,
+        frente: card.frente_texto_limpo,
+        verso: card.verso_texto_limpo,
+        answerLineRender,
+      };
+    });
+
+    const altsResumo = (questionData.alternativas || []).map(a => {
+      let line = `${a.letra}) ${(a.texto || '').slice(0, 120)}`;
+      if (a.selecionada) line += ' ← ALUNO MARCOU';
+      if (a.correta) line += ' ← GABARITO';
+      return line;
+    }).join('\n');
 
     return `## Cards para auditoria
 
 ${cards.map(c => `### Card ${c.index}
 **Frente:** ${c.frente}
-**Verso:** ${c.verso}`).join('\n\n')}
+**Verso:** ${c.verso}${c.answerLineRender ? `
+**Answer-line renderizada (1ª linha que o Anki mostra e que PREENCHE a lacuna do Cloze):** ${c.answerLineRender}` : ''}`).join('\n\n')}
 
 ### Campo "erro_identificado" (mecanismo do erro — DEVE ser coerente com os versos acima)
 ${creatorResult.erro_identificado || 'N/A'}
@@ -1993,6 +2157,12 @@ ${creatorResult.erro_identificado || 'N/A'}
 - **Resultado:** ${questionData.errou ? 'ERROU ❌' : 'ACERTOU ✅'}
 - **Gabarito:** ${questionData.gabarito || 'N/A'}
 - **Resposta do aluno:** ${questionData.respostaAluno || 'N/A'}
+
+### Enunciado (para auditar a coerência com o gabarito)
+${(questionData.enunciado || 'Não disponível').slice(0, 700)}
+
+### Alternativas
+${altsResumo || 'Não disponíveis'}
 
 ### Comentário do Professor (AUTORIDADE de correção)
 ${questionData.comentario || 'Não disponível'}${questionData.pensamentoAluno ? `
@@ -2090,7 +2260,7 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       console.warn('⚠️ Auditor falhou, aceitando todos os cards:', err.message);
       showToast('⚠️ Auditor indisponível — cards aceitos sem validação (marcados p/ revisão).', 'warning', 5000);
       for (const c of creatorResult.cards) { c._needsReview = true; c._rejectReason = 'Auditor indisponível — não validado'; }
-      return creatorResult;
+      return normalizeGeneratedResult(creatorResult);
     }
     if (auditorResult._usage) totalCost += trackPipelineCost(auditorResult._usage, getSetting('auditorModel'));
 
@@ -2099,13 +2269,24 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     // ── Process auditor verdicts ──
     const approved = [];
     const rejected = [];
+    const judged = new Set();
     for (const verdict of auditorResult.cards) {
+      const card = creatorResult.cards[verdict.index];
+      if (!card) continue; // índice inválido devolvido pelo auditor — ignora o veredito
+      judged.add(verdict.index);
       if (verdict.status === 'APROVADO') {
-        approved.push(creatorResult.cards[verdict.index]);
+        approved.push(card);
       } else {
-        rejected.push({ card: creatorResult.cards[verdict.index], justificativa: verdict.justificativa || 'Sem justificativa' });
+        rejected.push({ card, justificativa: verdict.justificativa || 'Sem justificativa' });
       }
     }
+    // Card sem veredito não pode sumir em silêncio: mantém, marcado para revisão manual.
+    creatorResult.cards.forEach((card, i) => {
+      if (judged.has(i)) return;
+      card._needsReview = true;
+      card._rejectReason = 'Auditor não emitiu veredito para este card';
+      approved.push(card);
+    });
 
     // Cards approved in round 1 were audited against the creator's erro_identificado;
     // only swap in the retry's version when ALL surviving cards come from the retry,
@@ -2116,7 +2297,18 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     let retryErroIdentificado = null;
     if (rejected.length > 0) {
       onStatus(`🔄 Regenerando ${rejected.length} card(s) rejeitado(s)...`);
-      const feedback = rejected.map((r, i) => `Card ${i + 1}: ${r.justificativa}`).join('\n');
+      // O criador do retry precisa VER o card rejeitado (não só a justificativa) e
+      // saber o que já foi aprovado — senão gera duplicatas e contradições.
+      const feedback = [
+        `Cards REJEITADOS pela auditoria — gere um substituto para CADA um, corrigindo o problema apontado:`,
+        ...rejected.map(r => `- Frente: "${r.card.frente_texto_limpo || r.card.frente || ''}"
+  Verso: "${(r.card.verso_texto_limpo || r.card.verso || '').split('\n')[0]}"
+  Motivo da rejeição: ${r.justificativa}`),
+        approved.length
+          ? `\nCards JÁ APROVADOS (NÃO os repita nem os contradiga; gere APENAS ${rejected.length} substituto(s)):
+${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
+          : `\nGere APENAS ${rejected.length} card(s) substituto(s).`,
+      ].join('\n');
 
       try {
         const retryResult = await callCreator(questionData, feedback);
@@ -2138,17 +2330,26 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
         }
 
         if (retryAudit) {
+          const retryJudged = new Set();
           for (const verdict of retryAudit.cards) {
+            const card = retryResult.cards[verdict.index];
+            if (!card) continue; // índice inválido — ignora
+            retryJudged.add(verdict.index);
             if (verdict.status === 'APROVADO') {
-              approved.push(retryResult.cards[verdict.index]);
+              approved.push(card);
             } else {
               // Still rejected after retry — add with 'revisar' tag
-              const card = retryResult.cards[verdict.index];
               card._needsReview = true;
               card._rejectReason = verdict.justificativa;
               approved.push(card);
             }
           }
+          retryResult.cards.forEach((card, i) => {
+            if (retryJudged.has(i)) return;
+            card._needsReview = true;
+            card._rejectReason = 'Auditor não emitiu veredito para este card (retry)';
+            approved.push(card);
+          });
         }
       } catch (err) {
         console.warn('⚠️ Retry falhou, adicionando cards originais com tag revisar:', err.message);
@@ -2177,14 +2378,35 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     if (reviewCount > 0) summaryMsg += ` | ⚠️ ${reviewCount} para revisão manual`;
     console.log(summaryMsg);
 
-    return finalResult;
+    // As redes de segurança (placeholder genérico, answer-line/explanation no verso,
+    // tipo por regex) rodavam só no pipeline raw — o dual entregava cards crus ao Anki.
+    return normalizeGeneratedResult(finalResult);
   }
 
   /**
    * Unified card generation: dual pipeline (Creator \u2192 Auditor) when configured,
    * single model otherwise. Used by both single-question and batch flows.
    */
+  /** Frentes dos cards já criados para esta questão (alimenta o prompt anti-repetição). */
+  async function fetchExistingCardFronts(questionId) {
+    const ids = await ankiInvoke('findNotes', { query: `"Fonte:Q#${questionId} *"` });
+    if (!Array.isArray(ids) || !ids.length) return null;
+    const info = await ankiInvoke('notesInfo', { notes: ids.slice(0, 8) });
+    const fronts = (info || [])
+      .map(n => stripHtml(((n.fields || {}).Frente || (n.fields || {}).Text || {}).value || '')
+        .replace(/\s+/g, ' ').trim().slice(0, 180))
+      .filter(Boolean);
+    return fronts.length ? fronts : null;
+  }
+
   async function generateCards(questionData, onStatus = () => {}) {
+    // Escalada anti-repetição (tratamento de leech do SuperMemo): se o aluno errou
+    // DE NOVO uma questão que já tem cards, os cards existentes falharam — o prompt
+    // os recebe e é proibido de reformulá-los; o novo card ataca por OUTRO ângulo.
+    if (questionData.errou && questionData.id && !questionData.cardsExistentes) {
+      questionData.cardsExistentes = await fetchExistingCardFronts(questionData.id)
+        .catch(() => null);
+    }
     if (getSetting('pipelineMode') === 'dual') {
       return callDualPipeline(questionData, onStatus);
     }
@@ -2468,6 +2690,61 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 
   async function ensureAnkiDeck(deckName) {
     await ankiInvoke('createDeck', { deck: deckName });
+    await ensureTecDeckPreset(deckName);
+  }
+
+  /**
+   * Preset dedicado "TEC Erros" para os decks de erro (em vez de herdarem o
+   * preset global): retenção-alvo maior (cards nascidos de erro real merecem
+   * mais reviews), intervalo máximo no horizonte da prova e leech agressivo
+   * (card que apanha 4x é problema de DESIGN — suspende para reformular).
+   * Best-effort: falha silenciosa se a versão do Anki não suportar.
+   */
+  async function ensureTecDeckPreset(deckName) {
+    try {
+      let configId = parseInt(GM_getValue('tecDeckConfigId', 0), 10) || 0;
+      const isNew = !configId;
+      if (isNew) {
+        configId = await ankiInvoke('cloneDeckConfigId', { name: 'TEC Erros', cloneFrom: 1 });
+        if (!configId) return;
+        GM_setValue('tecDeckConfigId', configId);
+      }
+      await ankiInvoke('setDeckConfigId', { decks: [deckName], configId });
+      if (isNew) {
+        const cfg = await ankiInvoke('getDeckConfig', { deck: deckName });
+        if (cfg && cfg.id === configId) {
+          cfg.desiredRetention = 0.92;           // FSRS: retenção-alvo acima do padrão 0.90
+          if (cfg.rev) { cfg.rev.maxIvl = 180; cfg.rev.bury = true; }  // horizonte da prova + bury de irmãos
+          if (cfg.new) cfg.new.bury = true;
+          if (cfg.lapse) { cfg.lapse.leechFails = 4; cfg.lapse.leechAction = 0; } // 0 = suspender
+          await ankiInvoke('saveDeckConfig', { config: cfg });
+          console.log('[TEC→Anki] Preset "TEC Erros" criado (retenção 0.92, maxIvl 180, leech 4→suspender)');
+        }
+      }
+    } catch (e) {
+      console.warn('[TEC→Anki] Não foi possível aplicar o preset TEC Erros:', e.message || e);
+    }
+  }
+
+  /**
+   * Errou no TEC uma questão que JÁ tem cards no Anki: o TEC funciona como
+   * sensor de esquecimento — os cards antigos ganham tag reincidente::N e
+   * voltam para a revisão de HOJE. setDueDate sem "!" preserva o intervalo
+   * (fica registrado como reagendamento manual, não corrompe o FSRS).
+   */
+  async function rescheduleRecurringCards(questionData) {
+    const query = `"Fonte:Q#${questionData.id} *"`;
+    const noteIds = await ankiInvoke('findNotes', { query });
+    if (!Array.isArray(noteIds) || noteIds.length === 0) return;
+    const n = (typeof questionData.vezesErradoTec === 'number' && questionData.vezesErradoTec > 0)
+      ? questionData.vezesErradoTec : 2;
+    await ankiInvoke('addTags', { notes: noteIds, tags: `reincidente::${n}` });
+    const cardIds = await ankiInvoke('findCards', { query });
+    if (Array.isArray(cardIds) && cardIds.length) {
+      await ankiInvoke('setDueDate', { cards: cardIds, days: '0' });
+      console.log(`⏰ Reincidência: ${cardIds.length} card(s) da Q#${questionData.id} voltaram para hoje (tag reincidente::${n})`);
+      showToast(`⏰ Erro repetido na Q#${questionData.id} — ${cardIds.length} card(s) antigos voltaram para a revisão de hoje.`, 'warning', 5000);
+    }
   }
 
   /**
@@ -2491,6 +2768,11 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       ? `${prefix}::${sanitizePath(materia)}::${sanitizePath(subtopico)}`
       : `${prefix}::${sanitizePath(materia)}`;
 
+    // Reincidência: precisa rodar ANTES do addNotes (só os cards antigos voltam p/ hoje)
+    if (questionData.errou && questionData.id) {
+      await rescheduleRecurringCards(questionData).catch(e => console.warn('[TEC→Anki] Reincidência falhou:', e.message || e));
+    }
+
     const clozeModelName = getClozeModelName();
     await ensureAnkiModel();
 
@@ -2505,6 +2787,13 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       if (looksCloze && !cloze) {
         card._needsReview = true;
         card._rejectReason = card._rejectReason || 'Cloze malformado (resposta longa ou vazada) — salvo como Básico para revisão';
+        // No Básico o {{rotulo}} apareceria literal (Anki não processa cloze em
+        // campos de nota comum) — vira uma lacuna legível: [rotulo].
+        const toHint = (s) => (s || '')
+          .replace(/<mark>\s*\{\{([^}]+)\}\}\s*<\/mark>/g, '<span class="cloze-hint">[$1]</span>')
+          .replace(/\{\{([^}]+)\}\}/g, '<span class="cloze-hint">[$1]</span>');
+        card.frente_html = toHint(card.frente_html || card.frente);
+        card.frente = card.frente_html;
       }
       return { card, cloze };
     });
@@ -2541,6 +2830,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       if (card._needsReview) cardTags.push('revisar');
       if (getSetting('pipelineMode') === 'dual') cardTags.push('dual-pipeline');
       if (cloze) cardTags.push('cloze-nativo');
+      if ((card.tipo || '').toLowerCase() === 'julgue') cardTags.push('julgue');
       const common = {
         PalavrasChave: palavrasChaveHtml(card),
         Contexto: contexto,
@@ -2605,7 +2895,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
   async function getExistingNoteData(filePath) {
     const port = getSetting('obsidianPort');
     const token = getSetting('obsidianToken');
-    if (!token) return { exists: false, vezes_errado: 0 };
+    if (!token) return { ok: false, exists: false, vezes_errado: 0 };
 
     try {
       const res = await gmFetch(`http://127.0.0.1:${port}/vault/${encodeURIComponent(filePath)}.md`, {
@@ -2614,26 +2904,29 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
         timeout: 5000,
       });
 
-      if (!res.ok) return { exists: false, vezes_errado: 0 };
+      // 404 = leitura OK, nota inexistente. Outros erros = falha de leitura.
+      if (res.status === 404) return { ok: true, exists: false, vezes_errado: 0 };
+      if (!res.ok) return { ok: false, exists: false, vezes_errado: 0 };
 
       const content = await res.text();
       const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      if (!fmMatch) return { exists: true, vezes_errado: 0 };
+      if (!fmMatch) return { ok: true, exists: true, vezes_errado: 0 };
 
       const yaml = fmMatch[1];
       const vezesMatch = yaml.match(/vezes_errado:\s*(\d+)/);
       const vezes_errado = vezesMatch ? parseInt(vezesMatch[1], 10) : 0;
 
-      return { exists: true, vezes_errado: Math.max(0, vezes_errado) };
+      return { ok: true, exists: true, vezes_errado: Math.max(0, vezes_errado) };
     } catch {
-      return { exists: false, vezes_errado: 0 };
+      return { ok: false, exists: false, vezes_errado: 0 };
     }
   }
 
   /**
    * Monta o array de tags do Obsidian incluindo tags de erro recorrente.
+   * finalCount = total acumulado de erros (histórico), não só a tentativa atual.
    */
-  function buildObsidianTags(questionData, vezes_errado) {
+  function buildObsidianTags(questionData, finalCount) {
     const tags = [
       'tec',
       slugify(questionData.materia || 'geral'),
@@ -2641,20 +2934,14 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       questionData.errou ? 'erro' : 'acerto',
     ];
 
-    if (questionData.errou && vezes_errado >= 2) {
-      tags.push('erro-recorrente');
-    }
-    if (questionData.errou && vezes_errado >= 3) {
-      tags.push('erro-cronico');
-    }
-    if (questionData.errou && vezes_errado >= 5) {
-      tags.push('erro-critico');
-    }
+    if (finalCount >= 2) tags.push('erro-recorrente');
+    if (finalCount >= 3) tags.push('erro-cronico');
+    if (finalCount >= 5) tags.push('erro-critico');
 
     return tags.filter(Boolean);
   }
 
-  function buildObsidianNote(questionData, aiResult, vezes_errado = 0) {
+  function buildObsidianNote(questionData, aiResult, finalCount = 0) {
     const materia = questionData.materia || aiResult?.materia || 'Geral';
     const subtopico = questionData.assunto || aiResult?.subtopico || '';
     const banca = questionData.banca || '';
@@ -2676,11 +2963,11 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
     const comentario = cleanText(questionData.comentario) || '_N\u00E3o dispon\u00EDvel_';
     const erroId = cleanText(aiResult?.erro_identificado) || '_N\u00E3o gerado_';
 
-    const tags = buildObsidianTags(questionData, vezes_errado);
+    const tags = buildObsidianTags(questionData, finalCount);
     const tagsYaml = tags.map(t => `"${t}"`).join(', ');
 
-    const recorrenciaBadge = questionData.errou && vezes_errado > 0
-      ? `\n> \u26A0\uFE0F **Erro recorrente:** ${vezes_errado}x (total: ${vezes_errado + 1}x)\n`
+    const recorrenciaBadge = finalCount >= 2
+      ? `\n> \u26A0\uFE0F **Erro recorrente:** voc\u00EA j\u00E1 errou esta quest\u00E3o ${finalCount}x\n`
       : '';
 
     return `---
@@ -2692,7 +2979,7 @@ ano: ${ano || '""'}
 cargo: "${cargo}"
 tags: [${tagsYaml}]
 resultado: "${questionData.errou ? 'erro' : 'acerto'}"
-vezes_errado: ${vezes_errado + (questionData.errou ? 1 : 0)}
+vezes_errado: ${finalCount}
 data: ${todayISO()}
 link: "${questionData.url}"
 ---
@@ -2740,14 +3027,31 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     const id = questionData.id || Date.now();
     const filePath = `${basePath}/${materia}/${subtopico}/Q${id}`;
 
-    // Consulta nota existente para contar erros recorrentes
-    let vezes_errado = 0;
+    // ── Contagem de erros: TEC é a fonte de verdade, com PISO ──
+    // Prioridade 1: histórico real de resoluções do TEC (idempotente — reprocessar
+    // não duplica). Mas o histórico pode vir DEFASADO (sem a tentativa atual) ou
+    // PARCIAL (painel paginado), então nunca aceito abaixo do acumulado já gravado
+    // na nota nem abaixo do erro atual.
+    // Prioridade 2 (fallback): incremento local sobre a nota existente.
+    let finalCount;
+    const tecErros = questionData.vezesErradoTec;
+    let existing = { ok: false, exists: false, vezes_errado: 0 };
     if (method === 'rest' && questionData.id) {
-      const existing = await getExistingNoteData(filePath);
-      vezes_errado = existing.vezes_errado;
+      existing = await getExistingNoteData(filePath);
+      if (!existing.ok) {
+        console.warn('⚠️ Não foi possível ler a nota existente — vezes_errado pode ficar impreciso nesta run.');
+      }
+    }
+    const pisoAtual = questionData.errou ? 1 : 0;
+    if (typeof tecErros === 'number') {
+      finalCount = Math.max(tecErros, existing.ok ? existing.vezes_errado : 0, pisoAtual);
+      console.log(`🎯 vezes_errado: TEC=${tecErros}, nota=${existing.ok ? existing.vezes_errado : '?'} → ${finalCount}`);
+    } else {
+      finalCount = existing.vezes_errado + pisoAtual;
+      console.log(`↩️ vezes_errado por incremento local (TEC indisponível): ${existing.vezes_errado} → ${finalCount}`);
     }
 
-    const content = buildObsidianNote(questionData, aiResult, vezes_errado);
+    const content = buildObsidianNote(questionData, aiResult, finalCount);
 
     if (method === 'rest') {
       const port = getSetting('obsidianPort');
@@ -4170,6 +4474,34 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   GM_registerMenuCommand('\uD83D\uDD0D Discovery Mode (debug)', runDiscovery);
   GM_registerMenuCommand('\uD83D\uDCCB Salvar Quest\u00E3o Atual', processCurrentQuestion);
 
+  /**
+   * Compara a vers\u00E3o instalada com a publicada no GitHub (1x/dia) e avisa se
+   * estiver desatualizada \u2014 cards ruins j\u00E1 foram gerados por vers\u00E3o velha rodando
+   * no Tampermonkey sem o usu\u00E1rio perceber.
+   */
+  async function checkScriptFreshness() {
+    try {
+      const last = GM_getValue('lastUpdateCheck', 0);
+      if (Date.now() - last < 24 * 60 * 60 * 1000) return;
+      GM_setValue('lastUpdateCheck', Date.now());
+      const res = await gmFetch(UPDATE_URL, { timeout: 10000 });
+      if (!res.ok) return;
+      const remote = (await res.text()).match(/@version\s+([\d.]+)/)?.[1];
+      if (!remote) return;
+      const rp = remote.split('.').map(Number);
+      const lp = SCRIPT_VERSION.split('.').map(Number);
+      let newer = false;
+      for (let i = 0; i < Math.max(rp.length, lp.length); i++) {
+        const r = rp[i] || 0, l = lp[i] || 0;
+        if (r !== l) { newer = r > l; break; }
+      }
+      if (newer) {
+        showToast(`\u26A0\uFE0F Vers\u00E3o desatualizada! Instalada: v${SCRIPT_VERSION} \u2192 dispon\u00EDvel: v${remote}.<br>Atualize no Tampermonkey para receber as corre\u00E7\u00F5es de cards.`, 'error', 12000);
+        console.warn(`[TEC\u2192Anki] Vers\u00E3o instalada v${SCRIPT_VERSION} < publicada v${remote} \u2014 atualize o userscript!`);
+      }
+    } catch { /* check silencioso \u2014 sem rede, sem aviso */ }
+  }
+
   function init() {
     // Check if we're on a relevant page (quest\u00F5es, estudo, caderno)
     const url = window.location.href;
@@ -4180,10 +4512,13 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     injectToolbar();
 
     // Log init
-    console.log('\uD83D\uDE80 TEC\u2192Anki+Obsidian v1.7.0 carregado em:', window.location.href);
+    console.log(`\uD83D\uDE80 TEC\u2192Anki+Obsidian v${SCRIPT_VERSION} carregado em:`, window.location.href);
 
     // Show confirmation toast on load
-    showToast('TEC\u2192Anki+Obsidian carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB', 'success', 4000);
+    showToast(`TEC\u2192Anki+Obsidian <b>v${SCRIPT_VERSION}</b> carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB`, 'success', 4000);
+
+    // Warn when the installed copy lags the published one (daily check)
+    checkScriptFreshness();
 
     // Check connections periodically (every 2 min)
     updateStatusDot();
