@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.8.0
+// @version      1.9.0
 // @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo com travas anti-contaminação, answer-line legível) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.8.0';
+  const SCRIPT_VERSION = '1.9.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -1327,7 +1327,11 @@ O objetivo NÃO é ensinar o assunto de forma genérica. É CORRIGIR exatamente 
 ### Exemplos de erros comuns e como abordar:
 
 **Erro por TROCA/INVERSÃO de conceitos:**
-Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Prefira Cloze comparativo, mas use Q&A ou Julgue se o Cloze ficar artificial.
+Se a banca trocou as descrições de dois institutos, o card deve forçar o aluno a DISTINGUIR X de Y. Prefira Cloze comparativo, mas use Q&A ou Julgue se o Cloze ficar artificial. Regras do PAR DE DISCRIMINAÇÃO (a distinção só se consolida treinando as DUAS direções):
+- Card 1 na direção feature→instituto (a direção cobrada em prova): "prazo para CONSTITUIR o crédito tributário → {{instituto}}" (verso: decadência)
+- Card 2 na direção INVERSA instituto→feature: "a decadência extingue o poder de {{ação}}" (verso: constituir/lançar)
+- Em AMBOS, preencha o campo "contraste": { instituto_a, instituto_b, feature_discriminante } — a feature deve valer para UM instituto e NÃO para o outro
+- Se o limite de cards for 1, gere só o Card 1 (direção de prova), mas preencha o contraste mesmo assim
 
 **Erro por EXCEÇÃO desconhecida:**
 Se o aluno generalizou uma regra que tem exceção, o card deve focar na exceção via Cloze: "A regra X se aplica, EXCETO quando {{situação}}."
@@ -1415,6 +1419,7 @@ Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos
 ### Regras de formatação:
 - Em cards Cloze: use <mark> na lacuna assim: <mark>{{rotulo_generico}}</mark> para destacar visualmente a informação oculta
 - No verso, use SEMPRE a estrutura: <div class="answer-line">RESPOSTA CURTA</div> + <div class="explanation">explicação</div>. A answer-line é SÓ a resposta direta/termo — NO MÁXIMO uma oração curta (≈ até 12 palavras). NUNCA jogue o contraste/explicação inteiro na answer-line (senão vira um bloco enorme e ilegível). Para distinções, a answer-line traz só a conclusão curta; o detalhe vai na explanation, com <mark>/<b> nas palavras discriminantes
+- **A explanation NUNCA é texto corrido sem destaques (obrigatório):** toda explicação deve permitir LEITURA DINÂMICA — o olho precisa capturar a ideia central sem ler tudo. Aplique: <b> nos 1-3 termos/institutos centrais, <mark> na ÚNICA palavra que decide a distinção (feature discriminante), <span class="ref"> em TODA referência normativa ou julgado (artigo, súmula, tema, lei) e <span class="neg"> na negação/exceção pivô. Uma explicação sem nenhum destaque está ERRADA
 - **ORÇAMENTO DE DESTAQUE (evite poluição visual):** no MÁXIMO 1 <mark> por FACE do card — na FRENTE, o único <mark> é o da lacuna (<mark>{{rotulo}}</mark>); no VERSO, o único <mark> vai na feature discriminante (a palavra que diferencia X de Y ou a palavra-armadilha). Além disso: no MÁXIMO 2-3 <b> por card (só os conceitos centrais); <span class="neg"> apenas na negação/exceção que é o PIVÔ do erro. Se quase tudo está destacado, nada se destaca (o realce perde a função de guiar o olho).
 - Em cards de distinção/pegadinha, o <mark> do verso deve cair na FEATURE DISCRIMINANTE (a palavra que diferencia X de Y, ou a palavra-armadilha) — não numa palavra qualquer
 - Use <span class="neg"> para negação, vedação, exceção ou contraste ("NÃO", "vedado", "salvo", "exceto"), respeitando o orçamento acima
@@ -1457,8 +1462,17 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
             frente_texto_limpo: { type: 'string', description: 'Card autocontido em texto puro. Se for Cloze, use {{rotulo_generico}}, nunca a resposta preenchida.' },
             verso_texto_limpo: { type: 'string', description: '1ª linha = SÓ a resposta curta (termo/expressão, máx. 12 palavras). Depois LINHA EM BRANCO e a explicação breve em parágrafo separado. NUNCA misture explicação na 1ª linha.' },
             frente_html: { type: 'string', description: 'Mesmo conteúdo da frente com HTML e destaque visual; se for Cloze, use <mark>{{rotulo_generico}}</mark>.' },
-            verso_html: { type: 'string', description: 'Verso em HTML, OBRIGATORIAMENTE com <div class="answer-line">APENAS a resposta curta</div> seguido de <div class="explanation">explicação breve</div>. A explicação NUNCA vai dentro da answer-line.' },
+            verso_html: { type: 'string', description: 'Verso em HTML, OBRIGATORIAMENTE com <div class="answer-line">APENAS a resposta curta</div> seguido de <div class="explanation">explicação breve COM destaques: <b> nos 1-3 termos centrais, <mark> na palavra discriminante, <span class="ref"> nas referências, <span class="neg"> na negação pivô</div>. A explicação NUNCA vai dentro da answer-line nem em texto corrido sem destaques.' },
             palavras_chave: { type: 'string', description: 'Express\u00F5es can\u00F4nicas da lei/doutrina que identificam este conceito jur\u00EDdico, separadas por " | ". Vazio se n\u00E3o houver.' },
+            contraste: {
+              type: 'object',
+              description: 'OPCIONAL: presente só quando o card treina a distinção entre dois institutos confundíveis.',
+              properties: {
+                instituto_a: { type: 'string' },
+                instituto_b: { type: 'string' },
+                feature_discriminante: { type: 'string', description: 'A característica que vale para UM instituto e não para o outro' },
+              },
+            },
           },
           required: ['tipo', 'frente_texto_limpo', 'verso_texto_limpo', 'frente_html', 'verso_html', 'palavras_chave'],
         },
@@ -1484,8 +1498,9 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
       "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e NUNCA a resposta preenchida",
       "verso_texto_limpo": "string - 1ª linha = SÓ a resposta curta (termo/expressão, máx. 12 palavras), depois LINHA EM BRANCO e a explicação breve em parágrafo separado. NUNCA misture explicação na 1ª linha",
       "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
-      "verso_html": "string - verso em HTML: <div class=\\"answer-line\\">APENAS a resposta curta</div> seguido de <div class=\\"explanation\\">explicação breve</div>; a explicação NUNCA vai dentro da answer-line",
-      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver"
+      "verso_html": "string - verso em HTML: <div class=\\"answer-line\\">APENAS a resposta curta</div> seguido de <div class=\\"explanation\\">explicação breve COM destaques: <b> nos 1-3 termos centrais, <mark> na palavra discriminante, <span class=\\"ref\\"> nas referências normativas/julgados, <span class=\\"neg\\"> na negação pivô</div>; a explicação NUNCA vai dentro da answer-line nem em texto corrido sem destaques",
+      "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver",
+      "contraste": "objeto OPCIONAL, só quando o card treina distinção entre dois institutos confundíveis: { \\"instituto_a\\": \\"nome\\", \\"instituto_b\\": \\"nome\\", \\"feature_discriminante\\": \\"a característica que vale para UM e não para o outro\\" }"
     }
   ]
 }`;
@@ -1665,6 +1680,64 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return `<div class="answer-line">${answerLine}</div>${explanation}`;
   }
 
+  /** Referências normativas/julgados — uma alternação única, aplicada em UMA passada (sem risco de wrap aninhado). */
+  const REF_REGEX = new RegExp([
+    // Súmula 539 do STJ | Súmula Vinculante 13
+    'S[úu]mula(?:\\s+Vinculante)?\\s+(?:n[ºo.]?\\s*)?\\d+(?:\\s+d[oa]\\s+ST[FJ])?',
+    // Tema 377 STF | Tema de Repercussão Geral 1.234
+    'Tema(?:\\s+de\\s+Repercuss[ãa]o\\s+Geral)?\\s+(?:n[ºo.]?\\s*)?\\d+(?:\\.\\d+)*(?:\\s+(?:d[oa]\\s+)?ST[FJ])?',
+    // ADI 1923 | RE 579.951 | REsp 1.111.234 | RMS 25988
+    '(?:ADI|ADC|ADPF|RE|REsp|AREsp|EREsp|RMS|SV)\\s*(?:n[ºo.]?\\s*)?\\d+(?:\\.\\d+)*',
+    // [CF/88,] art. 37, § 9º[, da CF/88 | do CTN | da LC 87/96 | da Lei 9.637/98]
+    '(?:(?:CF(?:\\/\\d{2,4})?|CTN|CPC|CC|CLT|LRF|LC\\s*[\\d.]+\\/\\d+|Lei\\s+(?:n[ºo.]?\\s*)?[\\d.]+\\/\\d+)\\s*,?\\s*)?arts?\\.\\s*\\d+(?:[ºo°])?(?:\\s*,\\s*(?:§\\s*\\d+(?:[ºo°])?|inc(?:iso)?s?\\.?\\s*[IVXLCDM]+|[IVXLCDM]+\\b|al[íi]nea\\s+.))*(?:\\s*,?\\s*d[oa]\\s+(?:CF(?:\\/\\d{2,4})?|CTN|CPC|CC|CLT|LRF|LC\\s*[\\d.]+\\/?\\d*|Lei\\s+(?:n[ºo.]?\\s*)?[\\d.]+\\/?\\d*))?',
+    // LC 87/96 | Lei 9.637/98 | CF/88 | LRF (soltos)
+    'LC\\s*(?:n[ºo.]?\\s*)?[\\d.]+\\/\\d+',
+    'Lei\\s+(?:n[ºo.]?\\s*)?[\\d.]+\\/\\d+',
+    'CF\\/\\d{2,4}',
+    '\\bLRF\\b',
+  ].join('|'), 'g');
+
+  const NEG_REGEX = /\b(n[ãa]o\s+(?:se\s+)?(?:pode(?:m|r[áã]o?)?|incid(?:e|em|ir[áã])|aplic(?:a|am)(?:-se)?|configur(?:a|am)(?:-se)?|confund(?:e|em)(?:-se)?|h[áa]|exig(?:e|em)|admit(?:e|em)|abrang(?:e|em)|alcan[çc](?:a|am))|vedad[oa]s?|exceto|salvo(?:\s+disposi[çc][ãa]o)?|nunca|jamais|proibid[oa]s?|exce[çc][ãa]o)\b/gi;
+
+  /**
+   * Destaques determinísticos na EXPLICAÇÃO quando o LLM entregou texto corrido:
+   * referências normativas → <span class="ref">, negações/exceções → <span class="neg">
+   * (máx. 3) e palavras-chave do card → <b> (1ª ocorrência). Só age em explicação
+   * SEM NENHUMA tag de destaque — nunca retoca formatação que o modelo já fez.
+   */
+  function enrichExplanationHtml(versoHtml, palavrasChave) {
+    if (!versoHtml || !/class="explanation"/i.test(versoHtml)) return versoHtml;
+    return versoHtml.replace(/(<div class="explanation">)([\s\S]*)(<\/div>)/i, (all, open, body, close) => {
+      if (/<(b|mark|u|span)\b/i.test(body)) return all; // já veio formatado — não toca
+
+      // Trabalha só nos trechos de TEXTO (preserva divs estruturais/<br>)
+      const enrichText = (txt) => {
+        let out = txt.replace(REF_REGEX, '<span class="ref">$&</span>');
+        let negCount = 0;
+        out = out.split(/(<[^>]+>)/).map((tok, i) => {
+          if (i % 2 === 1) return tok;
+          return tok.replace(NEG_REGEX, (m) => (++negCount <= 3 ? `<span class="neg">${m}</span>` : m));
+        }).join('');
+        return out;
+      };
+
+      let enriched = body.split(/(<[^>]+>)/).map((tok, i) => (i % 2 === 1 ? tok : enrichText(tok))).join('');
+
+      // Palavras-chave do card presentes na explicação viram <b> (1ª ocorrência)
+      for (const kw of (palavrasChave || '').split(/\s*\|\s*/).map(s => s.trim()).filter(k => k.length >= 4)) {
+        const esc = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(`(${esc})`, 'i');
+        const toks = enriched.split(/(<[^>]+>)/);
+        for (let i = 0; i < toks.length; i += 2) {
+          if (re.test(toks[i])) { toks[i] = toks[i].replace(re, '<b>$1</b>'); break; }
+        }
+        enriched = toks.join('');
+      }
+
+      return open + enriched + close;
+    });
+  }
+
   function normalizeGeneratedCard(card) {
     const normalized = { ...card };
 
@@ -1689,9 +1762,10 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
     normalized.verso_texto_limpo = normalizeBackText(normalized.verso_texto_limpo || normalized.verso || '');
     normalized.verso_html = formatCardBack(normalized.verso_html || normalized.verso || normalized.verso_texto_limpo);
+    normalized.palavras_chave = normalizeKeywords(normalized.palavras_chave);
+    normalized.verso_html = enrichExplanationHtml(normalized.verso_html, normalized.palavras_chave);
     normalized.frente = normalized.frente_html;
     normalized.verso = normalized.verso_html;
-    normalized.palavras_chave = normalizeKeywords(normalized.palavras_chave);
     return normalized;
   }
 
@@ -2002,6 +2076,7 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 14. **Literalidade de lei seca:** se o card se apresenta como texto de dispositivo legal, confira a fidelidade ao trecho citado no comentário do professor. Paráfrase disfarçada de literalidade = REJEITADO.
 15. **Direção da tese (jurisprudência):** o verbo de comando do card confere com o comentário (incide↔não incide, constitucional↔inconstitucional, pode↔não pode)? O tribunal está correto (STF↔STJ)? Inversão = REJEITADO.
 16. **Julgue:** assertiva com mais de um ponto de decisão, ou verso que não NOMEIA a palavra-crítica que decide o item, REJEITE.
+17. **Discriminação (campo contraste):** se o card traz "contraste", a feature_discriminante deve ser verdadeira para UM instituto e falsa para o outro. Se a feature vale para ambos (ou para nenhum), o par não discrimina nada — REJEITE.
 
 AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos). O relato do aluno serve SÓ para julgar relevância (se o card mira a dúvida certa); ele JAMAIS valida um card juridicamente incorreto.
 
@@ -2831,6 +2906,12 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       if (getSetting('pipelineMode') === 'dual') cardTags.push('dual-pipeline');
       if (cloze) cardTags.push('cloze-nativo');
       if ((card.tipo || '').toLowerCase() === 'julgue') cardTags.push('julgue');
+      // Cluster de interferência: pares confundíveis ficam pesquisáveis juntos
+      // (tag:confusao::decadencia-vs-prescricao) para drill interleaved.
+      if (card.contraste && card.contraste.instituto_a && card.contraste.instituto_b) {
+        const par = [slugify(card.contraste.instituto_a), slugify(card.contraste.instituto_b)].sort().join('-vs-');
+        cardTags.push(`confusao::${par}`);
+      }
       const common = {
         PalavrasChave: palavrasChaveHtml(card),
         Contexto: contexto,
@@ -3700,6 +3781,194 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   }
 
   // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
+  // \u2551        10.5 MANUTEN\u00C7\u00C3O DO ESTUDO (V\u00E9spera + Leeches)         \u2551
+  // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
+
+  /** \uD83C\uDFAF Modo V\u00E9spera: traz para HOJE os N cards mais errados (opcional: por banca). */
+  async function showVesperaModal() {
+    if (!(await ankiIsConnected().catch(() => false))) {
+      showToast('Anki n\u00E3o est\u00E1 acess\u00EDvel \u2014 abra o Anki Desktop com o AnkiConnect ativo.', 'error');
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'tec-modal-overlay';
+    overlay.innerHTML = `
+      <div class="tec-modal" style="width:420px;">
+        <div class="tec-modal-header"><h2>\uD83C\uDFAF Modo V\u00E9spera</h2><button class="tec-modal-close" data-action="close">\u00D7</button></div>
+        <div class="tec-modal-body">
+          <p style="font-size:13px;color:#555;margin-top:0">Traz para a revis\u00E3o de <b>hoje</b> os cards que voc\u00EA mais errou (maior n\u00BA de lapsos), sem corromper o agendamento FSRS. Ideal para reta final e pr\u00E9-simulado.</p>
+          <label style="font-size:12px;font-weight:600">Banca</label>
+          <select id="tec-vespera-banca" style="width:100%;padding:6px;margin:4px 0 12px;">
+            <option value="">Todas</option>
+            <option value="tag:cebraspe-cespe">CEBRASPE</option>
+            <option value="tag:fgv">FGV</option>
+            <option value="tag:fcc">FCC</option>
+          </select>
+          <label style="font-size:12px;font-weight:600">Quantidade de cards</label>
+          <input id="tec-vespera-n" type="number" value="100" min="10" max="500" style="width:100%;padding:6px;margin:4px 0;">
+        </div>
+        <div class="tec-modal-footer">
+          <button class="tec-btn tec-btn-cancel" data-action="close">Cancelar</button>
+          <button class="tec-btn tec-btn-save" data-action="go">\uD83C\uDFAF Montar drill</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', async (e) => {
+      const action = e.target.closest('[data-action]')?.dataset.action;
+      if (!action) return;
+      if (action === 'go') {
+        const bancaTag = overlay.querySelector('#tec-vespera-banca').value;
+        const n = Math.max(1, parseInt(overlay.querySelector('#tec-vespera-n').value, 10) || 100);
+        overlay.remove();
+        await runVesperaDrill(bancaTag, n);
+      } else {
+        overlay.remove();
+      }
+    });
+  }
+
+  async function runVesperaDrill(bancaTag, n) {
+    const loading = showLoadingToast('\uD83C\uDFAF Buscando os cards mais errados...');
+    try {
+      const prefix = getSetting('ankiDeckPrefix');
+      const query = `"deck:${prefix}*" -is:suspended -is:new ${bancaTag || ''}`.trim();
+      const cardIds = await ankiInvoke('findCards', { query });
+      if (!cardIds || !cardIds.length) { showToast('Nenhum card encontrado para esse filtro.', 'warning'); return; }
+      const info = await ankiInvoke('cardsInfo', { cards: cardIds });
+      // Mais lapsos primeiro; empate \u2192 menor intervalo (mem\u00F3ria mais fraca)
+      const ranked = info.sort((a, b) => (b.lapses - a.lapses) || (a.interval - b.interval)).slice(0, n);
+      await ankiInvoke('setDueDate', { cards: ranked.map(c => c.cardId), days: '0' });
+      const noteIds = [...new Set(ranked.map(c => c.note))];
+      await ankiInvoke('addTags', { notes: noteIds, tags: `drill::vespera-${todayISO()}` });
+      const comLapso = ranked.filter(c => c.lapses > 0).length;
+      showToast(`\uD83C\uDFAF Drill montado: ${ranked.length} card(s) na revis\u00E3o de hoje (${comLapso} com lapso). Bons estudos!`, 'success', 6000);
+    } catch (err) {
+      showToast(`Erro ao montar o drill: ${err.message}`, 'error', 6000);
+    } finally {
+      loading.remove();
+    }
+  }
+
+  /** Reescreve um leech com o modelo auditor: at\u00F4mico, inequ\u00EDvoco, com contexto \u2014 e reinicia o agendamento. */
+  async function reformulateLeech(row) {
+    const model = getSetting('auditorModel');
+    const isCloze = 'Text' in row.fields;
+    const erro = stripHtml(((row.fields.ErroIdentificado || {}).value || ''));
+    const prompt = `Este flashcard de concurso foi errado ${row.lapses} vezes no Anki (leech). Card que apanha tanto tem problema de DESIGN: amb\u00EDguo, longo demais, sem contexto suficiente na frente, ou testando dois fatos.
+
+CARD ATUAL (${isCloze ? 'Cloze nativo do Anki' : 'Frente/Verso'}):
+${isCloze
+  ? `Text: ${(row.fields.Text || {}).value || ''}\nBackExtra: ${(row.fields.BackExtra || {}).value || ''}`
+  : `Frente: ${(row.fields.Frente || {}).value || ''}\nVerso: ${(row.fields.Verso || {}).value || ''}`}
+${erro ? `\nErro original do aluno: ${erro}` : ''}
+
+Reescreva o card: at\u00F4mico (1 fato), inequ\u00EDvoco (UMA resposta defens\u00E1vel), com contexto suficiente na frente${isCloze ? ', mantendo EXATAMENTE o formato {{c1::resposta_curta::dica}} com a resposta CURTA (termo, nunca frase)' : ''}. Use os destaques HTML (<b>, <mark>, <span class="ref">, <span class="neg">) com parcim\u00F4nia. N\u00E3o mude o fato jur\u00EDdico testado \u2014 mude o DESIGN.
+
+Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_extra": "string" }' : '{ "frente_html": "string", "verso_html": "string" }'}`;
+
+    const result = await callOpenRouterWithModel(model, 'Voc\u00EA \u00E9 um especialista em flashcards Anki para concursos p\u00FAblicos brasileiros. Responda somente com JSON v\u00E1lido.', prompt);
+    if (isCloze && !/\{\{c1::[^}]{1,90}\}\}/.test(result.text || '')) throw new Error('Reformula\u00E7\u00E3o sem {{c1::...}} curto e v\u00E1lido \u2014 abortada');
+    if (!isCloze && (!result.frente_html || !result.verso_html)) throw new Error('Reformula\u00E7\u00E3o incompleta \u2014 abortada');
+
+    const fields = isCloze
+      ? { Text: result.text, BackExtra: result.back_extra || '' }
+      : { Frente: result.frente_html, Verso: enrichExplanationHtml(formatCardBack(result.verso_html), '') };
+    await ankiInvoke('updateNoteFields', { note: { id: row.note, fields } });
+    await ankiInvoke('removeTags', { notes: [row.note], tags: 'leech' });
+    await ankiInvoke('addTags', { notes: [row.note], tags: `reformulado::${todayISO()}` });
+    // Conte\u00FAdo novo = mem\u00F3ria nova: reinicia o estado de agendamento do card
+    const noteCards = await ankiInvoke('findCards', { query: `nid:${row.note}` });
+    if (noteCards && noteCards.length) await ankiInvoke('forgetCards', { cards: noteCards });
+  }
+
+  /** \uD83E\uDE78 Painel de leeches: cards com 3+ lapsos \u2014 reformular com IA, suspender ou excluir. */
+  async function showLeechPanel() {
+    if (!(await ankiIsConnected().catch(() => false))) {
+      showToast('Anki n\u00E3o est\u00E1 acess\u00EDvel \u2014 abra o Anki Desktop com o AnkiConnect ativo.', 'error');
+      return;
+    }
+    const loading = showLoadingToast('\uD83E\uDE78 Procurando cards problem\u00E1ticos...');
+    let rows = [];
+    try {
+      const prefix = getSetting('ankiDeckPrefix');
+      const cardIds = await ankiInvoke('findCards', { query: `"deck:${prefix}*" (tag:leech OR prop:lapses>=3) -is:suspended` });
+      if (!cardIds || !cardIds.length) {
+        showToast('Nenhum leech encontrado \uD83C\uDF89 \u2014 seus cards est\u00E3o saud\u00E1veis.', 'success', 5000);
+        return;
+      }
+      const info = await ankiInvoke('cardsInfo', { cards: cardIds.slice(0, 200) });
+      const byNote = new Map();
+      for (const c of info) {
+        const prev = byNote.get(c.note);
+        if (!prev || c.lapses > prev.lapses) byNote.set(c.note, c);
+      }
+      rows = [...byNote.values()].sort((a, b) => b.lapses - a.lapses).slice(0, 30);
+    } catch (err) {
+      showToast(`Erro ao buscar leeches: ${err.message}`, 'error', 6000);
+      return;
+    } finally {
+      loading.remove();
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'tec-modal-overlay';
+    const rowHtml = (r, i) => `
+      <div class="tec-card-preview" data-row="${i}" style="display:flex;gap:8px;align-items:flex-start;justify-content:space-between;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:11px;color:#ef476f;font-weight:700;">${r.lapses} lapso(s)</div>
+          <div class="card-front" style="word-break:break-word;">${stripHtml(((r.fields.Frente || r.fields.Text || {}).value || '')).slice(0, 150)}</div>
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0;">
+          <button class="tec-btn" data-act="ref" data-i="${i}" title="Reformular com IA e reiniciar agendamento" style="padding:4px 8px;">\uD83E\uDD16</button>
+          <button class="tec-btn" data-act="susp" data-i="${i}" title="Suspender" style="padding:4px 8px;">\u23F8\uFE0F</button>
+          <button class="tec-btn" data-act="del" data-i="${i}" title="Excluir nota" style="padding:4px 8px;">\uD83D\uDDD1\uFE0F</button>
+        </div>
+      </div>`;
+    overlay.innerHTML = `
+      <div class="tec-modal" style="width:640px;max-height:80vh;display:flex;flex-direction:column;">
+        <div class="tec-modal-header"><h2>\uD83E\uDE78 Cards problem\u00E1ticos (${rows.length})</h2><button class="tec-modal-close" data-act="close">\u00D7</button></div>
+        <div class="tec-modal-body" style="overflow-y:auto;">
+          <p style="font-size:12px;color:#555;margin-top:0">Cards com 3+ lapsos s\u00E3o problema de <b>design</b>, n\u00E3o de mem\u00F3ria (SuperMemo: "reformulate leeches, don't drill them"). Reformular reescreve com o modelo auditor e reinicia o agendamento.</p>
+          ${rows.map(rowHtml).join('')}
+        </div>
+        <div class="tec-modal-footer"><button class="tec-btn tec-btn-cancel" data-act="close">Fechar</button></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      if (act === 'close') { overlay.remove(); return; }
+      const row = rows[parseInt(btn.dataset.i, 10)];
+      const rowEl = overlay.querySelector(`[data-row="${btn.dataset.i}"]`);
+      if (!row) return;
+      try {
+        if (act === 'susp') {
+          await ankiInvoke('suspend', { cards: [row.cardId] });
+          rowEl.style.opacity = '0.35';
+          showToast('\u23F8\uFE0F Card suspenso.', 'info');
+        } else if (act === 'del') {
+          if (!confirm('Excluir esta NOTA (e todos os cards dela) do Anki? Esta a\u00E7\u00E3o n\u00E3o pode ser desfeita pelo script.')) return;
+          await ankiInvoke('deleteNotes', { notes: [row.note] });
+          rowEl.remove();
+          showToast('\uD83D\uDDD1\uFE0F Nota exclu\u00EDda.', 'info');
+        } else if (act === 'ref') {
+          btn.textContent = '\u23F3';
+          btn.disabled = true;
+          await reformulateLeech(row);
+          rowEl.style.opacity = '0.35';
+          btn.textContent = '\u2705';
+          showToast(`\uD83E\uDD16 Card reformulado e reiniciado (tag reformulado::${todayISO()}).`, 'success', 5000);
+        }
+      } catch (err) {
+        btn.textContent = '\uD83E\uDD16';
+        btn.disabled = false;
+        showToast(`Erro: ${err.message}`, 'error', 6000);
+      }
+    });
+  }
+
+  // \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557
   // \u2551                  11. FLOATING TOOLBAR                        \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
@@ -3718,6 +3987,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         \uD83D\uDCCB Erros
       </button>
       <button class="tec-btn-icon" id="tec-btn-thought" title="Anotar/editar meu racioc\u00EDnio nesta quest\u00E3o">\uD83D\uDCAD</button>
+      <button class="tec-btn-icon" id="tec-btn-vespera" title="Modo v\u00E9spera \u2014 drill dos cards mais errados">\uD83C\uDFAF</button>
+      <button class="tec-btn-icon" id="tec-btn-leech" title="Cards problem\u00E1ticos (leeches) \u2014 reformular com IA">\uD83E\uDE78</button>
       <button class="tec-btn-icon" id="tec-btn-settings" title="Configura\u00E7\u00F5es">\u2699\uFE0F</button>
       <div class="tec-status-dot" id="tec-status-dot" title="Status das conex\u00F5es"></div>
     `;
@@ -3727,6 +3998,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     document.getElementById('tec-btn-save').addEventListener('click', () => processCurrentQuestion());
     document.getElementById('tec-btn-batch').addEventListener('click', () => processBatchQuestions());
     document.getElementById('tec-btn-thought').addEventListener('click', () => openThoughtForCurrentQuestion());
+    document.getElementById('tec-btn-vespera').addEventListener('click', () => showVesperaModal());
+    document.getElementById('tec-btn-leech').addEventListener('click', () => showLeechPanel());
     document.getElementById('tec-btn-settings').addEventListener('click', () => showSettingsPanel());
 
     statusDot = document.getElementById('tec-status-dot');
@@ -4473,6 +4746,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   GM_registerMenuCommand('\u2699\uFE0F Configura\u00E7\u00F5es', showSettingsPanel);
   GM_registerMenuCommand('\uD83D\uDD0D Discovery Mode (debug)', runDiscovery);
   GM_registerMenuCommand('\uD83D\uDCCB Salvar Quest\u00E3o Atual', processCurrentQuestion);
+  GM_registerMenuCommand('🎯 Modo Véspera', showVesperaModal);
+  GM_registerMenuCommand('🩸 Cards problemáticos (leeches)', showLeechPanel);
 
   /**
    * Compara a vers\u00E3o instalada com a publicada no GitHub (1x/dia) e avisa se
