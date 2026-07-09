@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.9.0
+// @version      1.10.0
 // @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo com travas anti-contaminação, answer-line legível) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.9.0';
+  const SCRIPT_VERSION = '1.10.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -3784,19 +3784,87 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   // \u2551        10.5 MANUTEN\u00C7\u00C3O DO ESTUDO (V\u00E9spera + Leeches)         \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  /** \uD83C\uDFAF Modo V\u00E9spera: traz para HOJE os N cards mais errados (opcional: por banca). */
+  /** L\u00EA os decks do prefixo e monta a \u00E1rvore mat\u00E9ria \u2192 Set(assuntos). */
+  async function loadTecDeckTree() {
+    const prefix = getSetting('ankiDeckPrefix');
+    const names = await ankiInvoke('deckNames');
+    const tree = new Map();
+    for (const name of names || []) {
+      if (name !== prefix && !name.startsWith(prefix + '::')) continue;
+      const rest = name === prefix ? '' : name.slice(prefix.length + 2);
+      if (!rest) continue;
+      const parts = rest.split('::');
+      const materia = parts[0];
+      if (!tree.has(materia)) tree.set(materia, new Set());
+      if (parts[1]) tree.get(materia).add(parts[1]);
+    }
+    return tree;
+  }
+
+  /** Monta a query de busca do drill a partir dos filtros escolhidos. */
+  function buildVesperaQuery(prefix, materia, assuntos, bancaTag, includeNew) {
+    let deckPart;
+    if (!materia) {
+      deckPart = `"deck:${prefix}*"`;
+    } else if (!assuntos.length) {
+      deckPart = `"deck:${prefix}::${materia}"`;
+    } else {
+      deckPart = '(' + assuntos.map(a => `"deck:${prefix}::${materia}::${a}"`).join(' OR ') + ')';
+    }
+    const parts = [deckPart, '-is:suspended'];
+    if (!includeNew) parts.push('-is:new');
+    if (bancaTag) parts.push(bancaTag);
+    return parts.join(' ');
+  }
+
+  /**
+   * \uD83C\uDFAF Modo V\u00E9spera: traz para HOJE os cards mais errados de um recorte
+   * (mat\u00E9ria, assuntos espec\u00EDficos, banca). Ideal para reta final, pr\u00E9-simulado
+   * ou revis\u00E3o dirigida de 1-2 assuntos.
+   */
   async function showVesperaModal() {
     if (!(await ankiIsConnected().catch(() => false))) {
       showToast('Anki n\u00E3o est\u00E1 acess\u00EDvel \u2014 abra o Anki Desktop com o AnkiConnect ativo.', 'error');
       return;
     }
+    const loading = showLoadingToast('\uD83C\uDFAF Carregando mat\u00E9rias e assuntos...');
+    let tree;
+    try {
+      tree = await loadTecDeckTree();
+    } catch (err) {
+      loading.remove();
+      showToast(`Erro ao ler os decks: ${err.message}`, 'error', 6000);
+      return;
+    }
+    loading.remove();
+
+    const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const materias = [...tree.keys()].sort((a, b) => a.localeCompare(b, 'pt'));
+    let currentAssuntos = []; // assuntos da mat\u00E9ria escolhida (por \u00EDndice nos checkboxes)
+
     const overlay = document.createElement('div');
     overlay.className = 'tec-modal-overlay';
     overlay.innerHTML = `
-      <div class="tec-modal" style="width:420px;">
+      <div class="tec-modal" style="width:460px;">
         <div class="tec-modal-header"><h2>\uD83C\uDFAF Modo V\u00E9spera</h2><button class="tec-modal-close" data-action="close">\u00D7</button></div>
         <div class="tec-modal-body">
-          <p style="font-size:13px;color:#555;margin-top:0">Traz para a revis\u00E3o de <b>hoje</b> os cards que voc\u00EA mais errou (maior n\u00BA de lapsos), sem corromper o agendamento FSRS. Ideal para reta final e pr\u00E9-simulado.</p>
+          <p style="font-size:13px;color:#555;margin-top:0">Traz para a revis\u00E3o de <b>hoje</b> os cards mais errados do recorte escolhido, sem corromper o agendamento FSRS. Use para reta final, pr\u00E9-simulado ou revis\u00E3o dirigida de assuntos espec\u00EDficos.</p>
+
+          <label style="font-size:12px;font-weight:600">Mat\u00E9ria</label>
+          <select id="tec-vespera-materia" style="width:100%;padding:6px;margin:4px 0 12px;">
+            <option value="">Todas as mat\u00E9rias</option>
+            ${materias.map((m, i) => `<option value="${i}">${esc(m)}</option>`).join('')}
+          </select>
+
+          <div id="tec-vespera-assuntos-wrap" style="display:none;margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600">Assuntos <span style="font-weight:400;color:#888">(nenhum marcado = todos da mat\u00E9ria)</span></label>
+            <div style="display:flex;gap:8px;margin:4px 0;">
+              <button type="button" class="tec-btn tec-btn-cancel" data-action="assuntos-all" style="padding:3px 10px;font-size:11px;">Marcar todos</button>
+              <button type="button" class="tec-btn tec-btn-cancel" data-action="assuntos-none" style="padding:3px 10px;font-size:11px;">Limpar</button>
+            </div>
+            <div id="tec-vespera-assuntos" style="max-height:180px;overflow-y:auto;border:1px solid #ddd;border-radius:8px;padding:8px;font-size:13px;"></div>
+          </div>
+
           <label style="font-size:12px;font-weight:600">Banca</label>
           <select id="tec-vespera-banca" style="width:100%;padding:6px;margin:4px 0 12px;">
             <option value="">Todas</option>
@@ -3804,8 +3872,13 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <option value="tag:fgv">FGV</option>
             <option value="tag:fcc">FCC</option>
           </select>
-          <label style="font-size:12px;font-weight:600">Quantidade de cards</label>
-          <input id="tec-vespera-n" type="number" value="100" min="10" max="500" style="width:100%;padding:6px;margin:4px 0;">
+
+          <label class="tec-toggle" style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px;cursor:pointer;">
+            <input type="checkbox" id="tec-vespera-new" style="width:18px;height:18px;"> Incluir cards novos (ainda n\u00E3o estudados)
+          </label>
+
+          <label style="font-size:12px;font-weight:600">Limite de cards</label>
+          <input id="tec-vespera-n" type="number" value="100" min="5" max="999" style="width:100%;padding:6px;margin:4px 0;">
         </div>
         <div class="tec-modal-footer">
           <button class="tec-btn tec-btn-cancel" data-action="close">Cancelar</button>
@@ -3813,27 +3886,57 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         </div>
       </div>`;
     document.body.appendChild(overlay);
+
+    const materiaSel = overlay.querySelector('#tec-vespera-materia');
+    const assuntosWrap = overlay.querySelector('#tec-vespera-assuntos-wrap');
+    const assuntosBox = overlay.querySelector('#tec-vespera-assuntos');
+    materiaSel.addEventListener('change', () => {
+      const idx = materiaSel.value;
+      if (idx === '') { assuntosWrap.style.display = 'none'; currentAssuntos = []; return; }
+      currentAssuntos = [...(tree.get(materias[+idx]) || [])].sort((a, b) => a.localeCompare(b, 'pt'));
+      if (!currentAssuntos.length) { assuntosWrap.style.display = 'none'; return; }
+      assuntosBox.innerHTML = currentAssuntos.map((a, i) =>
+        `<label style="display:block;padding:2px 0;cursor:pointer;"><input type="checkbox" data-idx="${i}" style="margin-right:6px;">${esc(a)}</label>`
+      ).join('');
+      assuntosWrap.style.display = '';
+    });
+
     overlay.addEventListener('click', async (e) => {
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (!action) return;
+      if (action === 'assuntos-all') {
+        assuntosBox.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+        return;
+      }
+      if (action === 'assuntos-none') {
+        assuntosBox.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        return;
+      }
       if (action === 'go') {
+        const materia = materiaSel.value === '' ? '' : materias[+materiaSel.value];
+        const assuntos = [...assuntosBox.querySelectorAll('input[type="checkbox"]:checked')]
+          .map(cb => currentAssuntos[+cb.dataset.idx]).filter(Boolean);
         const bancaTag = overlay.querySelector('#tec-vespera-banca').value;
+        const includeNew = overlay.querySelector('#tec-vespera-new').checked;
         const n = Math.max(1, parseInt(overlay.querySelector('#tec-vespera-n').value, 10) || 100);
         overlay.remove();
-        await runVesperaDrill(bancaTag, n);
+        const label = materia
+          ? (assuntos.length ? `${materia} \u00B7 ${assuntos.length} assunto(s)` : materia)
+          : 'Todas as mat\u00E9rias';
+        await runVesperaDrill(materia, assuntos, bancaTag, includeNew, n, label);
       } else {
         overlay.remove();
       }
     });
   }
 
-  async function runVesperaDrill(bancaTag, n) {
+  async function runVesperaDrill(materia, assuntos, bancaTag, includeNew, n, label) {
     const loading = showLoadingToast('\uD83C\uDFAF Buscando os cards mais errados...');
     try {
       const prefix = getSetting('ankiDeckPrefix');
-      const query = `"deck:${prefix}*" -is:suspended -is:new ${bancaTag || ''}`.trim();
+      const query = buildVesperaQuery(prefix, materia, assuntos, bancaTag, includeNew);
       const cardIds = await ankiInvoke('findCards', { query });
-      if (!cardIds || !cardIds.length) { showToast('Nenhum card encontrado para esse filtro.', 'warning'); return; }
+      if (!cardIds || !cardIds.length) { showToast(`Nenhum card encontrado para "${label}".`, 'warning', 5000); return; }
       const info = await ankiInvoke('cardsInfo', { cards: cardIds });
       // Mais lapsos primeiro; empate \u2192 menor intervalo (mem\u00F3ria mais fraca)
       const ranked = info.sort((a, b) => (b.lapses - a.lapses) || (a.interval - b.interval)).slice(0, n);
@@ -3841,7 +3944,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       const noteIds = [...new Set(ranked.map(c => c.note))];
       await ankiInvoke('addTags', { notes: noteIds, tags: `drill::vespera-${todayISO()}` });
       const comLapso = ranked.filter(c => c.lapses > 0).length;
-      showToast(`\uD83C\uDFAF Drill montado: ${ranked.length} card(s) na revis\u00E3o de hoje (${comLapso} com lapso). Bons estudos!`, 'success', 6000);
+      showToast(`\uD83C\uDFAF Drill "${label}": ${ranked.length} card(s) na revis\u00E3o de hoje (${comLapso} com lapso). Abra o Anki e estude!`, 'success', 7000);
     } catch (err) {
       showToast(`Erro ao montar o drill: ${err.message}`, 'error', 6000);
     } finally {
