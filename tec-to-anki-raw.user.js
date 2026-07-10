@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.10.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (Cloze nativo com travas anti-contaminação, answer-line legível) e salva no Anki + Obsidian
+// @version      1.11.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (OpenCode Go: catálogo completo, Cloze nativo com travas anti-contaminação) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -36,17 +36,17 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.10.0';
+  const SCRIPT_VERSION = '1.11.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
-    aiProvider: 'gemini', // 'gemini', 'openrouter' or 'opencode'
+    aiProvider: 'opencode', // 'gemini', 'openrouter' or 'opencode'
     geminiApiKey: 'YOUR_GEMINI_API_KEY_HERE',
     geminiModel: 'gemini-2.5-flash',
     openrouterApiKey: 'YOUR_OPENROUTER_API_KEY_HERE',
     openrouterModel: 'qwen/qwen3-235b-a22b-2507',
     opencodeApiKey: 'YOUR_OPENCODE_API_KEY_HERE',
-    opencodeModel: 'glm-5.1',
+    opencodeModel: 'kimi-k2.6',
     obsidianVault: 'Filipe - Obs',
     obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
@@ -59,9 +59,9 @@
     showPreview: true,
     askThoughts: true, // ask "qual foi seu raciocínio?" before generating cards
     maxCardsPerQuestion: 2, // upper bound of cards the AI may generate per question
-    pipelineMode: 'single', // 'single' or 'dual'
-    creatorModel: 'moonshotai/kimi-k2.5',
-    auditorModel: 'google/gemini-3.1-pro-preview',
+    pipelineMode: 'dual', // 'single' or 'dual'
+    creatorModel: 'kimi-k2.6',
+    auditorModel: 'glm-5.2',
     pipelineCostTotal: 0, // cumulative cost in USD
   };
 
@@ -1826,16 +1826,20 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
   // ── Generic OpenAI-compatible API caller ────────────────────────────
 
-  function parseOpenAIResponse(json) {
-    let content = json?.choices?.[0]?.message?.content;
+  /** Extract a JSON object from a raw model text (handles ```json fences + prose). */
+  function parseJsonFromText(text) {
+    let content = (text || '').trim();
     if (!content) throw new Error('Resposta vazia da API');
-    content = content.trim();
     if (content.startsWith('```')) {
       content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
     }
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Resposta não contém JSON válido.');
     return JSON.parse(jsonMatch[0]);
+  }
+
+  function parseOpenAIResponse(json) {
+    return parseJsonFromText(json?.choices?.[0]?.message?.content);
   }
 
   async function callOpenAICompatible(url, apiKey, body, extraHeaders = {}) {
@@ -1872,26 +1876,12 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   }
 
   async function callOpencode(questionData) {
-    const apiKey = getSetting('opencodeApiKey');
     const model = getSetting('opencodeModel');
-    const baseUrl = getOpencodeEndpoint(model);
-    if (!apiKey) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
-
-    const body = {
+    const { result, usage } = await callOpencodeModel(
       model,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT + '\n\n' + CARD_JSON_CONTRACT },
-        { role: 'user', content: buildGeminiPrompt(questionData) },
-      ],
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-    };
-
-    const json = await callOpenAICompatible(baseUrl, apiKey, body);
-    const usage = json?.usage;
-    const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
-
-    const result = parseOpenAIResponse(json);
+      SYSTEM_PROMPT + '\n\n' + CARD_JSON_CONTRACT,
+      buildGeminiPrompt(questionData),
+    );
     if (!result.materia || !result.cards || !Array.isArray(result.cards)) {
       throw new Error('Resposta do OpenCode em formato inválido. Tente novamente.');
     }
@@ -1914,7 +1904,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     }
     const normalized = normalizeGeneratedResult(result);
     normalized._generatorModel = `opencode/${model}`;
-    if (costEstimate) normalized._usage = costEstimate;
+    if (usage) normalized._usage = usage;
     return normalized;
   }
 
@@ -1934,40 +1924,180 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     { id: 'google/gemini-3.1-pro-preview',       label: '\u2B50 Gemini 3.1 Pro Preview \u2014 GPQA 94.1% ($1.25/$10 M tok)' },
   ];
 
+  // ── OpenCode Go — catálogo completo ──────────────────────────────────
+  // wire = formato de API do modelo no gateway OpenCode Go:
+  //   'chat'      → /v1/chat/completions (OpenAI-style)  — GLM, DeepSeek, Kimi, MiniMax, Grok, grátis
+  //   'messages'  → /v1/messages (Anthropic-style)       — Qwen, Claude
+  //   'responses' → /v1/responses (OpenAI Responses)     — GPT-5.x
+  // Preços por 1M tokens (input/output), conforme catálogo OpenCode jul/2026.
   const OPENCODE_MODELS = [
-    { id: 'glm-5.1',          label: 'GLM 5.1' },
-    { id: 'glm-5',            label: 'GLM 5' },
-    { id: 'kimi-k2.5',        label: 'Kimi K2.5' },
-    { id: 'kimi-k2.6',        label: 'Kimi K2.6' },
-    { id: 'deepseek-v4-pro',  label: 'DeepSeek V4 Pro' },
-    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-    { id: 'mimo-v2-pro',      label: 'MiMo V2 Pro' },
-    { id: 'mimo-v2-omni',     label: 'MiMo V2 Omni' },
-    { id: 'mimo-v2.5-pro',    label: 'MiMo V2.5 Pro' },
-    { id: 'mimo-v2.5',        label: 'MiMo V2.5' },
-    { id: 'minimax-m2.7',     label: 'MiniMax M2.7' },
-    { id: 'minimax-m2.5',     label: 'MiniMax M2.5' },
-    { id: 'qwen3.6-plus',     label: 'Qwen 3.6 Plus' },
-    { id: 'qwen3.5-plus',     label: 'Qwen 3.5 Plus' },
+    // GLM — melhor auditor (líder open-weight no Intelligence Index)
+    { id: 'glm-5.2',               label: 'GLM 5.2 ⭐ auditor ($1.40/$4.40)',            wire: 'chat',      group: 'GLM' },
+    { id: 'glm-5.1',               label: 'GLM 5.1 ($1.40/$4.40)',                       wire: 'chat',      group: 'GLM' },
+    { id: 'glm-5',                 label: 'GLM 5 ($1.00/$3.20)',                         wire: 'chat',      group: 'GLM' },
+    // Kimi — melhor creator (K2.6 = escrita/análise; K2.7 Code é só para código)
+    { id: 'kimi-k2.6',             label: 'Kimi K2.6 ⭐ creator ($0.95/$4.00)',          wire: 'chat',      group: 'Kimi' },
+    { id: 'kimi-k2.7-code',        label: 'Kimi K2.7 Code — só código ($0.95/$4.00)',    wire: 'chat',      group: 'Kimi' },
+    { id: 'kimi-k2.5',             label: 'Kimi K2.5 ($0.60/$3.00)',                     wire: 'chat',      group: 'Kimi' },
+    // DeepSeek
+    { id: 'deepseek-v4-pro',       label: 'DeepSeek V4 Pro ($1.74/$3.48)',               wire: 'chat',      group: 'DeepSeek' },
+    { id: 'deepseek-v4-flash',     label: 'DeepSeek V4 Flash ($0.14/$0.28)',             wire: 'chat',      group: 'DeepSeek' },
+    { id: 'deepseek-v4-flash-free', label: 'DeepSeek V4 Flash (GRATUITO)',               wire: 'chat',      group: 'DeepSeek' },
+    // MiniMax
+    { id: 'minimax-m3',            label: 'MiniMax M3 ($0.30/$1.20)',                    wire: 'chat',      group: 'MiniMax' },
+    { id: 'minimax-m2.7',          label: 'MiniMax M2.7 ($0.30/$1.20)',                  wire: 'chat',      group: 'MiniMax' },
+    { id: 'minimax-m2.5',          label: 'MiniMax M2.5 ($0.30/$1.20)',                  wire: 'chat',      group: 'MiniMax' },
+    // Grok
+    { id: 'grok-4.5',              label: 'Grok 4.5 ($2.00/$6.00)',                      wire: 'chat',      group: 'Grok' },
+    { id: 'grok-build-0.1',        label: 'Grok Build 0.1 ($1.00/$2.00)',                wire: 'chat',      group: 'Grok' },
+    // Qwen — /messages (Anthropic-style). Qwen 3.7 Max = raciocínio mais profundo.
+    { id: 'qwen3.7-max',           label: 'Qwen 3.7 Max — raciocínio máx. ($2.50/$7.50)', wire: 'messages', group: 'Qwen (messages)' },
+    { id: 'qwen3.7-plus',          label: 'Qwen 3.7 Plus ($0.40/$1.60)',                 wire: 'messages',  group: 'Qwen (messages)' },
+    { id: 'qwen3.6-plus',          label: 'Qwen 3.6 Plus ($0.50/$3.00)',                 wire: 'messages',  group: 'Qwen (messages)' },
+    { id: 'qwen3.5-plus',          label: 'Qwen 3.5 Plus ($0.20/$1.20)',                 wire: 'messages',  group: 'Qwen (messages)' },
+    // Claude — /messages (Anthropic-style)
+    { id: 'claude-opus-4.8',       label: 'Claude Opus 4.8 ($5.00/$25.00)',              wire: 'messages',  group: 'Claude (messages)' },
+    { id: 'claude-sonnet-5',       label: 'Claude Sonnet 5 ($2.00/$10.00)',              wire: 'messages',  group: 'Claude (messages)' },
+    { id: 'claude-haiku-4.5',      label: 'Claude Haiku 4.5 ($1.00/$5.00)',              wire: 'messages',  group: 'Claude (messages)' },
+    // GPT-5.x — /responses (OpenAI Responses API)
+    { id: 'gpt-5.5',               label: 'GPT-5.5 ($5.00/$30.00)',                      wire: 'responses', group: 'GPT (responses)' },
+    { id: 'gpt-5.4',               label: 'GPT-5.4 ($2.50/$15.00)',                      wire: 'responses', group: 'GPT (responses)' },
+    { id: 'gpt-5.4-mini',          label: 'GPT-5.4 Mini ($0.75/$4.50)',                  wire: 'responses', group: 'GPT (responses)' },
+    { id: 'gpt-5.2',               label: 'GPT-5.2 ($1.75/$14.00)',                      wire: 'responses', group: 'GPT (responses)' },
+    { id: 'gpt-5',                 label: 'GPT-5 ($1.07/$8.50)',                         wire: 'responses', group: 'GPT (responses)' },
+    // Grátis / trial
+    { id: 'big-pickle',            label: 'Big Pickle (GRATUITO)',                       wire: 'chat',      group: 'Grátis' },
+    { id: 'mimo-v2.5-free',        label: 'MiMo V2.5 (GRATUITO)',                        wire: 'chat',      group: 'Grátis' },
+    { id: 'north-mini-code-free',  label: 'North Mini Code (GRATUITO)',                  wire: 'chat',      group: 'Grátis' },
+    { id: 'nemotron-3-ultra-free', label: 'Nemotron 3 Ultra (GRATUITO)',                 wire: 'chat',      group: 'Grátis' },
   ];
 
-  function getOpencodeEndpoint(model) {
-    if (model === 'minimax-m2.7' || model === 'minimax-m2.5') {
-      return 'https://opencode.ai/zen/go/v1/messages';
+  // Escopo OpenCode-only (v1.11.0): seleções de provedores antigos (OpenRouter/
+  // Gemini) caem no padrão OpenCode; provider + modo dual viram padrão uma vez.
+  (function migrateToOpencodeOnly() {
+    const valid = (id) => OPENCODE_MODELS.some(m => m.id === id);
+    if (!valid(getSetting('opencodeModel'))) setSetting('opencodeModel', 'kimi-k2.6');
+    if (!valid(getSetting('creatorModel'))) setSetting('creatorModel', 'kimi-k2.6');
+    if (!valid(getSetting('auditorModel'))) setSetting('auditorModel', 'glm-5.2');
+    if (!GM_getValue('migratedOpencodeOnly_v111', false)) {
+      setSetting('aiProvider', 'opencode');
+      setSetting('pipelineMode', 'dual');
+      GM_setValue('migratedOpencodeOnly_v111', true);
     }
-    return 'https://opencode.ai/zen/go/v1/chat/completions';
+  })();
+
+  function getOpencodeModelDef(model) {
+    return OPENCODE_MODELS.find(m => m.id === model) || null;
   }
 
-  // Models for dual pipeline (creator + auditor)
-  const PIPELINE_CREATOR_MODELS = [
-    { id: 'qwen/qwen3.6-plus',                   label: 'Qwen 3.6 Plus Thinking ($0.325/$1.95 M tok)' },
-    { id: 'moonshotai/kimi-k2.6',                label: 'Kimi K2.6 Thinking ($0.75/$3.50 M tok)' },
-    { id: 'moonshotai/kimi-k2.5',                label: 'Kimi K2.5 — IFEval 100% ($0.60/$2.00 M tok)' },
-    { id: 'qwen/qwen3-235b-a22b-2507',            label: 'Qwen3 235B ($0.07/M tok)' },
-    { id: 'deepseek/deepseek-v3.2',              label: 'DeepSeek V3.2 ($0.41/M tok)' },
-    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: m.label })),
-  ];
+  /** Wire (formato de API) do modelo OpenCode Go; default 'chat'. */
+  function getOpencodeWire(model) {
+    return getOpencodeModelDef(model)?.wire || 'chat';
+  }
 
+  function getOpencodeEndpoint(model) {
+    const base = 'https://opencode.ai/zen/go/v1';
+    const wire = getOpencodeWire(model);
+    if (wire === 'messages') return `${base}/messages`;
+    if (wire === 'responses') return `${base}/responses`;
+    return `${base}/chat/completions`;
+  }
+
+  /** Monta <optgroup>/<option> (agrupados por família) para os seletores OpenCode. */
+  function buildOpencodeOptions(selectedId) {
+    const order = [];
+    const byGroup = new Map();
+    for (const m of OPENCODE_MODELS) {
+      const g = m.group || 'Outros';
+      if (!byGroup.has(g)) { byGroup.set(g, []); order.push(g); }
+      byGroup.get(g).push(m);
+    }
+    return order.map(g => {
+      const opts = byGroup.get(g).map(m =>
+        `<option value="${m.id}"${selectedId === m.id ? ' selected' : ''}>${m.label}</option>`
+      ).join('');
+      return `<optgroup label="${g}">${opts}</optgroup>`;
+    }).join('');
+  }
+
+  /** Texto bruto do modelo, conforme o wire (chat / messages / responses). */
+  function extractOpencodeText(json, wire) {
+    if (wire === 'messages' && Array.isArray(json?.content)) {
+      const t = json.content.filter(b => typeof b?.text === 'string').map(b => b.text).join('');
+      if (t) return t;
+    }
+    if (wire === 'responses') {
+      if (typeof json?.output_text === 'string' && json.output_text) return json.output_text;
+      if (Array.isArray(json?.output)) {
+        const parts = [];
+        for (const item of json.output) {
+          for (const c of (item?.content || [])) {
+            if (typeof c?.text === 'string') parts.push(c.text);
+          }
+        }
+        if (parts.length) return parts.join('');
+      }
+    }
+    const chat = json?.choices?.[0]?.message?.content;
+    if (typeof chat === 'string') return chat;
+    throw new Error('Resposta vazia da API OpenCode.');
+  }
+
+  /** Uso de tokens normalizado (OpenAI: prompt/completion; Anthropic: input/output). */
+  function extractOpencodeUsage(json) {
+    const u = json?.usage;
+    if (!u) return null;
+    return {
+      promptTokens: u.prompt_tokens ?? u.input_tokens ?? 0,
+      completionTokens: u.completion_tokens ?? u.output_tokens ?? 0,
+    };
+  }
+
+  /**
+   * Chamada unificada a um modelo do OpenCode Go, roteando pelo wire correto.
+   * Retorna { result: <objeto JSON>, usage: {promptTokens, completionTokens}|null }.
+   */
+  async function callOpencodeModel(model, systemPrompt, userPrompt) {
+    const apiKey = getSetting('opencodeApiKey');
+    if (!apiKey) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
+    const wire = getOpencodeWire(model);
+    const endpoint = getOpencodeEndpoint(model);
+
+    let body;
+    if (wire === 'messages') {
+      // Anthropic-style: system separado, max_tokens obrigatório, sem response_format.
+      body = {
+        model, max_tokens: 8192, temperature: 0.3,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      };
+    } else if (wire === 'responses') {
+      // OpenAI Responses: modelos de raciocínio rejeitam temperature ≠ 1 → omitir.
+      // JSON garantido pelo CARD_JSON_CONTRACT + parseJsonFromText (evita 400 de text.format).
+      body = { model, instructions: systemPrompt, input: userPrompt };
+    } else {
+      // OpenAI chat/completions (GLM, DeepSeek, Kimi, MiniMax, Grok, grátis).
+      // Sem campo `reasoning` — esses modelos raciocinam nativamente e o gateway
+      // openai-compatible pode rejeitar params não-padrão.
+      body = {
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.3,
+        response_format: { type: 'json_object' },
+      };
+    }
+
+    const json = await callOpenAICompatible(endpoint, apiKey, body);
+    const result = parseJsonFromText(extractOpencodeText(json, wire));
+    return { result, usage: extractOpencodeUsage(json) };
+  }
+
+  // Creator/Auditor do pipeline dual usam o catálogo OpenCode (buildOpencodeOptions
+  // nos seletores; roteamento por isOpencodeModel). getOpenRouterReasoningConfig
+  // permanece para o provedor OpenRouter avulso (aiProvider = 'openrouter').
   function getOpenRouterReasoningConfig(model) {
     if (!model) return null;
 
@@ -1977,12 +2107,6 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
     return null;
   }
-  const PIPELINE_AUDITOR_MODELS = [
-    { id: 'google/gemini-3.1-pro-preview',       label: 'Gemini 3.1 Pro Preview — GPQA 94.1% ($1.25/$10 M tok)' },
-    { id: 'google/gemini-2.5-flash',             label: 'Gemini 2.5 Flash ($1.30/M tok)' },
-    { id: 'anthropic/claude-haiku-4.5',          label: 'Claude Haiku 4.5 ($3.00/M tok)' },
-    ...OPENCODE_MODELS.map(m => ({ id: m.id, label: m.label })),
-  ];
 
   async function callOpenRouter(questionData) {
     const apiKey = getSetting('openrouterApiKey');
@@ -2118,11 +2242,20 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
   }
 
   async function callOpenRouterWithModel(model, systemPrompt, userPrompt, extraBody = {}) {
-    const isOpencode = isOpencodeModel(model);
-    const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
-    if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada.`);
+    // OpenCode Go: roteia pelo wire correto (chat / messages / responses).
+    // extraBody (ex.: reasoning do auditor) é ignorado — esses modelos raciocinam
+    // nativamente e o gateway pode rejeitar params não-padrão.
+    if (isOpencodeModel(model)) {
+      const { result, usage } = await callOpencodeModel(model, systemPrompt, userPrompt);
+      result._usage = usage;
+      return result;
+    }
 
-    const reasoningConfig = !isOpencode ? (getOpenRouterReasoningConfig(model) || {}) : {};
+    // ── OpenRouter (provedor avulso) ──
+    const apiKey = getSetting('openrouterApiKey');
+    if (!apiKey) throw new Error('API key do OpenRouter não configurada.');
+
+    const reasoningConfig = getOpenRouterReasoningConfig(model) || {};
     const body = {
       model,
       messages: [
@@ -2135,16 +2268,10 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
       ...extraBody,
     };
 
-    let json;
-    if (isOpencode) {
-      const baseUrl = getOpencodeEndpoint(model);
-      json = await callOpenAICompatible(baseUrl, apiKey, body);
-    } else {
-      json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
-        'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
-        'X-Title': 'TEC-to-Anki',
-      });
-    }
+    const json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
+      'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
+      'X-Title': 'TEC-to-Anki',
+    });
 
     // Estimate cost from usage if available
     const usage = json?.usage;
@@ -2274,6 +2401,27 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     if (!usage) return 0;
     // Approximate pricing per 1M tokens (input/output) for known models
     const pricing = {
+      // OpenCode Go (jul/2026)
+      'glm-5.2':              { input: 1.40, output: 4.40 },
+      'glm-5.1':              { input: 1.40, output: 4.40 },
+      'glm-5':                { input: 1.00, output: 3.20 },
+      'kimi-k2.6':            { input: 0.95, output: 4.00 },
+      'kimi-k2.7-code':       { input: 0.95, output: 4.00 },
+      'kimi-k2.5':            { input: 0.60, output: 3.00 },
+      'deepseek-v4-pro':      { input: 1.74, output: 3.48 },
+      'deepseek-v4-flash':    { input: 0.14, output: 0.28 },
+      'minimax-m3':           { input: 0.30, output: 1.20 },
+      'grok-4.5':             { input: 2.00, output: 6.00 },
+      'qwen3.7-max':          { input: 2.50, output: 7.50 },
+      'qwen3.7-plus':         { input: 0.40, output: 1.60 },
+      'gpt-5.5':              { input: 5.00, output: 30.00 },
+      'gpt-5.4':              { input: 2.50, output: 15.00 },
+      'gpt-5.2':              { input: 1.75, output: 14.00 },
+      'gpt-5':                { input: 1.07, output: 8.50 },
+      'claude-opus-4.8':      { input: 5.00, output: 25.00 },
+      'claude-sonnet-5':      { input: 2.00, output: 10.00 },
+      'claude-haiku-4.5':     { input: 1.00, output: 5.00 },
+      // OpenRouter (provedor avulso)
       'moonshotai/kimi-k2.5':           { input: 0.60, output: 2.00 },
       'google/gemini-3.1-pro-preview':   { input: 1.25, output: 10.00 },
       'qwen/qwen3-235b-a22b-2507':       { input: 0.07, output: 0.07 },
@@ -3591,7 +3739,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <div class="tec-field">
               <label>Modelo OpenCode</label>
               <select id="tec-cfg-opencode-model">
-                ${OPENCODE_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('opencodeModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
+                ${buildOpencodeOptions(getSetting('opencodeModel'))}
               </select>
             </div>
           </div>
@@ -3604,19 +3752,19 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <option value="single" ${getSetting('pipelineMode') === 'single' ? 'selected' : ''}>Single (1 modelo, sem auditoria)</option>
               <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual (Creator \u2192 Auditor, mais preciso)</option>
             </select>
-            <small style="color:#888;font-size:11px">Dual requer OpenRouter ou OpenCode API key. Custo ~1.2\u00A2/quest\u00E3o.</small>
+            <small style="color:#888;font-size:11px">Padr\u00E3o: Creator <b>Kimi K2.6</b> \u2192 Auditor <b>GLM 5.2</b> (OpenCode Go). Custo ~1.2\u00A2/quest\u00E3o.</small>
           </div>
           <div id="tec-cfg-pipeline-section" style="display:none">
             <div class="tec-field">
               <label>Modelo Creator</label>
               <select id="tec-cfg-creator-model">
-                ${PIPELINE_CREATOR_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('creatorModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
+                ${buildOpencodeOptions(getSetting('creatorModel'))}
               </select>
             </div>
             <div class="tec-field">
               <label>Modelo Auditor</label>
               <select id="tec-cfg-auditor-model">
-                ${PIPELINE_AUDITOR_MODELS.map(m => '<option value="' + m.id + '"' + (getSetting('auditorModel') === m.id ? ' selected' : '') + '>' + m.label + '</option>').join('')}
+                ${buildOpencodeOptions(getSetting('auditorModel'))}
               </select>
             </div>
             <div class="tec-field" style="padding:8px;background:#1a2332;border-radius:6px;font-size:12px;color:#8899aa;">
