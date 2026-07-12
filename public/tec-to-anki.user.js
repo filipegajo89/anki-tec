@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.11.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (OpenCode Go: catálogo completo, Cloze nativo com travas anti-contaminação) e salva no Anki + Obsidian
+// @version      1.12.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (cards visuais MathJax/SVG por gate adaptativo, answer-line coral, Cloze nativo com travas) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.11.0';
+  const SCRIPT_VERSION = '1.12.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -1427,6 +1427,25 @@ Use HTML inline para destacar visualmente os elementos-chave dentro do texto dos
 - Listas com <ul><li> são preferíveis a texto corrido quando há 3+ itens
 - NUNCA use tags de formatação no campo palavras_chave (é plain text)
 
+## Cards VISUAIS — fórmula (MathJax) e diagrama (SVG) — gate conservador
+
+A decisão é POR CARD, não por matéria (na dúvida, TEXTO puro — em Direito a quase totalidade dos cards continua texto). Gere visual SÓ quando ele torna a memorização mais fácil ou a leitura inequívoca:
+- Fórmula, equação, expressão simbólica (Estatística, Matemática Financeira, RLM, Economia, Contabilidade) → MathJax: \\( ... \\) inline na frase; desenvolvimento no verso em \\[ ... \\]. PROIBIDO fórmula em texto puro no HTML (Σ, √, x̄ soltos) — é exatamente o defeito que o MathJax elimina.
+- Leitura de gráfico, distribuição, curva, reta numérica, histograma, fluxo temporal de prazos → UM <svg> inline por card.
+- Regra, conceito, pegadinha verbal, distinção textual → TEXTO puro (padrão).
+
+### Visual quizzável (o que separa visual bom de decorativo)
+- Na FRENTE, o visual é ESTÍMULO de recuperação: o aluno precisa LER o gráfico para responder — rótulos NEUTROS (A, B, C, ?), NUNCA o termo que é a resposta (anti-vazamento). Se a pergunta é "qual ponto é a mediana?", a marca no gráfico chama-se "B", não "Md".
+- No VERSO, o visual é ÂNCORA: o mesmo diagrama com a marcação revelada, ou o desenvolvimento do cálculo.
+- Diagrama que apenas ilustra o que o texto já diz não agrega — mantenha o card como texto.
+
+### Regras técnicas (obrigatórias nos cards visuais)
+- MathJax: use \\lt e \\gt no lugar de < e >; decimal brasileiro como 1{,}10; NUNCA coloque a lacuna {{...}} DENTRO de \\( \\) (quebra o Cloze e o LaTeX) e evite chaves duplas {{ }} em LaTeX — a lacuna fica no texto da frase, a fórmula completa vai no verso.
+- SVG: <svg viewBox="..." style="max-width:100%;height:auto"> autocontido, em UMA linha (sem quebras de linha internas) — sem <image>, fontes ou URLs externas. Paleta para o fundo escuro do card (#1e1e2e): eixos #8b8fa3, curva/linha #60a5fa, destaques #4ade80 / #facc15 / #f87171, texto #e8e8e8 com font-size ≥ 12. Máximo 1 SVG por card; o diagrama testa UMA leitura.
+- Verso de cálculo: a answer-line traz SÓ o resultado curto; a explanation traz o desenvolvimento em \\[ \\] com os números substituídos e a armadilha (o valor errado que a banca oferecia) em <span class="neg">.
+- A CONTA TEM QUE ESTAR CERTA: recompute cada número antes de escrever — card de exatas com número errado ensina o erro para sempre (repetição espaçada!).
+- Nos campos *_texto_limpo escreva o EQUIVALENTE VERBAL, sem markup SVG/MathJax, com a conta por extenso (ex.: "média = (2×5 + 5×15 + 3×25)/10 = 16") — é o que o auditor e a nota do Obsidian leem.
+
 ## Palavras-chave consagradas
 
 Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que identificam o conceito/instituto jurídico abordado. São os termos consagrados na lei, doutrina ou jurisprudência que funcionam como "impressão digital" daquele conceito — quando o aluno vê essas palavras num enunciado longo, deve imediatamente reconhecer de qual instituto se trata.
@@ -1461,7 +1480,7 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
             tipo: { type: 'string', enum: ['Cloze', 'Q&A', 'Julgue'], description: 'Formato do card: Cloze para afirmação autocontida com {{rotulo_generico}}, Q&A para pergunta direta ou distinção breve, Julgue para assertiva certo/errado com palavra-crítica nomeada no verso' },
             frente_texto_limpo: { type: 'string', description: 'Card autocontido em texto puro. Se for Cloze, use {{rotulo_generico}}, nunca a resposta preenchida.' },
             verso_texto_limpo: { type: 'string', description: '1ª linha = SÓ a resposta curta (termo/expressão, máx. 12 palavras). Depois LINHA EM BRANCO e a explicação breve em parágrafo separado. NUNCA misture explicação na 1ª linha.' },
-            frente_html: { type: 'string', description: 'Mesmo conteúdo da frente com HTML e destaque visual; se for Cloze, use <mark>{{rotulo_generico}}</mark>.' },
+            frente_html: { type: 'string', description: 'Mesmo conteúdo da frente com HTML e destaque visual; se for Cloze, use <mark>{{rotulo_generico}}</mark>. Card visual: pode conter MathJax \\( \\) e/ou UM <svg> inline com rótulos neutros (A/B/C) que nunca revelam a resposta.' },
             verso_html: { type: 'string', description: 'Verso em HTML, OBRIGATORIAMENTE com <div class="answer-line">APENAS a resposta curta</div> seguido de <div class="explanation">explicação breve COM destaques: <b> nos 1-3 termos centrais, <mark> na palavra discriminante, <span class="ref"> nas referências, <span class="neg"> na negação pivô</div>. A explicação NUNCA vai dentro da answer-line nem em texto corrido sem destaques.' },
             palavras_chave: { type: 'string', description: 'Express\u00F5es can\u00F4nicas da lei/doutrina que identificam este conceito jur\u00EDdico, separadas por " | ". Vazio se n\u00E3o houver.' },
             contraste: {
@@ -1497,8 +1516,8 @@ Para cada card, inclua no campo "palavras_chave" as EXPRESSÕES CANÔNICAS que i
       "tipo": "string - Cloze, Q&A ou Julgue",
       "frente_texto_limpo": "string - card autocontido em texto puro; se for Cloze, use {{rotulo_generico}} e NUNCA a resposta preenchida",
       "verso_texto_limpo": "string - 1ª linha = SÓ a resposta curta (termo/expressão, máx. 12 palavras), depois LINHA EM BRANCO e a explicação breve em parágrafo separado. NUNCA misture explicação na 1ª linha",
-      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>",
-      "verso_html": "string - verso em HTML: <div class=\\"answer-line\\">APENAS a resposta curta</div> seguido de <div class=\\"explanation\\">explicação breve COM destaques: <b> nos 1-3 termos centrais, <mark> na palavra discriminante, <span class=\\"ref\\"> nas referências normativas/julgados, <span class=\\"neg\\"> na negação pivô</div>; a explicação NUNCA vai dentro da answer-line nem em texto corrido sem destaques",
+      "frente_html": "string - mesma frente com HTML; se for Cloze, use <mark>{{rotulo_generico}}</mark>. Card VISUAL: pode conter fórmula MathJax \\\\( ... \\\\) (no JSON a barra é dupla) e/ou UM <svg> inline em uma linha com rótulos NEUTROS (A/B/C) que nunca revelam a resposta",
+      "verso_html": "string - verso em HTML: <div class=\\"answer-line\\">APENAS a resposta curta</div> seguido de <div class=\\"explanation\\">explicação breve COM destaques: <b> nos 1-3 termos centrais, <mark> na palavra discriminante, <span class=\\"ref\\"> nas referências normativas/julgados, <span class=\\"neg\\"> na negação pivô</div>; a explicação NUNCA vai dentro da answer-line nem em texto corrido sem destaques. Card VISUAL: o desenvolvimento do cálculo vai na explanation em MathJax \\\\[ ... \\\\] (barra dupla no JSON); o SVG-âncora também vai na explanation",
       "palavras_chave": "string - 1 ou 2 expressões canônicas mais discriminativas, separadas por |. Vazio se não houver",
       "contraste": "objeto OPCIONAL, só quando o card treina distinção entre dois institutos confundíveis: { \\"instituto_a\\": \\"nome\\", \\"instituto_b\\": \\"nome\\", \\"feature_discriminante\\": \\"a característica que vale para UM e não para o outro\\" }"
     }
@@ -1610,10 +1629,34 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       .toLowerCase();
   }
 
+  /**
+   * Masks MathJax segments (\( .. \) and \[ .. \]) so the {{lacuna}} regexes never
+   * see LaTeX braces — \frac{{a}}{b} etc. would otherwise be detected/rewritten as
+   * a cloze blank and corrupt the formula. restore() puts the math back verbatim.
+   */
+  function maskMath(text) {
+    const segments = [];
+    const masked = (text || '').replace(/\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g, (m) => {
+      segments.push(m);
+      return `\u0000M${segments.length - 1}\u0000`;
+    });
+    return {
+      masked,
+      restore: (s) => (s || '').replace(/\u0000M(\d+)\u0000/g, (_, i) => segments[+i] ?? ''),
+    };
+  }
+
+  /** True when the text has a {{lacuna}} placeholder OUTSIDE MathJax segments. */
+  function hasClozePlaceholder(text) {
+    return /\{\{[^}]+\}\}/.test(maskMath(text).masked);
+  }
+
   function normalizeClozePlaceholder(text, answerText = '', wrapWithMark = false) {
     if (!text) return text;
 
     const answerLabel = extractAnswerLabel(answerText);
+    const math = maskMath(text);
+    text = math.masked;
 
     let normalized = text.replace(/\{\{([^}]+)\}\}/g, (_, inner) => {
       const clean = stripHtml(inner).trim();
@@ -1634,7 +1677,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       normalized = normalized.replace(/\{\{([^}]+)\}\}/g, '<mark>{{$1}}</mark>');
     }
 
-    return normalized;
+    return math.restore(normalized);
   }
 
   function normalizeBackText(content) {
@@ -1709,6 +1752,9 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     if (!versoHtml || !/class="explanation"/i.test(versoHtml)) return versoHtml;
     return versoHtml.replace(/(<div class="explanation">)([\s\S]*)(<\/div>)/i, (all, open, body, close) => {
       if (/<(b|mark|u|span)\b/i.test(body)) return all; // já veio formatado — não toca
+      // Card visual: envolver "art. X"/negações dentro de <text> de SVG ou de \( \)
+      // quebraria o XML/LaTeX — não retoca.
+      if (/<svg[\s>]/i.test(body) || /\\\(|\\\[/.test(body)) return all;
 
       // Trabalha só nos trechos de TEXTO (preserva divs estruturais/<br>)
       const enrichText = (txt) => {
@@ -1738,6 +1784,54 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     });
   }
 
+  /**
+   * SVG precisa chegar ao Anki em UMA linha: o formatCardBack divide o verso em
+   * blocos por linha em branco e uma quebra dentro do <svg> partiria o markup.
+   */
+  function inlineSvgNewlines(html) {
+    return (html || '').replace(/<svg[\s\S]*?<\/svg>/gi, s => s.replace(/\s*\n\s*/g, ' '));
+  }
+
+  /**
+   * Redes de segurança dos cards VISUAIS (mesma filosofia do checklist da skill
+   * gerar-cards): SVG malformado é removido (campo com XML inválido quebra a
+   * renderização do card inteiro no Anki); MathJax desbalanceado e SVG da frente
+   * contendo a resposta (vazamento) marcam o card para revisão manual.
+   */
+  function validateVisualCard(card) {
+    for (const f of ['frente_html', 'verso_html']) {
+      let html = card[f] || '';
+      if (!html) continue;
+      html = html.replace(/<svg[\s\S]*?<\/svg>/gi, (svg) => {
+        const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+        if (doc.querySelector('parsererror')) {
+          console.warn(`[TEC→Anki] SVG malformado removido de ${f} — card marcado para revisão`);
+          card._needsReview = true;
+          return '';
+        }
+        return svg;
+      });
+      for (const [open, close] of [[/\\\(/g, /\\\)/g], [/\\\[/g, /\\\]/g]]) {
+        if ((html.match(open) || []).length !== (html.match(close) || []).length) {
+          console.warn(`[TEC→Anki] MathJax desbalanceado em ${f} — card marcado para revisão`);
+          card._needsReview = true;
+        }
+      }
+      card[f] = html;
+    }
+    // Anti-vazamento: o SVG da FRENTE não pode conter a resposta (rótulos devem ser neutros).
+    const frontSvgs = (card.frente_html || '').match(/<svg[\s\S]*?<\/svg>/gi) || [];
+    if (frontSvgs.length) {
+      const ans = stripHtml(((card.verso_html || '').match(/<div class="answer-line">([\s\S]*?)<\/div>/i) || [])[1] || '')
+        .replace(/\s+/g, ' ').trim().toLowerCase();
+      if (ans.length >= 4 && frontSvgs.some(s => s.toLowerCase().includes(ans))) {
+        console.warn('[TEC→Anki] SVG da frente contém a resposta (vazamento) — card marcado para revisão');
+        card._needsReview = true;
+      }
+    }
+    return card;
+  }
+
   function normalizeGeneratedCard(card) {
     const normalized = { ...card };
 
@@ -1751,8 +1845,10 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       normalized.frente_texto_limpo = normalized.frente.replace(/<[^>]+>/g, '');
       normalized.verso_texto_limpo = normalized.verso.replace(/<[^>]+>/g, '');
     }
+    normalized.frente_html = inlineSvgNewlines(normalized.frente_html);
+    normalized.verso_html = inlineSvgNewlines(normalized.verso_html);
 
-    normalized.tipo = normalized.tipo || (/\{\{[^}]+\}\}/.test(normalized.frente_html || normalized.frente_texto_limpo || '') ? 'Cloze' : 'Q&A');
+    normalized.tipo = normalized.tipo || (hasClozePlaceholder(normalized.frente_html || normalized.frente_texto_limpo || '') ? 'Cloze' : 'Q&A');
 
     if (normalized.tipo === 'Cloze') {
       const answerText = normalized.verso_texto_limpo || normalized.verso || normalized.verso_html || '';
@@ -1764,6 +1860,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     normalized.verso_html = formatCardBack(normalized.verso_html || normalized.verso || normalized.verso_texto_limpo);
     normalized.palavras_chave = normalizeKeywords(normalized.palavras_chave);
     normalized.verso_html = enrichExplanationHtml(normalized.verso_html, normalized.palavras_chave);
+    validateVisualCard(normalized);
     normalized.frente = normalized.frente_html;
     normalized.verso = normalized.verso_html;
     return normalized;
@@ -2201,6 +2298,7 @@ Receba uma lista de flashcards (frente + verso em texto limpo) junto com o conte
 15. **Direção da tese (jurisprudência):** o verbo de comando do card confere com o comentário (incide↔não incide, constitucional↔inconstitucional, pode↔não pode)? O tribunal está correto (STF↔STJ)? Inversão = REJEITADO.
 16. **Julgue:** assertiva com mais de um ponto de decisão, ou verso que não NOMEIA a palavra-crítica que decide o item, REJEITE.
 17. **Discriminação (campo contraste):** se o card traz "contraste", a feature_discriminante deve ser verdadeira para UM instituto e falsa para o outro. Se a feature vale para ambos (ou para nenhum), o par não discrimina nada — REJEITE.
+18. **Card de cálculo/visual (a conta tem que estar certa):** quando o card envolver número calculado (média, alíquota aplicada, juros, prazo somado), RECOMPUTE você mesmo — resultado que não confere com o comentário do professor = REJEITADO (card de exatas errado ensina o erro para sempre). Se o payload marcar "Card visual", confira também se o equivalente verbal descreve uma leitura/fórmula coerente com o que o card testa.
 
 AUTORIDADE: a correção vem do gabarito + comentário do professor (soberanos). O relato do aluno serve SÓ para julgar relevância (se o card mira a dúvida certa); ele JAMAIS valida um card juridicamente incorreto.
 
@@ -2328,11 +2426,18 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
       // lacuna do Cloze — o auditor precisa vê-la, não só o texto limpo.
       const al = (card.verso_html || '').match(/<div class="answer-line">([\s\S]*?)<\/div>/i);
       const answerLineRender = al ? stripHtml(al[1]).replace(/\s+/g, ' ').trim() : '';
+      // Cards visuais: o auditor recebe só o texto_limpo (equivalente verbal), então
+      // sinaliza a presença de fórmula/SVG para ele cobrar a coerência numérica (regra 18).
+      const htmlCombo = `${card.frente_html || ''} ${card.verso_html || ''}`;
+      const visual = /<svg[\s>]/i.test(htmlCombo)
+        ? 'contém diagrama SVG'
+        : (/\\\(|\\\[/.test(htmlCombo) ? 'contém fórmula MathJax' : '');
       return {
         index: i,
         frente: card.frente_texto_limpo,
         verso: card.verso_texto_limpo,
         answerLineRender,
+        visual,
       };
     });
 
@@ -2348,7 +2453,8 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
 ${cards.map(c => `### Card ${c.index}
 **Frente:** ${c.frente}
 **Verso:** ${c.verso}${c.answerLineRender ? `
-**Answer-line renderizada (1ª linha que o Anki mostra e que PREENCHE a lacuna do Cloze):** ${c.answerLineRender}` : ''}`).join('\n\n')}
+**Answer-line renderizada (1ª linha que o Anki mostra e que PREENCHE a lacuna do Cloze):** ${c.answerLineRender}` : ''}${c.visual ? `
+**Card visual:** ${c.visual} — o texto acima é o equivalente verbal; audite a conta e a coerência (regra 18)` : ''}`).join('\n\n')}
 
 ### Campo "erro_identificado" (mecanismo do erro — DEVE ser coerente com os versos acima)
 ${creatorResult.erro_identificado || 'N/A'}
@@ -2669,7 +2775,11 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
 .frente b { color: #60a5fa; }
 .frente mark { background: #fde047; color: #111827; padding: 1px 4px; border-radius: 3px; }
 .verso { font-size: 1.02em; color: #d4d4d4; margin-top: 4px; }
-.answer-line { font-size: 1.12em; font-weight: 700; color: #f3f4f6; margin: 0 0 10px; }
+/* Coral vivo de volta (v1.12): as travas de resposta curta (formatCardBack,
+   buildClozeFields, auditor #11) garantem que a answer-line nunca mais é um
+   parágrafo — o problema que motivou o branco neutro da v1.7 não existe mais. */
+.answer-line { font-size: 1.3em; font-weight: 800; color: #fca5a5; margin: 0 0 12px; }
+.answer-line b, .answer-line .neg { color: inherit; }
 .answer-line mark { font-weight: 800; }
 .explanation { color: #e5e7eb; line-height: 1.75; }
 .explanation-block + .explanation-block { margin-top: 10px; }
@@ -2695,6 +2805,8 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
 .erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
   font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
 hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
+/* Cards visuais: SVG inline responsivo (paleta desenhada para o fundo #1e1e2e) */
+.card svg { max-width: 100%; height: auto; display: block; margin: 10px auto; }
 .cloze { font-weight: 800; color: #fbbf24; }
 .cloze-hint { color: #fbbf24; font-style: italic; }
 /* Modo claro */
@@ -2705,7 +2817,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 :root[class*="light"] .frente b { color: #1d4ed8; }
 :root[class*="light"] .frente mark { background: #fde047; color: #111827; }
 :root[class*="light"] .verso { color: #1f2937; }
-:root[class*="light"] .answer-line { color: #111827; }
+:root[class*="light"] .answer-line { color: #b42318; }
 :root[class*="light"] .explanation { color: #111827; }
 :root[class*="light"] .verso b { color: #1d4ed8; }
 :root[class*="light"] .verso .neg { color: #b42318; }
@@ -2814,7 +2926,11 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
    * caller then falls back to the Basic type and flags the card for review.
    */
   function buildClozeFields(card) {
-    const frente = card.frente_html || card.frente || '';
+    const frenteRaw = card.frente_html || card.frente || '';
+    // Chaves de LaTeX (\frac{{a}}{b}) não são lacunas: toda a detecção/substituição
+    // de {{...}} roda com os segmentos MathJax mascarados e restaura no final.
+    const math = maskMath(frenteRaw);
+    const frente = math.masked;
     if (!/\{\{[^}]+\}\}/.test(frente)) return null;
     const answer = sanitizeClozeAnswer(clozeAnswerFromCard(card));
     if (!answer) return null;
@@ -2825,9 +2941,10 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
     const wordCount = answer.split(/\s+/).filter(Boolean).length;
     if (answer.length > 80 || wordCount > 12) return null;
     // 2. Vazamento: se a frente (fora da lacuna) já contém a resposta, o cloze
-    //    estaria estragado (resposta visível na frente). Não gera.
+    //    estaria estragado (resposta visível na frente). Não gera. (Checa a frente
+    //    RESTAURADA: resposta dentro de fórmula/SVG da frente também é vazamento.)
     if (answer.length >= 6) {
-      const frenteSemLacuna = stripHtml(frente.replace(/\{\{[^}]+\}\}/g, ' ')).toLowerCase();
+      const frenteSemLacuna = stripHtml(math.restore(frente.replace(/\{\{[^}]+\}\}/g, ' '))).toLowerCase();
       if (frenteSemLacuna.includes(answer.toLowerCase())) return null;
     }
 
@@ -2843,7 +2960,7 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
 
     // Drop a <mark> wrapping the cloze itself — the native .cloze styling already highlights it
     // (and yellow <mark> bg + gold cloze text would clash).
-    const cleanText = text.replace(/<mark>\s*(\{\{c1::[\s\S]*?\}\})\s*<\/mark>/g, '$1');
+    const cleanText = math.restore(text).replace(/<mark>\s*(\{\{c1::[\s\S]*?\}\})\s*<\/mark>/g, '$1');
 
     return { text: cleanText, backExtra: clozeBackExtra(card) };
   }
@@ -3006,15 +3123,19 @@ hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
       // pipeline never sets tipo). buildClozeFields returns null when there's no
       // placeholder, or when the answer is malformed/leaky (trava) → Basic fallback.
       const cloze = buildClozeFields(card);
-      const looksCloze = /\{\{[^}]+\}\}/.test(card.frente_html || card.frente || '');
+      const looksCloze = hasClozePlaceholder(card.frente_html || card.frente || '');
       if (looksCloze && !cloze) {
         card._needsReview = true;
         card._rejectReason = card._rejectReason || 'Cloze malformado (resposta longa ou vazada) — salvo como Básico para revisão';
         // No Básico o {{rotulo}} apareceria literal (Anki não processa cloze em
-        // campos de nota comum) — vira uma lacuna legível: [rotulo].
-        const toHint = (s) => (s || '')
-          .replace(/<mark>\s*\{\{([^}]+)\}\}\s*<\/mark>/g, '<span class="cloze-hint">[$1]</span>')
-          .replace(/\{\{([^}]+)\}\}/g, '<span class="cloze-hint">[$1]</span>');
+        // campos de nota comum) — vira uma lacuna legível: [rotulo]. Máscara de
+        // MathJax preserva chaves de LaTeX (\frac{{a}}{b} não é lacuna).
+        const toHint = (s) => {
+          const math = maskMath(s || '');
+          return math.restore(math.masked
+            .replace(/<mark>\s*\{\{([^}]+)\}\}\s*<\/mark>/g, '<span class="cloze-hint">[$1]</span>')
+            .replace(/\{\{([^}]+)\}\}/g, '<span class="cloze-hint">[$1]</span>'));
+        };
         card.frente_html = toHint(card.frente_html || card.frente);
         card.frente = card.frente_html;
       }

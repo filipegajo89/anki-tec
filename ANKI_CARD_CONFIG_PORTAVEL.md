@@ -435,6 +435,8 @@ function normalizeGeneratedResult(result) {
 .erro { background: #3a3520; color: #ffd866; padding: 10px 14px; border-radius: 8px;
   font-size: 0.85em; margin-top: 14px; border-left: 3px solid #ffd866; }
 hr { border: none; border-top: 1px solid #3a3a4e; margin: 18px 0; }
+/* Cards visuais (v1.12): SVG inline responsivo — paleta desenhada para o fundo #1e1e2e */
+.card svg { max-width: 100%; height: auto; display: block; margin: 10px auto; }
 /* Modo claro */
 .card.night_mode_off, :root[class*="light"] .card {
   color: #1f2937; background: #ffffff;
