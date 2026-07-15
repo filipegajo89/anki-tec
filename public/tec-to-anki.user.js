@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.12.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (cards visuais MathJax/SVG por gate adaptativo, answer-line coral, Cloze nativo com travas) e salva no Anki + Obsidian
+// @version      1.13.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (revisão do batch com regeneração por questão antes de salvar, cards visuais MathJax/SVG, Cloze nativo com travas) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.12.0';
+  const SCRIPT_VERSION = '1.13.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -3719,22 +3719,26 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
   }
 
   /**
-   * Shows a consolidated preview of ALL cards generated during a batch run.
-   * @param {Array<{questionData: object, aiResult: object}>} results
+   * Revisão interativa dos cards do batch ANTES de qualquer salvamento: mostra
+   * os cards completos por questão e permite excluir card (🗑️) ou REGENERAR os
+   * cards de uma questão individual (🔄) com o raciocínio ajustado — o mesmo
+   * ciclo do fluxo single. Nada vai ao Anki/Obsidian até o usuário confirmar.
+   * Resolve com 'save' (enviar tudo) ou 'cancel' (descartar tudo).
+   * @param {Array<{questionData: object, aiResult: object}>} results — mutado in place
    */
-  function showBatchPreviewModal(results, errors = []) {
+  function showBatchReviewModal(results, errors = []) {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
       overlay.className = 'tec-modal-overlay';
       overlay.style.zIndex = '100002'; // above toasts
+      let busy = 0; // regenerações em andamento — bloqueiam salvar/fechar
 
-      const totalCards = results.reduce((sum, r) => sum + (r.aiResult?.cards?.length || 0), 0);
-      const errorCount = errors.length;
+      const totalCards = () => results.reduce((sum, r) => sum + (r.aiResult?.cards?.length || 0), 0);
 
-      const errorsHTML = errorCount > 0 ? `
+      const errorsHTML = errors.length > 0 ? `
         <div style="background:#fff3f3;border:1px solid #ef476f;border-radius:10px;margin-bottom:16px;overflow:hidden;">
-          <div style="background:#ef476f;padding:10px 14px;font-weight:700;font-size:13px;color:#fff;display:flex;justify-content:space-between;align-items:center;">
-            <span>⚠️ ${errorCount} questão(ões) com erro</span>
+          <div style="background:#ef476f;padding:10px 14px;font-weight:700;font-size:13px;color:#fff;">
+            <span>⚠️ ${errors.length} questão(ões) com erro na geração (não serão salvas)</span>
           </div>
           <div style="padding:12px;">
             ${errors.map(e => `
@@ -3746,51 +3750,122 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         </div>
       ` : '';
 
-      const groupsHTML = results.map((r, idx) => {
-        const q = r.questionData;
-        const ai = r.aiResult;
-        const cardsHTML = (ai?.cards || []).map((c, i) => `
-          <div class="tec-card-preview" style="margin-bottom:8px;">
-            <div class="card-num">Card ${i + 1}</div>
-            <div class="card-front">🔹 ${c.frente}</div>
-            <div class="card-back">💡 ${c.verso}</div>
-            ${c.palavras_chave ? `<div class="card-kw" style="font-size:11px;color:#c4b5fd;margin-top:4px">🔑 ${c.palavras_chave}</div>` : ''}
+      const cardHTML = (c, qi, ci) => `
+        <div class="tec-card-preview" style="margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div class="card-num">Card ${ci + 1}</div>
+            <button data-action="del-card" data-q="${qi}" data-c="${ci}" title="Excluir este card" style="background:none;border:none;color:#ef476f;cursor:pointer;font-size:14px;padding:2px 6px;border-radius:6px;line-height:1;">🗑️</button>
           </div>
-        `).join('');
+          <div class="card-front">🔹 ${c.frente}</div>
+          <div class="card-back">💡 ${c.verso}</div>
+          ${c.palavras_chave ? `<div class="card-kw" style="font-size:11px;color:#c4b5fd;margin-top:4px">🔑 ${c.palavras_chave}</div>` : ''}
+        </div>`;
 
+      const groupBodyHTML = (r, qi) => {
+        const ai = r.aiResult;
+        const cardsHTML = (ai?.cards || []).map((c, ci) => cardHTML(c, qi, ci)).join('');
         return `
-          <div style="border:1px solid #e9ecef;border-radius:10px;margin-bottom:16px;overflow:hidden;">
-            <div style="background:#f8f9fa;padding:10px 14px;font-weight:700;font-size:13px;color:#4361ee;border-bottom:1px solid #e9ecef;display:flex;justify-content:space-between;align-items:center;">
-              <span>📋 Questão #${q.id || '?'} — ${q.materia || '-'} › ${q.assunto || '-'}</span>
-              <span style="font-size:11px;color:#888;font-weight:500;">${ai?.cards?.length || 0} card(s)</span>
+          ${ai?.erro_identificado ? `<div style="background:#fff8e6;border-left:3px solid #ffd166;border-radius:6px;padding:8px 10px;font-size:12px;color:#7a5c00;margin-bottom:10px;">🎯 ${ai.erro_identificado}</div>` : ''}
+          ${cardsHTML || '<div style="font-size:13px;color:#888;padding:8px;"><em>Nenhum card — nada desta questão irá ao Anki (a nota do Obsidian ainda será salva).</em></div>'}
+          <div style="margin-top:10px;">
+            <textarea class="tec-thoughts-textarea" data-thoughts="${qi}" style="min-height:48px;"
+              placeholder="💭 O card não captou sua dúvida real? Descreva/ajuste seu raciocínio e regenere esta questão.">${(r.questionData.pensamentoAluno || '').replace(/</g, '&lt;')}</textarea>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+              <button class="tec-btn" data-action="regen" data-q="${qi}" style="background:#fff3cd;color:#856404;border:1px solid #ffd166;padding:6px 14px;font-size:12px;">🔄 Regenerar esta questão</button>
+              <span data-status="${qi}" style="font-size:11px;color:#888;"></span>
             </div>
-            <div style="padding:12px;">
-              ${cardsHTML || '<div style="font-size:13px;color:#888;padding:8px;"><em>Nenhum card gerado</em></div>'}
-            </div>
+          </div>`;
+      };
+
+      const groupsHTML = results.map((r, qi) => `
+        <div style="border:1px solid #e9ecef;border-radius:10px;margin-bottom:16px;overflow:hidden;">
+          <div style="background:#f8f9fa;padding:10px 14px;font-weight:700;font-size:13px;color:#4361ee;border-bottom:1px solid #e9ecef;display:flex;justify-content:space-between;align-items:center;">
+            <span>📋 Questão #${r.questionData.id || '?'} — ${r.questionData.materia || '-'} › ${r.questionData.assunto || '-'}</span>
+            <span style="font-size:11px;color:#888;font-weight:500;"><span data-count="${qi}">${r.aiResult?.cards?.length || 0}</span> card(s)</span>
           </div>
-        `;
-      }).join('');
+          <div style="padding:12px;" data-group-body="${qi}">${groupBodyHTML(r, qi)}</div>
+        </div>`).join('');
 
       overlay.innerHTML = `
         <div class="tec-modal" style="width:760px;max-width:96vw;">
           <div class="tec-modal-header">
-            <h2>🗂️ Cards do Batch — ${results.length} questões | ${totalCards} cards${errorCount > 0 ? ` | ❌ ${errorCount} erro(s)` : ''}</h2>
-            <button class="tec-modal-close" data-action="close">×</button>
+            <h2>🗂️ Revisão do Batch — ${results.length} questões | <span id="tec-review-total">${totalCards()}</span> cards${errors.length ? ` | ❌ ${errors.length} erro(s)` : ''}</h2>
+            <button class="tec-modal-close" data-action="cancel">×</button>
           </div>
           <div class="tec-modal-body" style="max-height:70vh;overflow-y:auto;">
+            <p style="margin:0 0 12px;font-size:12px;color:#888;">⚠️ Nada foi salvo ainda. Leia os cards, exclua (🗑️) ou regenere (🔄) o que quiser — só o botão 💾 abaixo envia ao Anki + Obsidian.</p>
             ${errorsHTML}
-            ${groupsHTML || (errorCount === 0 ? '<div style="text-align:center;padding:24px;color:#888;"><em>Nenhum resultado para exibir</em></div>' : '')}
+            ${groupsHTML || (errors.length === 0 ? '<div style="text-align:center;padding:24px;color:#888;"><em>Nenhum resultado para exibir</em></div>' : '')}
           </div>
           <div class="tec-modal-footer">
-            <button class="tec-btn tec-btn-save" data-action="ok">✅ OK — Fechar</button>
+            <button class="tec-btn tec-btn-cancel" data-action="cancel">Cancelar (não salvar nada)</button>
+            <button class="tec-btn tec-btn-save" data-action="save">💾 Enviar tudo ao Anki + Obsidian</button>
           </div>
         </div>
       `;
 
-      overlay.addEventListener('click', (e) => {
-        const action = e.target.dataset.action || e.target.closest('[data-action]')?.dataset.action;
-        if (action === 'close' || action === 'ok') { overlay.remove(); resolve(); }
-        if (e.target === overlay) { overlay.remove(); resolve(); }
+      const refreshGroup = (qi) => {
+        const body = overlay.querySelector(`[data-group-body="${qi}"]`);
+        if (body) body.innerHTML = groupBodyHTML(results[qi], qi);
+        const count = overlay.querySelector(`[data-count="${qi}"]`);
+        if (count) count.textContent = results[qi].aiResult?.cards?.length || 0;
+        const total = overlay.querySelector('#tec-review-total');
+        if (total) total.textContent = totalCards();
+      };
+
+      const finish = (action) => { overlay.remove(); resolve(action); };
+
+      overlay.addEventListener('click', async (e) => {
+        const trigger = e.target.closest('[data-action]');
+        const action = trigger?.dataset.action;
+        if (!action && e.target !== overlay) return;
+
+        if (action === 'del-card') {
+          const qi = parseInt(trigger.dataset.q, 10);
+          const ci = parseInt(trigger.dataset.c, 10);
+          results[qi]?.aiResult?.cards?.splice(ci, 1);
+          refreshGroup(qi);
+          return;
+        }
+
+        if (action === 'regen') {
+          const qi = parseInt(trigger.dataset.q, 10);
+          const r = results[qi];
+          if (!r || trigger.disabled) return;
+          // O raciocínio editado entra no prompt desta regeneração (e fica salvo p/ a questão)
+          const pensamento = overlay.querySelector(`textarea[data-thoughts="${qi}"]`)?.value.trim() || '';
+          if (pensamento) r.questionData.pensamentoAluno = pensamento;
+          else delete r.questionData.pensamentoAluno;
+          setStoredThought(r.questionData.id, pensamento);
+
+          busy++;
+          trigger.disabled = true;
+          trigger.innerHTML = '<span class="tec-spinner" style="border-color:rgba(0,0,0,.15);border-top-color:#856404;"></span> Regenerando...';
+          const statusEl = overlay.querySelector(`[data-status="${qi}"]`);
+          try {
+            r.aiResult = await generateCards(r.questionData, (msg) => { if (statusEl) statusEl.textContent = msg; });
+            refreshGroup(qi); // re-render devolve o botão ao estado normal
+          } catch (err) {
+            console.error(`❌ Regen Q${r.questionData.id}:`, err);
+            showToast(`Erro ao regenerar Q#${r.questionData.id}: ${err.message}`, 'error', 6000);
+            trigger.disabled = false;
+            trigger.innerHTML = '🔄 Regenerar esta questão';
+            if (statusEl) statusEl.textContent = '';
+          } finally {
+            busy--;
+          }
+          return;
+        }
+
+        if (action === 'save') {
+          if (busy > 0) { showToast('Aguarde a regeneração em andamento antes de salvar.', 'warning'); return; }
+          finish('save');
+          return;
+        }
+        if (action === 'cancel' || e.target === overlay) {
+          if (busy > 0) { showToast('Aguarde a regeneração em andamento.', 'warning'); return; }
+          finish('cancel');
+        }
       });
 
       document.body.appendChild(overlay);
@@ -4718,7 +4793,8 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       ` neste caderno (${totalQuestoes || '?'} quest\u00F5es no total).\n` +
       `Voc\u00EA est\u00E1 na quest\u00E3o ${currentQNum || '?'} de ${totalQuestoes || '?'}.\n\n` +
       `O script vai navegar pelo caderno COLETANDO as erradas (sem IA), ` +
-      `e depois voc\u00EA escolhe quais viram cards.\n\n` +
+      `voc\u00EA escolhe quais viram cards, e REVISA tudo (podendo regenerar quest\u00E3o a quest\u00E3o) ` +
+      `antes de qualquer coisa ser salva no Anki.\n\n` +
       `\u26A0\uFE0F Mantenha o Anki aberto.\n` +
       `Come\u00E7ar a coleta a partir da quest\u00E3o ATUAL?`
     )) {
@@ -4843,9 +4919,9 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       return;
     }
 
-    // \u2500\u2500 Phase 3: generate cards (AI) + save for selected questions \u2500\u2500
+    // \u2500\u2500 Phase 3: generate cards (AI) \u2014 NADA \u00E9 salvo ainda \u2500\u2500
     if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Gerando...';
-    let processed = 0, errors = 0;
+    let generated = 0, errors = 0;
     const batchResults = [];
     const batchErrors = [];
 
@@ -4871,11 +4947,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
         try {
           const aiResult = await generateCards(qData);
-          await Promise.allSettled([
-            getSetting('enableAnki') ? addCardsToAnki(aiResult, qData) : Promise.resolve(null),
-            getSetting('enableObsidian') ? saveToObsidian(qData, aiResult) : Promise.resolve(null),
-          ]);
-          processed++;
+          generated++;
           batchResults.push({ questionData: qData, aiResult });
         } catch (err) {
           console.error(`\u274C Batch: Erro em Q${qData.id}:`, err);
@@ -4884,31 +4956,67 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
         }
 
         const countEl = document.getElementById('tec-gen-count');
-        if (countEl) countEl.textContent = processed;
+        if (countEl) countEl.textContent = generated;
         const progEl = document.getElementById('tec-gen-progress');
-        if (progEl) progEl.style.width = `${((processed + errors) / selected.length) * 100}%`;
+        if (progEl) progEl.style.width = `${((generated + errors) / selected.length) * 100}%`;
       }
     } finally {
       genToast.remove();
-      if (batchResults.length > 0 || batchErrors.length > 0) {
-        try {
-          await showBatchPreviewModal(batchResults, batchErrors);
-        } catch (e) {
-          console.error('Erro ao exibir preview batch:', e);
-        }
+    }
+
+    // \u2500\u2500 Phase 4: revis\u00E3o interativa \u2014 ler tudo, excluir/regenerar por quest\u00E3o \u2500\u2500
+    const excluded = collected.length - selected.length;
+    let decision = 'cancel';
+    if (batchResults.length > 0 || batchErrors.length > 0) {
+      if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Revis\u00E3o...';
+      try {
+        decision = await showBatchReviewModal(batchResults, batchErrors);
+      } catch (e) {
+        console.error('Erro no modal de revis\u00E3o do batch:', e);
       }
+    }
+
+    if (decision !== 'save' || batchResults.length === 0) {
+      batchRunning = false;
+      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      showToast(`Batch cancelado \u2014 nada foi salvo no Anki/Obsidian${generated ? ` (${generated} quest\u00E3o(\u00F5es) geradas foram descartadas)` : ''}.`, 'info', 6000);
+      return;
+    }
+
+    // \u2500\u2500 Phase 5: salvar os cards revisados no Anki + Obsidian \u2500\u2500
+    if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Salvando...';
+    let savedOk = 0, saveFail = 0, cardsSaved = 0;
+    const saveToast = showLoadingToast(`\uD83D\uDCBE Salvando 0/${batchResults.length}...`);
+    try {
+      for (const r of batchResults) {
+        const ops = [];
+        if (getSetting('enableAnki') && r.aiResult?.cards?.length) ops.push(addCardsToAnki(r.aiResult, r.questionData));
+        if (getSetting('enableObsidian')) ops.push(saveToObsidian(r.questionData, r.aiResult));
+        const rs = await Promise.allSettled(ops);
+        const failed = rs.filter(x => x.status === 'rejected');
+        if (failed.length) {
+          saveFail++;
+          failed.forEach(f => console.error(`\u274C Batch save Q${r.questionData.id}:`, f.reason));
+        } else {
+          savedOk++;
+          cardsSaved += (r.aiResult?.cards?.length || 0);
+        }
+        const msgEl = saveToast.querySelector('span:last-child');
+        if (msgEl) msgEl.textContent = `\uD83D\uDCBE Salvando ${savedOk + saveFail}/${batchResults.length}...`;
+      }
+    } finally {
+      saveToast.remove();
       batchRunning = false;
       if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
       // Persistent toast \u2014 stays until user clicks \u2715
-      const excluded = collected.length - selected.length;
-      const type = processed > 0 ? 'success' : 'warning';
+      const type = savedOk > 0 ? 'success' : 'warning';
       const icons = { success: '\u2705', warning: '\u26A0\uFE0F' };
       const finalToast = document.createElement('div');
       finalToast.className = `tec-toast ${type}`;
       finalToast.style.pointerEvents = 'auto';
       finalToast.innerHTML = `
         <span>${icons[type]}</span>
-        <span>Batch finalizado!<br>\u2705 ${processed} processadas | \u274C ${errors} erros | \uD83D\uDE48 ${excluded} exclu\u00EDdas por voc\u00EA | \u23ED\uFE0F ${skipped} acertos pulados</span>
+        <span>Batch finalizado!<br>\uD83D\uDCBE ${savedOk} quest\u00E3o(\u00F5es) salvas (${cardsSaved} cards) | \u274C ${errors + saveFail} erro(s) | \uD83D\uDE48 ${excluded} exclu\u00EDdas por voc\u00EA | \u23ED\uFE0F ${skipped} acertos pulados</span>
         <button style="background:none;border:none;color:inherit;font-size:18px;cursor:pointer;margin-left:8px;padding:2px 6px;opacity:.7;line-height:1;" title="Fechar">\u2715</button>
       `;
       finalToast.querySelector('button').addEventListener('click', () => {
