@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.13.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (revisão do batch com regeneração por questão antes de salvar, cards visuais MathJax/SVG, Cloze nativo com travas) e salva no Anki + Obsidian
+// @version      1.14.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com IA (pipeline resiliente, revisão do batch, cards visuais MathJax/SVG e Cloze nativo) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.13.0';
+  const SCRIPT_VERSION = '1.14.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -341,6 +341,10 @@
 
   function sanitizePath(text) {
     return text.replace(/[\\/:*?"<>|]/g, '-').trim();
+  }
+
+  function escapeHtml(text) {
+    return String(text ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   }
 
   function delay(ms) {
@@ -1939,37 +1943,117 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return parseJsonFromText(json?.choices?.[0]?.message?.content);
   }
 
-  async function callOpenAICompatible(url, apiKey, body, extraHeaders = {}) {
-    const MAX_RETRIES = 5;
+  class AIRequestError extends Error {
+    constructor(message, meta = {}) {
+      super(message);
+      this.name = 'AIRequestError';
+      Object.assign(this, {
+        status: null, code: '', kind: 'api', provider: '', model: '',
+        retryable: false, providerFatal: false, detail: '',
+      }, meta);
+    }
+  }
+
+  function sanitizeApiDetail(value) {
+    return String(value || '')
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [oculto]')
+      .replace(/\b(?:sk-|oc-)[A-Za-z0-9_-]{12,}\b/g, '[chave oculta]')
+      .replace(/https?:\/\/\S+/g, '[link omitido]')
+      .replace(/[<>]/g, '')
+      .slice(0, 240);
+  }
+
+  function parseApiErrorText(text) {
+    try {
+      const json = JSON.parse(text || '{}');
+      const e = json?.error || json;
+      return { message: sanitizeApiDetail(e?.message || text), code: String(e?.type || e?.code || '') };
+    } catch {
+      return { message: sanitizeApiDetail(text), code: '' };
+    }
+  }
+
+  function classifyApiError(status, code, detail, context = {}) {
+    const haystack = `${code} ${detail}`.toLowerCase();
+    let kind = 'api';
+    let message = `Falha da API${status ? ` (HTTP ${status})` : ''}`;
+    let providerFatal = false;
+    if (/insufficient balance|credits?error|billing|saldo/.test(haystack)) {
+      const providerName = context.provider === 'openrouter' ? 'OpenRouter' : 'OpenCode Go';
+      kind = 'credits'; message = `Saldo, créditos ou assinatura do ${providerName} insuficientes`; providerFatal = true;
+    } else if (status === 401 || status === 403 || /invalid api key|unauthori|forbidden/.test(haystack)) {
+      kind = 'auth'; message = 'Chave da API inválida, expirada ou sem acesso'; providerFatal = true;
+    } else if (status === 429) {
+      kind = 'rate_limit'; message = 'Limite temporário da API atingido';
+    } else if (status >= 500) {
+      kind = 'provider'; message = 'Provedor de IA temporariamente indisponível';
+    } else if (status === 400) {
+      kind = 'invalid_request'; message = detail ? `Requisição rejeitada: ${detail}` : 'Requisição rejeitada pelo modelo';
+    }
+    return new AIRequestError(message, {
+      status, code, kind, detail, providerFatal,
+      retryable: status === 429 || status >= 500,
+      provider: context.provider || '', model: context.model || '',
+    });
+  }
+
+  function describeAiError(err) {
+    if (err instanceof AIRequestError) return err.message;
+    if (/timed out/i.test(err?.message || '')) return 'tempo limite excedido';
+    if (/network/i.test(err?.message || '')) return 'falha de rede';
+    return sanitizeApiDetail(err?.message || String(err));
+  }
+
+  async function callOpenAICompatible(url, apiKey, body, extraHeaders = {}, context = {}) {
+    const MAX_RETRIES = 3;
     let res;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       console.log(`🌐 OpenAI-compatible request → ${url} (tentativa ${attempt}/${MAX_RETRIES})`);
-      res = await gmFetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          ...extraHeaders,
-        },
-        body: JSON.stringify(body),
-        timeout: 300000,
-      });
+      try {
+        res = await gmFetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+            ...extraHeaders,
+          },
+          body: JSON.stringify(body),
+          timeout: 300000,
+        });
+      } catch (err) {
+        if (attempt < MAX_RETRIES) {
+          await delay(attempt * 1500);
+          continue;
+        }
+        throw new AIRequestError(/timed out/i.test(err?.message || '') ? 'Tempo limite da API excedido' : 'Falha de rede ao acessar a API', {
+          kind: /timed out/i.test(err?.message || '') ? 'timeout' : 'network',
+          retryable: true, provider: context.provider || '', model: context.model || '',
+        });
+      }
 
       if (res.ok) break;
 
       if ((res.status === 429 || res.status === 503 || res.status === 502 || res.status === 504) && attempt < MAX_RETRIES) {
-        const waitSec = res.status === 429 ? attempt * 8 : attempt * 5;
+        const waitSec = res.status === 429 ? attempt * 4 : attempt * 2;
         console.warn(`⚠️ ${res.status} — tentativa ${attempt}/${MAX_RETRIES}, aguardando ${waitSec}s...`);
         await new Promise(r => setTimeout(r, waitSec * 1000));
         continue;
       }
 
       const errText = await res.text();
-      throw new Error(`API error (${res.status}): ${errText}`);
+      const parsed = parseApiErrorText(errText);
+      throw classifyApiError(res.status, parsed.code, parsed.message, context);
     }
 
-    return res.json();
+    try {
+      return await res.json();
+    } catch (err) {
+      throw new AIRequestError('A API devolveu uma resposta que não é JSON válido', {
+        kind: 'response', detail: sanitizeApiDetail(err?.message),
+        provider: context.provider || '', model: context.model || '',
+      });
+    }
   }
 
   async function callOpencode(questionData) {
@@ -2021,70 +2105,95 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     { id: 'google/gemini-3.1-pro-preview',       label: '\u2B50 Gemini 3.1 Pro Preview \u2014 GPQA 94.1% ($1.25/$10 M tok)' },
   ];
 
-  // ── OpenCode Go — catálogo completo ──────────────────────────────────
-  // wire = formato de API do modelo no gateway OpenCode Go:
-  //   'chat'      → /v1/chat/completions (OpenAI-style)  — GLM, DeepSeek, Kimi, MiniMax, Grok, grátis
-  //   'messages'  → /v1/messages (Anthropic-style)       — Qwen, Claude
-  //   'responses' → /v1/responses (OpenAI Responses)     — GPT-5.x
-  // Preços por 1M tokens (input/output), conforme catálogo OpenCode jul/2026.
-  const OPENCODE_MODELS = [
-    // GLM — melhor auditor (líder open-weight no Intelligence Index)
-    { id: 'glm-5.2',               label: 'GLM 5.2 ⭐ auditor ($1.40/$4.40)',            wire: 'chat',      group: 'GLM' },
-    { id: 'glm-5.1',               label: 'GLM 5.1 ($1.40/$4.40)',                       wire: 'chat',      group: 'GLM' },
-    { id: 'glm-5',                 label: 'GLM 5 ($1.00/$3.20)',                         wire: 'chat',      group: 'GLM' },
-    // Kimi — melhor creator (K2.6 = escrita/análise; K2.7 Code é só para código)
-    { id: 'kimi-k2.6',             label: 'Kimi K2.6 ⭐ creator ($0.95/$4.00)',          wire: 'chat',      group: 'Kimi' },
-    { id: 'kimi-k2.7-code',        label: 'Kimi K2.7 Code — só código ($0.95/$4.00)',    wire: 'chat',      group: 'Kimi' },
-    { id: 'kimi-k2.5',             label: 'Kimi K2.5 ($0.60/$3.00)',                     wire: 'chat',      group: 'Kimi' },
-    // DeepSeek
-    { id: 'deepseek-v4-pro',       label: 'DeepSeek V4 Pro ($1.74/$3.48)',               wire: 'chat',      group: 'DeepSeek' },
-    { id: 'deepseek-v4-flash',     label: 'DeepSeek V4 Flash ($0.14/$0.28)',             wire: 'chat',      group: 'DeepSeek' },
-    { id: 'deepseek-v4-flash-free', label: 'DeepSeek V4 Flash (GRATUITO)',               wire: 'chat',      group: 'DeepSeek' },
-    // MiniMax
-    { id: 'minimax-m3',            label: 'MiniMax M3 ($0.30/$1.20)',                    wire: 'chat',      group: 'MiniMax' },
-    { id: 'minimax-m2.7',          label: 'MiniMax M2.7 ($0.30/$1.20)',                  wire: 'chat',      group: 'MiniMax' },
-    { id: 'minimax-m2.5',          label: 'MiniMax M2.5 ($0.30/$1.20)',                  wire: 'chat',      group: 'MiniMax' },
-    // Grok
-    { id: 'grok-4.5',              label: 'Grok 4.5 ($2.00/$6.00)',                      wire: 'chat',      group: 'Grok' },
-    { id: 'grok-build-0.1',        label: 'Grok Build 0.1 ($1.00/$2.00)',                wire: 'chat',      group: 'Grok' },
-    // Qwen — /messages (Anthropic-style). Qwen 3.7 Max = raciocínio mais profundo.
-    { id: 'qwen3.7-max',           label: 'Qwen 3.7 Max — raciocínio máx. ($2.50/$7.50)', wire: 'messages', group: 'Qwen (messages)' },
-    { id: 'qwen3.7-plus',          label: 'Qwen 3.7 Plus ($0.40/$1.60)',                 wire: 'messages',  group: 'Qwen (messages)' },
-    { id: 'qwen3.6-plus',          label: 'Qwen 3.6 Plus ($0.50/$3.00)',                 wire: 'messages',  group: 'Qwen (messages)' },
-    { id: 'qwen3.5-plus',          label: 'Qwen 3.5 Plus ($0.20/$1.20)',                 wire: 'messages',  group: 'Qwen (messages)' },
-    // Claude — /messages (Anthropic-style)
-    { id: 'claude-opus-4.8',       label: 'Claude Opus 4.8 ($5.00/$25.00)',              wire: 'messages',  group: 'Claude (messages)' },
-    { id: 'claude-sonnet-5',       label: 'Claude Sonnet 5 ($2.00/$10.00)',              wire: 'messages',  group: 'Claude (messages)' },
-    { id: 'claude-haiku-4.5',      label: 'Claude Haiku 4.5 ($1.00/$5.00)',              wire: 'messages',  group: 'Claude (messages)' },
-    // GPT-5.x — /responses (OpenAI Responses API)
-    { id: 'gpt-5.5',               label: 'GPT-5.5 ($5.00/$30.00)',                      wire: 'responses', group: 'GPT (responses)' },
-    { id: 'gpt-5.4',               label: 'GPT-5.4 ($2.50/$15.00)',                      wire: 'responses', group: 'GPT (responses)' },
-    { id: 'gpt-5.4-mini',          label: 'GPT-5.4 Mini ($0.75/$4.50)',                  wire: 'responses', group: 'GPT (responses)' },
-    { id: 'gpt-5.2',               label: 'GPT-5.2 ($1.75/$14.00)',                      wire: 'responses', group: 'GPT (responses)' },
-    { id: 'gpt-5',                 label: 'GPT-5 ($1.07/$8.50)',                         wire: 'responses', group: 'GPT (responses)' },
-    // Grátis / trial
-    { id: 'big-pickle',            label: 'Big Pickle (GRATUITO)',                       wire: 'chat',      group: 'Grátis' },
-    { id: 'mimo-v2.5-free',        label: 'MiMo V2.5 (GRATUITO)',                        wire: 'chat',      group: 'Grátis' },
-    { id: 'north-mini-code-free',  label: 'North Mini Code (GRATUITO)',                  wire: 'chat',      group: 'Grátis' },
-    { id: 'nemotron-3-ultra-free', label: 'Nemotron 3 Ultra (GRATUITO)',                 wire: 'chat',      group: 'Grátis' },
+  // ── OpenCode Go — catálogo vivo com fallback offline ─────────────────
+  // O endpoint /models é a fonte de verdade. A lista local abaixo só mantém o
+  // seletor funcional antes da primeira sincronização ou quando não há rede.
+  const OPENCODE_MODELS_URL = 'https://opencode.ai/zen/go/v1/models';
+  const OPENCODE_FALLBACK_IDS = [
+    'glm-5.2', 'glm-5.1', 'glm-5',
+    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5',
+    'deepseek-v4-pro', 'deepseek-v4-flash',
+    'mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni',
+    'minimax-m3', 'minimax-m2.7', 'minimax-m2.5',
+    'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus', 'qwen3.5-plus',
+    'grok-4.5', 'hy3', 'hy3-preview', 'gpt-5.6-luna',
   ];
+
+  const OPENCODE_MODEL_LABELS = {
+    'glm-5.2': 'GLM 5.2 ⭐ auditor',
+    'glm-5.1': 'GLM 5.1',
+    'kimi-k2.7-code': 'Kimi K2.7 Code — só código',
+    'kimi-k2.6': 'Kimi K2.6 ⭐ creator',
+    'deepseek-v4-pro': 'DeepSeek V4 Pro',
+    'deepseek-v4-flash': 'DeepSeek V4 Flash',
+    'mimo-v2.5-pro': 'MiMo V2.5 Pro',
+    'gpt-5.6-luna': 'GPT 5.6 Luna',
+  };
+
+  function inferOpencodeWire(id) {
+    if (/^(qwen|minimax|claude)/i.test(id)) return 'messages';
+    if (/^gpt-/i.test(id)) return 'responses';
+    return 'chat';
+  }
+
+  function inferOpencodeGroup(id) {
+    const prefix = (id.split('-')[0] || 'Outros').toLowerCase();
+    const names = { glm: 'GLM', kimi: 'Kimi', deepseek: 'DeepSeek', mimo: 'MiMo', minimax: 'MiniMax', qwen3: 'Qwen', grok: 'Grok', hy3: 'HY', gpt: 'GPT', claude: 'Claude' };
+    const key = Object.keys(names).find(k => prefix.startsWith(k));
+    return names[key] || 'Outros';
+  }
+
+  function makeOpencodeModelDef(id) {
+    const fallbackLabel = id.split('-').map(p => p ? p[0].toUpperCase() + p.slice(1) : p).join(' ');
+    return { id, label: OPENCODE_MODEL_LABELS[id] || fallbackLabel, wire: inferOpencodeWire(id), group: inferOpencodeGroup(id) };
+  }
+
+  function getCachedOpencodeIds() {
+    const cached = GM_getValue('opencodeModelIdsCache_v114', null);
+    return Array.isArray(cached) && cached.length ? cached.filter(id => typeof id === 'string' && id) : OPENCODE_FALLBACK_IDS;
+  }
+
+  let OPENCODE_MODELS = getCachedOpencodeIds().map(makeOpencodeModelDef);
+
+  function reliableOpencodeDefaults() {
+    const valid = (id) => OPENCODE_MODELS.some(m => m.id === id);
+    const creator = valid('kimi-k2.6') ? 'kimi-k2.6' : (valid('glm-5.1') ? 'glm-5.1' : OPENCODE_MODELS[0]?.id);
+    return { creator, auditor: valid('glm-5.2') ? 'glm-5.2' : creator };
+  }
+
+  function reconcileOpencodeSelections() {
+    const valid = (id) => OPENCODE_MODELS.some(m => m.id === id);
+    const { creator, auditor } = reliableOpencodeDefaults();
+    if (!valid(getSetting('opencodeModel'))) setSetting('opencodeModel', creator);
+    if (!valid(getSetting('creatorModel'))) setSetting('creatorModel', creator);
+    if (!valid(getSetting('auditorModel'))) setSetting('auditorModel', auditor);
+  }
 
   // Escopo OpenCode-only (v1.11.0): seleções de provedores antigos (OpenRouter/
   // Gemini) caem no padrão OpenCode; provider + modo dual viram padrão uma vez.
   (function migrateToOpencodeOnly() {
     const valid = (id) => OPENCODE_MODELS.some(m => m.id === id);
-    if (!valid(getSetting('opencodeModel'))) setSetting('opencodeModel', 'kimi-k2.6');
-    if (!valid(getSetting('creatorModel'))) setSetting('creatorModel', 'kimi-k2.6');
-    if (!valid(getSetting('auditorModel'))) setSetting('auditorModel', 'glm-5.2');
+    const { creator: reliableCreator, auditor: reliableAuditor } = reliableOpencodeDefaults();
+    if (!valid(getSetting('opencodeModel'))) setSetting('opencodeModel', reliableCreator);
+    if (!valid(getSetting('creatorModel'))) setSetting('creatorModel', reliableCreator);
+    if (!valid(getSetting('auditorModel'))) setSetting('auditorModel', reliableAuditor);
     if (!GM_getValue('migratedOpencodeOnly_v111', false)) {
       setSetting('aiProvider', 'opencode');
       setSetting('pipelineMode', 'dual');
       GM_setValue('migratedOpencodeOnly_v111', true);
     }
+    // Corrige apenas instalações que chegaram a executar uma build intermediária
+    // da v1.14, que migrou automaticamente Kimi → GLM. Escolhas manuais ficam intactas.
+    if (!GM_getValue('migratedPreferredCreator_v114', false)) {
+      const wasAutoMigrated = GM_getValue('migratedReliableCreator_v114', false);
+      if (wasAutoMigrated && getSetting('opencodeModel') === 'glm-5.1') setSetting('opencodeModel', reliableCreator);
+      if (wasAutoMigrated && getSetting('creatorModel') === 'glm-5.1') setSetting('creatorModel', reliableCreator);
+      GM_setValue('migratedPreferredCreator_v114', true);
+    }
   })();
 
   function getOpencodeModelDef(model) {
-    return OPENCODE_MODELS.find(m => m.id === model) || null;
+    return OPENCODE_MODELS.find(m => m.id === model) || (model ? makeOpencodeModelDef(model) : null);
   }
 
   /** Wire (formato de API) do modelo OpenCode Go; default 'chat'. */
@@ -2100,20 +2209,70 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return `${base}/chat/completions`;
   }
 
+  function hasConfiguredApiKey(key) {
+    return Boolean(key && !/^YOUR_|^\.{3}$/.test(key));
+  }
+
+  /** Atualiza o catálogo no máximo 1x/dia; falha silenciosa mantém o cache. */
+  async function refreshOpencodeModelCatalog(force = false, apiKey = getSetting('opencodeApiKey')) {
+    if (!hasConfiguredApiKey(apiKey)) return { ok: false, reason: 'Chave do OpenCode não configurada.' };
+    const last = GM_getValue('opencodeModelCatalogUpdatedAt_v114', 0);
+    if (!force && Date.now() - last < 24 * 60 * 60 * 1000) {
+      return { ok: true, cached: true, count: OPENCODE_MODELS.length };
+    }
+    try {
+      const res = await gmFetch(OPENCODE_MODELS_URL, {
+        headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        timeout: 15000,
+      });
+      if (!res.ok) return { ok: false, reason: `Catálogo HTTP ${res.status}` };
+      const json = await res.json();
+      const ids = [...new Set((json?.data || []).map(m => m?.id).filter(id => typeof id === 'string' && id))];
+      if (!ids.length) return { ok: false, reason: 'Catálogo vazio.' };
+      OPENCODE_MODELS = ids.map(makeOpencodeModelDef);
+      GM_setValue('opencodeModelIdsCache_v114', ids);
+      GM_setValue('opencodeModelCatalogUpdatedAt_v114', Date.now());
+      reconcileOpencodeSelections();
+      return { ok: true, cached: false, count: ids.length };
+    } catch (err) {
+      return { ok: false, reason: err?.message || 'Falha de rede ao atualizar catálogo.' };
+    }
+  }
+
+  /** Teste mínimo e billable (1–2 tokens) para distinguir catálogo acessível de saldo real. */
+  async function testOpencodeAccess(apiKey) {
+    if (!hasConfiguredApiKey(apiKey)) throw new Error('Chave do OpenCode não configurada.');
+    const catalog = await refreshOpencodeModelCatalog(true, apiKey);
+    if (!catalog.ok) throw new Error(catalog.reason || 'Não foi possível consultar o catálogo do OpenCode.');
+    const model = OPENCODE_MODELS.some(m => m.id === 'glm-5.1') ? 'glm-5.1'
+      : OPENCODE_MODELS.find(m => m.wire === 'chat')?.id;
+    if (!model) throw new Error('Nenhum modelo chat disponível para o teste.');
+    await callOpenAICompatible('https://opencode.ai/zen/go/v1/chat/completions', apiKey, {
+      model,
+      messages: [{ role: 'user', content: 'Responda somente OK.' }],
+      max_tokens: 2,
+    }, {}, { provider: 'opencode', model });
+    providerCircuitBreakers.delete('opencode');
+    return { ok: true, model, catalogCount: catalog.count };
+  }
+
   /** Monta <optgroup>/<option> (agrupados por família) para os seletores OpenCode. */
   function buildOpencodeOptions(selectedId) {
+    const models = !selectedId || OPENCODE_MODELS.some(m => m.id === selectedId)
+      ? OPENCODE_MODELS
+      : [makeOpencodeModelDef(selectedId), ...OPENCODE_MODELS];
     const order = [];
     const byGroup = new Map();
-    for (const m of OPENCODE_MODELS) {
+    for (const m of models) {
       const g = m.group || 'Outros';
       if (!byGroup.has(g)) { byGroup.set(g, []); order.push(g); }
       byGroup.get(g).push(m);
     }
     return order.map(g => {
       const opts = byGroup.get(g).map(m =>
-        `<option value="${m.id}"${selectedId === m.id ? ' selected' : ''}>${m.label}</option>`
+        `<option value="${escapeHtml(m.id)}"${selectedId === m.id ? ' selected' : ''}>${escapeHtml(m.label)}${!OPENCODE_MODELS.some(x => x.id === m.id) ? ' ⚠️ fora do catálogo atual' : ''}</option>`
       ).join('');
-      return `<optgroup label="${g}">${opts}</optgroup>`;
+      return `<optgroup label="${escapeHtml(g)}">${opts}</optgroup>`;
     }).join('');
   }
 
@@ -2156,7 +2315,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
    */
   async function callOpencodeModel(model, systemPrompt, userPrompt) {
     const apiKey = getSetting('opencodeApiKey');
-    if (!apiKey) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
+    if (!hasConfiguredApiKey(apiKey)) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
     const wire = getOpencodeWire(model);
     const endpoint = getOpencodeEndpoint(model);
 
@@ -2164,7 +2323,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     if (wire === 'messages') {
       // Anthropic-style: system separado, max_tokens obrigatório, sem response_format.
       body = {
-        model, max_tokens: 8192, temperature: 0.3,
+        model, max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       };
@@ -2182,12 +2341,14 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: 0.3,
         response_format: { type: 'json_object' },
       };
+      // Kimi K2.5/K2.6 usam thinking por padrão e rejeitam temperature != 1.0
+      // (ou != 0.6 sem thinking). Omitir usa o valor fixo correto do servidor.
+      if (!/^kimi-/i.test(model)) body.temperature = 0.3;
     }
 
-    const json = await callOpenAICompatible(endpoint, apiKey, body);
+    const json = await callOpenAICompatible(endpoint, apiKey, body, {}, { provider: 'opencode', model });
     const result = parseJsonFromText(extractOpencodeText(json, wire));
     return { result, usage: extractOpencodeUsage(json) };
   }
@@ -2224,11 +2385,12 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     if (reasoningConfig) {
       Object.assign(body, reasoningConfig);
     }
+    if (model.includes('kimi-k2')) delete body.temperature;
 
     const json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
       'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
       'X-Title': 'TEC-to-Anki',
-    });
+    }, { provider: 'openrouter', model });
 
     const usage = json?.usage;
     const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
@@ -2336,7 +2498,7 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
    * Returns parsed JSON response.
    */
   function isOpencodeModel(model) {
-    return OPENCODE_MODELS.some(m => m.id === model);
+    return Boolean(model && (OPENCODE_MODELS.some(m => m.id === model) || !model.includes('/')));
   }
 
   async function callOpenRouterWithModel(model, systemPrompt, userPrompt, extraBody = {}) {
@@ -2365,11 +2527,12 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
       ...reasoningConfig,
       ...extraBody,
     };
+    if (model.includes('kimi-k2')) delete body.temperature;
 
     const json = await callOpenAICompatible('https://openrouter.ai/api/v1/chat/completions', apiKey, body, {
       'HTTP-Referer': 'https://github.com/filipegajo89/anki-tec',
       'X-Title': 'TEC-to-Anki',
-    });
+    }, { provider: 'openrouter', model });
 
     // Estimate cost from usage if available
     const usage = json?.usage;
@@ -2383,8 +2546,8 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
   /**
    * Step 1: Call the Creator model to generate flashcards.
    */
-  async function callCreator(questionData, feedback = null) {
-    const model = getSetting('creatorModel');
+  async function callCreator(questionData, feedback = null, modelOverride = null) {
+    const model = modelOverride || getSetting('creatorModel');
 
     let userPrompt = buildGeminiPrompt(questionData);
     if (feedback) {
@@ -2514,10 +2677,14 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       'kimi-k2.6':            { input: 0.95, output: 4.00 },
       'kimi-k2.7-code':       { input: 0.95, output: 4.00 },
       'kimi-k2.5':            { input: 0.60, output: 3.00 },
-      'deepseek-v4-pro':      { input: 1.74, output: 3.48 },
+      'kimi-k3':              { input: 3.00, output: 15.00 },
+      'deepseek-v4-pro':      { input: 0.435, output: 0.87 },
       'deepseek-v4-flash':    { input: 0.14, output: 0.28 },
+      'mimo-v2.5-pro':        { input: 0.435, output: 0.87 },
+      'mimo-v2.5':            { input: 0.14, output: 0.28 },
       'minimax-m3':           { input: 0.30, output: 1.20 },
       'grok-4.5':             { input: 2.00, output: 6.00 },
+      'hy3':                  { input: 0.14, output: 0.58 },
       'qwen3.7-max':          { input: 2.50, output: 7.50 },
       'qwen3.7-plus':         { input: 0.40, output: 1.60 },
       'gpt-5.5':              { input: 5.00, output: 30.00 },
@@ -2542,37 +2709,124 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     return cost;
   }
 
+  const creatorCircuitBreakers = new Map();
+  const providerCircuitBreakers = new Map();
+
+  function aiProviderForModel(model) {
+    return isOpencodeModel(model) ? 'opencode' : 'openrouter';
+  }
+
+  function activeCircuit(map, key) {
+    const entry = map.get(key);
+    if (!entry) return null;
+    if (entry.until <= Date.now()) { map.delete(key); return null; }
+    return entry;
+  }
+
+  function openCreatorCircuit(model, err) {
+    const ttl = err?.kind === 'invalid_request' || err?.kind === 'response' ? 30 * 60 * 1000
+      : err?.kind === 'rate_limit' || err?.kind === 'provider' ? 2 * 60 * 1000
+        : 5 * 60 * 1000;
+    creatorCircuitBreakers.set(model, { until: Date.now() + ttl, reason: describeAiError(err), error: err });
+  }
+
+  function openProviderCircuit(provider, err) {
+    providerCircuitBreakers.set(provider, { until: Date.now() + 10 * 60 * 1000, reason: describeAiError(err), error: err });
+  }
+
+  function clearAiCircuitBreakers() {
+    creatorCircuitBreakers.clear();
+    providerCircuitBreakers.clear();
+  }
+
+  async function callFallbackCreator(questionData, fallbackModel) {
+    const fallbackProvider = aiProviderForModel(fallbackModel);
+    const providerBlock = activeCircuit(providerCircuitBreakers, fallbackProvider);
+    if (providerBlock) {
+      throw new AIRequestError(providerBlock.reason, {
+        kind: providerBlock.error?.kind || 'api', providerFatal: true,
+        provider: fallbackProvider, model: fallbackModel,
+        status: providerBlock.error?.status || null,
+      });
+    }
+    const modelBlock = activeCircuit(creatorCircuitBreakers, fallbackModel);
+    if (modelBlock) {
+      const err = new AIRequestError(`${fallbackModel} está temporariamente pausado: ${modelBlock.reason}`, {
+        kind: modelBlock.error?.kind || 'api', provider: fallbackProvider, model: fallbackModel,
+      });
+      err.pipelineFatal = true;
+      throw err;
+    }
+    try {
+      const result = await callCreator(questionData, null, fallbackModel);
+      creatorCircuitBreakers.delete(fallbackModel);
+      return result;
+    } catch (err) {
+      if (err?.providerFatal) openProviderCircuit(fallbackProvider, err);
+      else openCreatorCircuit(fallbackModel, err);
+      err.pipelineFatal = true;
+      throw err;
+    }
+  }
+
   /**
    * Full dual pipeline: Creator → Filter → Auditor → (retry if rejected) → final result.
    */
   async function callDualPipeline(questionData, onStatus = () => {}) {
     const creatorModel = getSetting('creatorModel');
-    const isOpencode = isOpencodeModel(creatorModel);
-    const apiKey = isOpencode ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
-    if (!apiKey) throw new Error(`API key do ${isOpencode ? 'OpenCode' : 'OpenRouter'} não configurada para o pipeline dual.`);
+    const fallbackModel = getSetting('auditorModel');
+    const provider = aiProviderForModel(creatorModel);
+    const apiKey = provider === 'opencode' ? getSetting('opencodeApiKey') : getSetting('openrouterApiKey');
+    if (!hasConfiguredApiKey(apiKey)) throw new Error(`API key do ${provider === 'opencode' ? 'OpenCode' : 'OpenRouter'} não configurada para o pipeline dual.`);
+    const providerBlock = activeCircuit(providerCircuitBreakers, provider);
+    if (providerBlock) {
+      throw new AIRequestError(providerBlock.reason, {
+        kind: providerBlock.error?.kind || 'api', providerFatal: true, provider,
+        status: providerBlock.error?.status || null,
+      });
+    }
 
     let totalCost = 0;
+    let usedCreatorModel = creatorModel;
 
     // ── Step 1: Creator ──
-    onStatus('🧠 Creator gerando flashcards...');
     let creatorResult;
-    try {
-      creatorResult = await callCreator(questionData);
-    } catch (err) {
-      // Fallback: use auditor model as creator
-      console.warn('⚠️ Creator falhou, usando modelo auditor como fallback:', err.message);
-      onStatus('⚠️ Creator falhou — usando fallback...');
-      const fallbackModel = getSetting('auditorModel');
-      const origCreator = getSetting('creatorModel');
-      setSetting('creatorModel', fallbackModel);
-      try {
-        creatorResult = await callCreator(questionData);
-      } finally {
-        setSetting('creatorModel', origCreator);
+    const creatorBlock = activeCircuit(creatorCircuitBreakers, creatorModel);
+    if (creatorBlock) {
+      if (fallbackModel === creatorModel) {
+        const err = new AIRequestError(`${creatorModel} está temporariamente pausado: ${creatorBlock.reason}`, {
+          kind: creatorBlock.error?.kind || 'api', model: creatorModel, provider,
+        });
+        err.pipelineFatal = true;
+        throw err;
       }
-      showToast('⚠️ Creator indisponível — cards gerados pelo modelo auditor (fallback).', 'warning', 5000);
+      usedCreatorModel = fallbackModel;
+      onStatus(`🛟 ${creatorModel} pausado — usando ${fallbackModel}...`);
+      creatorResult = await callFallbackCreator(questionData, fallbackModel);
+    } else {
+      onStatus(`🧠 Creator ${creatorModel} gerando flashcards...`);
+      try {
+        creatorResult = await callCreator(questionData, null, creatorModel);
+        creatorCircuitBreakers.delete(creatorModel);
+        providerCircuitBreakers.delete(provider);
+      } catch (err) {
+        console.warn('⚠️ Creator falhou:', { model: creatorModel, kind: err?.kind || 'unknown', status: err?.status || null, message: describeAiError(err) });
+        if (err?.providerFatal) {
+          openProviderCircuit(provider, err);
+          throw err;
+        }
+        openCreatorCircuit(creatorModel, err);
+        if (fallbackModel === creatorModel) {
+          err.pipelineFatal = true;
+          throw err;
+        }
+        usedCreatorModel = fallbackModel;
+        onStatus(`🛟 ${creatorModel} falhou — usando ${fallbackModel}...`);
+        creatorResult = await callFallbackCreator(questionData, fallbackModel);
+        showToast(`Creator <b>${escapeHtml(creatorModel)}</b> falhou: ${escapeHtml(describeAiError(err))}.<br>Cards gerados por <b>${escapeHtml(fallbackModel)}</b>; próximas questões irão direto ao fallback.`, 'warning', 9000);
+      }
     }
-    if (creatorResult._usage) totalCost += trackPipelineCost(creatorResult._usage, getSetting('creatorModel'));
+    if (creatorResult._usage) totalCost += trackPipelineCost(creatorResult._usage, usedCreatorModel);
 
     console.log('📝 Creator result:', creatorResult.cards.length, 'cards');
 
@@ -2586,8 +2840,12 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     try {
       auditorResult = await callAuditor(filteredPayload);
     } catch (err) {
-      console.warn('⚠️ Auditor falhou, aceitando todos os cards:', err.message);
-      showToast('⚠️ Auditor indisponível — cards aceitos sem validação (marcados p/ revisão).', 'warning', 5000);
+      console.warn('⚠️ Auditor falhou:', { model: getSetting('auditorModel'), kind: err?.kind || 'unknown', status: err?.status || null, message: describeAiError(err) });
+      if (err?.providerFatal) {
+        openProviderCircuit(aiProviderForModel(getSetting('auditorModel')), err);
+        throw err;
+      }
+      showToast(`Auditor indisponível: ${escapeHtml(describeAiError(err))}. Cards marcados para revisão manual.`, 'warning', 7000);
       for (const c of creatorResult.cards) { c._needsReview = true; c._rejectReason = 'Auditor indisponível — não validado'; }
       return normalizeGeneratedResult(creatorResult);
     }
@@ -2640,9 +2898,9 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
       ].join('\n');
 
       try {
-        const retryResult = await callCreator(questionData, feedback);
+        const retryResult = await callCreator(questionData, feedback, usedCreatorModel);
         if (retryResult.erro_identificado) retryErroIdentificado = retryResult.erro_identificado;
-        if (retryResult._usage) totalCost += trackPipelineCost(retryResult._usage, getSetting('creatorModel'));
+        if (retryResult._usage) totalCost += trackPipelineCost(retryResult._usage, usedCreatorModel);
 
         // Re-audit the retried cards
         onStatus('⚖️ Re-auditando cards regenerados...');
@@ -2651,7 +2909,11 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
         try {
           retryAudit = await callAuditor(retryFiltered);
           if (retryAudit._usage) totalCost += trackPipelineCost(retryAudit._usage, getSetting('auditorModel'));
-        } catch {
+        } catch (err) {
+          if (err?.providerFatal) {
+            openProviderCircuit(aiProviderForModel(getSetting('auditorModel')), err);
+            throw err;
+          }
           // If re-audit fails, accept retried cards (flagged for manual review)
           for (const c of retryResult.cards) { c._needsReview = true; c._rejectReason = 'Re-auditoria indisponível — não validado'; }
           approved.push(...retryResult.cards);
@@ -2681,6 +2943,7 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
           });
         }
       } catch (err) {
+        if (err?.providerFatal) throw err;
         console.warn('⚠️ Retry falhou, adicionando cards originais com tag revisar:', err.message);
         for (const r of rejected) {
           r.card._needsReview = true;
@@ -2697,7 +2960,8 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
       erro_identificado: (round1ApprovedCount === 0 && retryErroIdentificado) ? retryErroIdentificado : creatorResult.erro_identificado,
       cards: approved,
       _pipelineCost: totalCost,
-      _creatorModel: getSetting('creatorModel'),
+      _creatorModel: usedCreatorModel,
+      _configuredCreatorModel: creatorModel,
       _auditorModel: getSetting('auditorModel'),
     };
 
@@ -3743,7 +4007,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
           <div style="padding:12px;">
             ${errors.map(e => `
               <div style="font-size:12px;color:#c00;padding:4px 0;border-bottom:1px dashed #ffcdd2;">
-                <strong>Questão #${e.id}</strong> ${e.num !== '?' ? `(nº ${e.num})` : ''} — ${e.error}
+                <strong>Questão #${escapeHtml(e.id)}</strong> ${e.num !== '?' ? `(nº ${escapeHtml(e.num)})` : ''} — ${escapeHtml(e.error)}
               </div>
             `).join('')}
           </div>
@@ -3930,13 +4194,14 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <div class="tec-field">
               <label>OpenCode API Key</label>
               <input type="password" id="tec-cfg-opencode-key" value="${getSetting('opencodeApiKey')}" placeholder="...">
-              <small style="color:#888;font-size:11px">Obtenha em <a href="https://opencode.co" target="_blank" style="color:#60cdff">opencode.co</a></small>
+              <small style="color:#888;font-size:11px">Obtenha em <a href="https://opencode.ai" target="_blank" style="color:#60cdff">opencode.ai</a></small>
             </div>
             <div class="tec-field">
               <label>Modelo OpenCode</label>
               <select id="tec-cfg-opencode-model">
                 ${buildOpencodeOptions(getSetting('opencodeModel'))}
               </select>
+              <small style="color:#888;font-size:11px">Catálogo sincronizado automaticamente com o OpenCode Go.</small>
             </div>
           </div>
 
@@ -3948,7 +4213,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <option value="single" ${getSetting('pipelineMode') === 'single' ? 'selected' : ''}>Single (1 modelo, sem auditoria)</option>
               <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual (Creator \u2192 Auditor, mais preciso)</option>
             </select>
-            <small style="color:#888;font-size:11px">Padr\u00E3o: Creator <b>Kimi K2.6</b> \u2192 Auditor <b>GLM 5.2</b> (OpenCode Go). Custo ~1.2\u00A2/quest\u00E3o.</small>
+            <small style="color:#888;font-size:11px">Padrão: Creator <b>Kimi K2.6</b> → Auditor <b>GLM 5.2</b> (OpenCode Go), com payload compatível para o modo thinking do Kimi.</small>
           </div>
           <div id="tec-cfg-pipeline-section" style="display:none">
             <div class="tec-field">
@@ -4103,6 +4368,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         setSetting('maxCardsPerQuestion', parseInt(overlay.querySelector('#tec-cfg-max-cards').value, 10) || 2);
         setSetting('enableAnki', overlay.querySelector('#tec-cfg-enable-anki').checked);
         setSetting('enableObsidian', overlay.querySelector('#tec-cfg-enable-obs').checked);
+        clearAiCircuitBreakers();
         showToast('Configura\u00E7\u00F5es salvas!', 'success');
         overlay.remove();
         updateStatusDot();
@@ -4110,13 +4376,27 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       if (action === 'test') {
         const statusDiv = overlay.querySelector('#tec-cfg-status');
         statusDiv.innerHTML = '<span class="tec-spinner" style="border-color:rgba(0,0,0,.1);border-top-color:#4361ee"></span> Testando...';
-        const [anki, obs] = await Promise.all([
+        const opencodeKey = overlay.querySelector('#tec-cfg-opencode-key').value;
+        const [anki, obs, ai] = await Promise.all([
           ankiIsConnected().catch(() => false),
           obsidianIsConnected().catch(() => false),
+          testOpencodeAccess(opencodeKey).catch(err => ({ ok: false, error: describeAiError(err) })),
         ]);
+        if (ai?.ok) {
+          for (const id of ['tec-cfg-opencode-model', 'tec-cfg-creator-model', 'tec-cfg-auditor-model']) {
+            const select = overlay.querySelector(`#${id}`);
+            if (!select) continue;
+            const selected = select.value;
+            select.innerHTML = buildOpencodeOptions(selected);
+          }
+        }
         statusDiv.innerHTML = `
           <div>\uD83D\uDDC2\uFE0F AnkiConnect: ${anki ? '<span style="color:#06d6a0">\u2705 Conectado</span>' : '<span style="color:#ef476f">\u274C N\u00E3o conectado</span> \u2014 Verifique se o Anki est\u00E1 aberto com o add-on AnkiConnect (2055492159)'}</div>
           <div style="margin-top:4px">\uD83D\uDCD3 Obsidian REST API: ${obs ? '<span style="color:#06d6a0">\u2705 Conectado</span>' : '<span style="color:#ef476f">\u274C N\u00E3o conectado</span> \u2014 Verifique se o Obsidian est\u00E1 aberto com o plugin Local REST API'}</div>
+          <div style="margin-top:4px">🤖 OpenCode Go: ${ai?.ok
+            ? `<span style="color:#06d6a0">✅ API e saldo ativos</span> — ${escapeHtml(ai.model)}, ${ai.catalogCount} modelos`
+            : `<span style="color:#ef476f">❌ ${escapeHtml(ai?.error || 'Não conectado')}</span>`}</div>
+          <div style="margin-top:4px;color:#888;font-size:10px">O teste da IA usa uma resposta mínima de até 2 tokens.</div>
         `;
       }
     });
@@ -4558,7 +4838,11 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
           });
         } catch (err) {
           console.error('AI error:', err);
-          showToast(`Erro na IA: ${err.message}. Salvando sem flashcards.`, 'warning', 6000);
+          const errorMessage = describeAiError(err);
+          showToast(err?.providerFatal
+            ? `IA indisponível: ${escapeHtml(errorMessage)}. Verifique assinatura/saldo e a chave em ⚙️ Configurações. Nenhum flashcard será salvo.`
+            : `Erro na IA: ${escapeHtml(errorMessage)}. Salvando sem flashcards.`,
+          err?.providerFatal ? 'error' : 'warning', err?.providerFatal ? 12000 : 6000);
           aiResult = { materia: questionData.materia, subtopico: questionData.assunto, erro_identificado: '', cards: [] };
         }
 
@@ -4940,7 +5224,9 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     document.getElementById('tec-gen-stop').addEventListener('click', () => { batchRunning = false; });
 
     try {
-      for (const qData of selected) {
+      let fatalBatchError = false;
+      for (let selectedIndex = 0; selectedIndex < selected.length; selectedIndex++) {
+        const qData = selected[selectedIndex];
         if (!batchRunning) break;
         const currentEl = document.getElementById('tec-gen-current');
         if (currentEl) currentEl.textContent = `Q#${qData.id || '?'} \u2014 ${qData.materia || ''}`;
@@ -4951,14 +5237,28 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
           batchResults.push({ questionData: qData, aiResult });
         } catch (err) {
           console.error(`\u274C Batch: Erro em Q${qData.id}:`, err);
+          const errorMessage = describeAiError(err);
           errors++;
-          batchErrors.push({ id: qData.id || '?', num: '?', error: err.message || String(err) });
+          batchErrors.push({ id: qData.id || '?', num: '?', error: errorMessage });
+          if (err?.providerFatal || err?.pipelineFatal) {
+            const remaining = selected.slice(selectedIndex + 1);
+            for (const pending of remaining) {
+              batchErrors.push({ id: pending.id || '?', num: '?', error: `Não processada: ${errorMessage}` });
+            }
+            errors += remaining.length;
+            fatalBatchError = true;
+            const actionHint = err?.providerFatal
+              ? 'Verifique assinatura/saldo e a chave em ⚙️ Configurações.'
+              : 'Revise os modelos Creator/Auditor em ⚙️ Configurações.';
+            showToast(`Batch interrompido: ${escapeHtml(errorMessage)}. ${actionHint}`, 'error', 12000);
+          }
         }
 
         const countEl = document.getElementById('tec-gen-count');
         if (countEl) countEl.textContent = generated;
         const progEl = document.getElementById('tec-gen-progress');
         if (progEl) progEl.style.width = `${((generated + errors) / selected.length) * 100}%`;
+        if (fatalBatchError) break;
       }
     } finally {
       genToast.remove();
@@ -5274,6 +5574,11 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
     // Warn when the installed copy lags the published one (daily check)
     checkScriptFreshness();
+
+    // Mantém os seletores alinhados ao catálogo vivo, sem bloquear a interface.
+    refreshOpencodeModelCatalog().then(result => {
+      if (result.ok && !result.cached) console.log(`🔄 Catálogo OpenCode atualizado: ${result.count} modelos.`);
+    });
 
     // Check connections periodically (every 2 min)
     updateStatusDot();
