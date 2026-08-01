@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.14.0
+// @version      1.14.1
 // @description  Extrai questões do TEC Concursos, gera flashcards com IA (pipeline resiliente, revisão do batch, cards visuais MathJax/SVG e Cloze nativo) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.14.0';
+  const SCRIPT_VERSION = '1.14.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2276,27 +2276,73 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     }).join('');
   }
 
+  function extractTextValue(value) {
+    if (typeof value === 'string') return value;
+    if (!Array.isArray(value)) return '';
+    return value.map(part => {
+      if (typeof part === 'string') return part;
+      if (typeof part?.text === 'string') return part.text;
+      if (typeof part?.content === 'string') return part.content;
+      return '';
+    }).join('');
+  }
+
+  function summarizeOpencodeResponse(json, wire) {
+    const choice = json?.choices?.[0] || {};
+    const message = choice?.message || {};
+    const content = extractTextValue(message.content);
+    const reasoning = extractTextValue(message.reasoning_content);
+    return {
+      wire,
+      finishReason: choice.finish_reason || json?.status || 'desconhecido',
+      contentChars: content.length,
+      reasoningChars: reasoning.length,
+      completionTokens: json?.usage?.completion_tokens ?? json?.usage?.output_tokens ?? null,
+      messageFields: Object.keys(message).slice(0, 8),
+    };
+  }
+
   /** Texto bruto do modelo, conforme o wire (chat / messages / responses). */
-  function extractOpencodeText(json, wire) {
+  function extractOpencodeText(json, wire, model = '') {
     if (wire === 'messages' && Array.isArray(json?.content)) {
-      const t = json.content.filter(b => typeof b?.text === 'string').map(b => b.text).join('');
-      if (t) return t;
+      const t = extractTextValue(json.content);
+      if (t.trim()) return t;
     }
     if (wire === 'responses') {
-      if (typeof json?.output_text === 'string' && json.output_text) return json.output_text;
+      if (typeof json?.output_text === 'string' && json.output_text.trim()) return json.output_text;
       if (Array.isArray(json?.output)) {
         const parts = [];
         for (const item of json.output) {
           for (const c of (item?.content || [])) {
-            if (typeof c?.text === 'string') parts.push(c.text);
+            const text = extractTextValue(c);
+            if (text) parts.push(text);
           }
         }
-        if (parts.length) return parts.join('');
+        if (parts.join('').trim()) return parts.join('');
       }
     }
-    const chat = json?.choices?.[0]?.message?.content;
-    if (typeof chat === 'string') return chat;
-    throw new Error('Resposta vazia da API OpenCode.');
+    const message = json?.choices?.[0]?.message || {};
+    const chat = extractTextValue(message.content);
+    if (chat.trim()) return chat;
+
+    // Alguns modelos de raciocínio devolvem o JSON em reasoning_content e deixam
+    // content="". Só aceitamos esse campo quando ele próprio contém JSON válido.
+    const reasoning = extractTextValue(message.reasoning_content);
+    if (reasoning.trim()) {
+      try {
+        parseJsonFromText(reasoning);
+        console.warn(`⚠️ ${model || 'OpenCode'} devolveu JSON em reasoning_content; recuperando resposta.`);
+        return reasoning;
+      } catch { /* raciocínio sem resposta final — a camada acima fará retry */ }
+    }
+
+    const summary = summarizeOpencodeResponse(json, wire);
+    const finish = summary.finishReason !== 'desconhecido' ? `; término: ${summary.finishReason}` : '';
+    throw new AIRequestError(`O modelo ${model || 'OpenCode'} não devolveu o JSON final${finish}`, {
+      kind: 'empty_response', retryable: true, provider: 'opencode', model,
+      detail: `content=${summary.contentChars} chars; reasoning=${summary.reasoningChars} chars; completion_tokens=${summary.completionTokens ?? 'n/d'}; campos=${summary.messageFields.join(',') || 'nenhum'}`,
+      responseSummary: summary,
+    });
   }
 
   /** Uso de tokens normalizado (OpenAI: prompt/completion; Anthropic: input/output). */
@@ -2313,7 +2359,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
    * Chamada unificada a um modelo do OpenCode Go, roteando pelo wire correto.
    * Retorna { result: <objeto JSON>, usage: {promptTokens, completionTokens}|null }.
    */
-  async function callOpencodeModel(model, systemPrompt, userPrompt) {
+  async function callOpencodeModel(model, systemPrompt, userPrompt, requestOptions = {}) {
     const apiKey = getSetting('opencodeApiKey');
     if (!hasConfiguredApiKey(apiKey)) throw new Error('API key do OpenCode não configurada. Abra as configurações (⚙️).');
     const wire = getOpencodeWire(model);
@@ -2323,7 +2369,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     if (wire === 'messages') {
       // Anthropic-style: system separado, max_tokens obrigatório, sem response_format.
       body = {
-        model, max_tokens: 8192,
+        model, max_tokens: requestOptions.maxTokens || 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       };
@@ -2331,6 +2377,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       // OpenAI Responses: modelos de raciocínio rejeitam temperature ≠ 1 → omitir.
       // JSON garantido pelo CARD_JSON_CONTRACT + parseJsonFromText (evita 400 de text.format).
       body = { model, instructions: systemPrompt, input: userPrompt };
+      if (requestOptions.maxTokens) body.max_output_tokens = requestOptions.maxTokens;
     } else {
       // OpenAI chat/completions (GLM, DeepSeek, Kimi, MiniMax, Grok, grátis).
       // Sem campo `reasoning` — esses modelos raciocinam nativamente e o gateway
@@ -2343,14 +2390,50 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
         ],
         response_format: { type: 'json_object' },
       };
+      if (requestOptions.maxTokens) body.max_tokens = requestOptions.maxTokens;
       // Kimi K2.5/K2.6 usam thinking por padrão e rejeitam temperature != 1.0
       // (ou != 0.6 sem thinking). Omitir usa o valor fixo correto do servidor.
-      if (!/^kimi-/i.test(model)) body.temperature = 0.3;
+      if (!/^(?:kimi-|glm-5)/i.test(model)) body.temperature = 0.3;
+      if (requestOptions.thinking) body.thinking = requestOptions.thinking;
     }
 
-    const json = await callOpenAICompatible(endpoint, apiKey, body, {}, { provider: 'opencode', model });
-    const result = parseJsonFromText(extractOpencodeText(json, wire));
-    return { result, usage: extractOpencodeUsage(json) };
+    let json = await callOpenAICompatible(endpoint, apiKey, body, {}, { provider: 'opencode', model });
+    let combinedUsage = extractOpencodeUsage(json);
+    let rawText;
+    try {
+      rawText = extractOpencodeText(json, wire, model);
+    } catch (err) {
+      const canRetryWithoutThinking = wire === 'chat' && /^glm-5/i.test(model)
+        && requestOptions.retryWithoutThinking && err?.kind === 'empty_response';
+      if (!canRetryWithoutThinking) throw err;
+
+      console.warn(`⚠️ ${model} terminou sem JSON final; repetindo Auditor com thinking desativado.`, err.responseSummary || {});
+      const retryBody = {
+        ...body,
+        max_tokens: Math.max(requestOptions.maxTokens || 8192, 8192),
+        thinking: { type: 'disabled' },
+      };
+      delete retryBody.temperature;
+      try {
+        json = await callOpenAICompatible(endpoint, apiKey, retryBody, {}, { provider: 'opencode', model });
+        const retryUsage = extractOpencodeUsage(json);
+        if (retryUsage) {
+          combinedUsage = {
+            promptTokens: (combinedUsage?.promptTokens || 0) + retryUsage.promptTokens,
+            completionTokens: (combinedUsage?.completionTokens || 0) + retryUsage.completionTokens,
+          };
+        }
+        rawText = extractOpencodeText(json, wire, model);
+      } catch (retryErr) {
+        if (retryErr?.providerFatal) throw retryErr;
+        throw new AIRequestError(`O ${model} não devolveu o JSON do Auditor após a recuperação: ${describeAiError(retryErr)}`, {
+          kind: 'empty_response', retryable: true, provider: 'opencode', model,
+          detail: retryErr?.detail || err?.detail || '', responseSummary: retryErr?.responseSummary || err?.responseSummary,
+        });
+      }
+    }
+    const result = parseJsonFromText(rawText);
+    return { result, usage: combinedUsage };
   }
 
   // Creator/Auditor do pipeline dual usam o catálogo OpenCode (buildOpencodeOptions
@@ -2502,11 +2585,12 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
   }
 
   async function callOpenRouterWithModel(model, systemPrompt, userPrompt, extraBody = {}) {
+    const { _opencodeOptions = {}, ...providerExtraBody } = extraBody;
     // OpenCode Go: roteia pelo wire correto (chat / messages / responses).
-    // extraBody (ex.: reasoning do auditor) é ignorado — esses modelos raciocinam
-    // nativamente e o gateway pode rejeitar params não-padrão.
+    // Opções específicas do OpenCode são separadas do payload do OpenRouter para
+    // não vazar parâmetros internos entre provedores.
     if (isOpencodeModel(model)) {
-      const { result, usage } = await callOpencodeModel(model, systemPrompt, userPrompt);
+      const { result, usage } = await callOpencodeModel(model, systemPrompt, userPrompt, _opencodeOptions);
       result._usage = usage;
       return result;
     }
@@ -2525,7 +2609,7 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
       temperature: 0.3,
       response_format: { type: 'json_object' },
       ...reasoningConfig,
-      ...extraBody,
+      ...providerExtraBody,
     };
     if (model.includes('kimi-k2')) delete body.temperature;
 
@@ -2654,7 +2738,10 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       model,
       AUDITOR_SYSTEM_PROMPT,
       filteredPayload,
-      { reasoning: { effort: 'high' } }
+      {
+        reasoning: { effort: 'high' },
+        _opencodeOptions: { maxTokens: 8192, retryWithoutThinking: true },
+      }
     );
 
     if (!result.cards || !Array.isArray(result.cards)) {
@@ -2840,7 +2927,7 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     try {
       auditorResult = await callAuditor(filteredPayload);
     } catch (err) {
-      console.warn('⚠️ Auditor falhou:', { model: getSetting('auditorModel'), kind: err?.kind || 'unknown', status: err?.status || null, message: describeAiError(err) });
+      console.warn(`⚠️ Auditor ${getSetting('auditorModel')} falhou [${err?.kind || 'unknown'}${err?.status ? ` HTTP ${err.status}` : ''}]: ${describeAiError(err)}`, err?.detail ? { detail: err.detail } : '');
       if (err?.providerFatal) {
         openProviderCircuit(aiProviderForModel(getSetting('auditorModel')), err);
         throw err;
