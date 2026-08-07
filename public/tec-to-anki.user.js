@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.14.1
+// @version      1.14.2
 // @description  Extrai questões do TEC Concursos, gera flashcards com IA (pipeline resiliente, revisão do batch, cards visuais MathJax/SVG e Cloze nativo) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.14.1';
+  const SCRIPT_VERSION = '1.14.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -949,6 +949,55 @@
     }
   }
 
+  /** Contêineres cujo texto NÃO descreve o resultado do aluno nesta questão. */
+  const NOT_RESULT_CONTEXT = /coment|discuss|f[oó]rum|forum|d[uú]vida|duvida|nota|anota|hist[oó]ric|historic/i;
+
+  /**
+   * Fallback DOM para "Você errou" — usado só quando o escopo Angular sumiu.
+   * NUNCA varre document.body: a frase aparece no comentário do professor, na
+   * discussão dos alunos e no bloco ainda renderizado da questão anterior.
+   * Procura o nó folha que contém a frase e rejeita se ele estiver dentro de
+   * um contêiner de comentário/discussão/histórico.
+   */
+  function domSaysWrong() {
+    const nodes = document.querySelectorAll('div, span, p, strong, b, h1, h2, h3, h4, li, td');
+    for (const el of nodes) {
+      if (el.children.length > 3) continue; // só nós folha-ish
+      if (!/Você errou/i.test(el.textContent || '')) continue;
+      let p = el, poisoned = false;
+      while (p && p !== document.body) {
+        const sig = `${p.className || ''} ${p.id || ''} ${p.getAttribute?.('tec-formatar-html') || ''}`;
+        if (NOT_RESULT_CONTEXT.test(sig)) { poisoned = true; break; }
+        p = p.parentElement;
+      }
+      if (!poisoned) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fonte ÚNICA de verdade para "o aluno errou ESTA questão".
+   * O batch e o extrator PRECISAM usar a mesma regra: enquanto divergiam
+   * (batch permissivo, com `|| /Você errou/.test(document.body.innerText)`),
+   * o batch coletava questões ACERTADAS e o pipeline gerava card pelo galho
+   * `errou === false` do prompt.
+   *
+   * Angular é AUTORITATIVO quando presente — o texto do DOM não pode
+   * sobrescrever um `correcaoQuestao === true`. E `false` só conta como erro
+   * se houver alternativa marcada: sem isso é questão não respondida ou
+   * resolução que o SPA ainda não carregou.
+   *
+   * @param {object} [q] vm.questao — resolvido do escopo quando omitido
+   * @returns {boolean}
+   */
+  function isWrongQuestion(q) {
+    const questao = q || getAngularVm().vm?.questao;
+    if (questao && typeof questao.correcaoQuestao === 'boolean') {
+      return questao.correcaoQuestao === false && questao.alternativaSelecionada > 0;
+    }
+    return domSaysWrong();
+  }
+
   /**
    * Classifica um item de histórico como resolução ('err' | 'ok') ou null.
    * Exige marcador de data/tempo para NÃO confundir com o array de alternativas
@@ -1087,7 +1136,7 @@
       }
 
       // Result
-      data.errou = q.correcaoQuestao === false && q.alternativaSelecionada > 0;
+      data.errou = isWrongQuestion(q);
       data.gabarito = data.alternativas.find(a => a.correta)?.letra || '';
       data.respostaAluno = data.alternativas.find(a => a.selecionada)?.letra || '';
 
@@ -1161,7 +1210,7 @@
       }
 
       // 6. Result
-      data.errou = !!bodyText.match(/Voc\u00EA errou/i);
+      data.errou = isWrongQuestion(q);
       const gabaritoMatch = bodyText.match(/Gabarito:\s*(.+?)(?:\.|,|\s|$)/i);
       if (gabaritoMatch) data.gabarito = gabaritoMatch[1].trim();
       const selMatch = bodyText.match(/Voc\u00EA selecionou:\s*(.+?)(?:,|\.|$)/im);
@@ -3974,13 +4023,21 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       const itemsHTML = items.map((item, idx) => {
         const q = item.questionData;
         const isDup = item.existingCards > 0;
+        // Rede de segurança visível: se um ACERTO escapar da coleta, ele chega
+        // aqui marcado e já desmarcado — nunca mais vira card sem você ver.
+        const isAcerto = !q.errou;
+        const offByDefault = isDup || isAcerto;
+        const resultBadge = isAcerto
+          ? '<span style="margin-left:6px;padding:2px 8px;font-size:11px;border-radius:10px;background:#f59e0b;color:#111;font-weight:700;">✅ ACERTOU — confira</span>'
+          : '<span style="margin-left:6px;padding:2px 8px;font-size:11px;border-radius:10px;background:#ef476f;color:#fff;font-weight:700;">❌ ERROU</span>';
         const snippet = (q.enunciado || '').substring(0, 160);
         return `
-          <div class="tec-batch-select-item ${isDup ? 'deselected' : 'selected'}" data-idx="${idx}">
+          <div class="tec-batch-select-item ${offByDefault ? 'deselected' : 'selected'}" data-idx="${idx}">
             <div class="item-header">
-              <input type="checkbox" data-idx="${idx}" ${isDup ? '' : 'checked'}>
+              <input type="checkbox" data-idx="${idx}" ${offByDefault ? '' : 'checked'}>
               <div style="flex:1;min-width:0;">
                 <div class="item-title">#${q.id || '?'} — ${q.materia || '-'} › ${q.assunto || '-'}
+                  ${resultBadge}
                   ${isDup ? `<span class="tec-dup-badge" style="margin-left:6px;padding:2px 8px;font-size:11px;">já tem ${item.existingCards} card(s)</span>` : ''}
                 </div>
                 <div class="item-meta">${q.banca || '-'} ${q.ano || ''} | Você marcou: <b>${q.respostaAluno || '?'}</b> → Gabarito: <b>${q.gabarito || '?'}</b></div>
@@ -5027,6 +5084,30 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
   }
 
   /**
+   * O TEC troca vm.questao.idQuestao ANTES de terminar de popular a resolu\u00e7\u00e3o
+   * da nova quest\u00e3o. Sem esperar o estado assentar, a classifica\u00e7\u00e3o do batch
+   * l\u00ea o resultado da quest\u00e3o ANTERIOR e coleta um acerto como se fosse erro.
+   * Espera `correcaoQuestao`/`alternativaSelecionada` existirem PARA O ID NOVO.
+   * Sai cedo quando n\u00e3o h\u00e1 Angular (o fallback DOM n\u00e3o tem o que assentar).
+   */
+  async function settleQuestionState(expectedId, timeout = 4000) {
+    if (!getAngularVm().vm) { await delay(1000); return false; }
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      await delay(300);
+      const q = getAngularVm().vm?.questao;
+      if (!q || String(q.idQuestao || '') !== String(expectedId)) continue;
+      if (typeof q.correcaoQuestao === 'boolean' || q.alternativaSelecionada != null) {
+        await delay(400); // deixa o DOM alcan\u00e7ar o modelo
+        return true;
+      }
+    }
+    console.warn(`\u23f1\ufe0f Estado da Q${expectedId} n\u00e3o assentou em ${timeout}ms \u2014 seguindo (revalida\u00e7\u00e3o p\u00f3s-extra\u00e7\u00e3o protege).`);
+    await delay(600);
+    return false;
+  }
+
+  /**
    * Wait for TEC's SPA to finish transitioning to a new question.
    * Uses Angular scope (vm.questao.idQuestao) as primary detection.
    */
@@ -5039,7 +5120,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       const { vm } = getAngularVm();
       const angularId = vm?.questao?.idQuestao ? String(vm.questao.idQuestao) : null;
       if (angularId && angularId !== previousId) {
-        await delay(1000);
+        await settleQuestionState(angularId);
         return angularId;
       }
 
@@ -5047,7 +5128,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       const idMatch = document.body.innerText.match(/#(\d{5,})/);
       const domId = idMatch ? idMatch[1] : null;
       if (domId && domId !== previousId) {
-        await delay(1000);
+        await settleQuestionState(domId);
         return domId;
       }
     }
@@ -5214,9 +5295,14 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
         const qNumEl = document.getElementById('tec-batch-qnum');
         if (qNumEl) qNumEl.textContent = `${qNum}/${qTotal}`;
 
-        // Check if this is a wrong question (Angular scope is more reliable)
-        const { vm: batchVm } = getAngularVm();
-        const isError = (batchVm?.questao?.correcaoQuestao === false) || /Voc\u00EA errou/i.test(currentBody);
+        // Mesma regra do extrator (isWrongQuestion) \u2014 quando eram duas regras
+        // diferentes, o batch coletava acertos que o extrator marcava errou=false.
+        const isError = isWrongQuestion();
+        const bumpSkipped = () => {
+          skipped++;
+          const skippedEl = document.getElementById('tec-batch-skipped');
+          if (skippedEl) skippedEl.textContent = skipped;
+        };
 
         if (isError && !collectedIds.has(currentId)) {
           collectedIds.add(currentId);
@@ -5227,24 +5313,35 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
             await delay(500);
 
             const qData = extractQuestionData();
-            const savedThought = getStoredThought(qData.id);
-            if (savedThought) qData.pensamentoAluno = savedThought;
-            if (qData.enunciado || qData.id) {
-              collected.push(qData);
+
+            // Revalida\u00E7\u00E3o p\u00F3s-extra\u00E7\u00E3o: a checagem acima roda antes de o SPA
+            // terminar de trocar o bloco de resolu\u00E7\u00E3o, ent\u00E3o pode refletir a
+            // quest\u00E3o ANTERIOR. Aqui os dados j\u00E1 est\u00E3o frescos \u2014 descarta acerto.
+            if (!qData.errou) {
+              console.log(`\u23ED\uFE0F Batch: Q${qData.id || currentId} descartada na revalida\u00E7\u00E3o (acerto).`);
+              collectedIds.delete(currentId);
+              bumpSkipped();
+            } else {
+              const savedThought = getStoredThought(qData.id);
+              if (savedThought) qData.pensamentoAluno = savedThought;
+              if (qData.enunciado || qData.id) {
+                collected.push(qData);
+              }
+
+              // Update progress UI
+              const countEl = document.getElementById('tec-batch-count');
+              if (countEl) countEl.textContent = collected.length;
+              const progEl = document.getElementById('tec-batch-progress');
+              if (progEl) progEl.style.width = `${(collected.length / totalErros) * 100}%`;
             }
           } catch (err) {
             console.error(`\u274C Batch: Erro ao extrair Q${currentId}:`, err);
+            collectedIds.delete(currentId);
           }
-
-          // Update progress UI
-          document.getElementById('tec-batch-count').textContent = collected.length;
-          document.getElementById('tec-batch-progress').style.width = `${(collected.length / totalErros) * 100}%`;
 
           // No need to close comment \u2014 navigation handles it
         } else if (!isError) {
-          skipped++;
-          const skippedEl = document.getElementById('tec-batch-skipped');
-          if (skippedEl) skippedEl.textContent = skipped;
+          bumpSkipped();
         }
 
         // Check if we've collected all errors
