@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.14.2
+// @version      1.14.3
 // @description  Extrai questões do TEC Concursos, gera flashcards com IA (pipeline resiliente, revisão do batch, cards visuais MathJax/SVG e Cloze nativo) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.14.2';
+  const SCRIPT_VERSION = '1.14.3';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -1976,20 +1976,80 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
   // ── Generic OpenAI-compatible API caller ────────────────────────────
 
-  /** Extract a JSON object from a raw model text (handles ```json fences + prose). */
-  function parseJsonFromText(text) {
+  /**
+   * Blocos {...} / [...] balanceados do texto, na ordem em que aparecem.
+   * Ignora chaves dentro de strings JSON (e seus escapes) para não cortar o span
+   * no meio de um valor.
+   */
+  function collectJsonCandidates(text, restarts = 12) {
+    const out = [];
+    let start = -1, depth = 0, inString = false, escaped = false, opener = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { if (depth > 0) inString = true; continue; }
+      if (ch === '{' || ch === '[') {
+        if (depth === 0) { start = i; opener = ch; }
+        depth++;
+      } else if (ch === '}' || ch === ']') {
+        if (depth === 0) continue;
+        depth--;
+        if (depth === 0 && start >= 0) {
+          const closesOpener = (opener === '{' && ch === '}') || (opener === '[' && ch === ']');
+          if (closesOpener) out.push(text.slice(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+    // "{" solto na prosa (ex.: lacuna Cloze mal fechada) engoliria todo o resto,
+    // inclusive a resposta final: reinicia a varredura depois dele.
+    if (depth > 0 && start >= 0 && restarts > 0) {
+      out.push(...collectJsonCandidates(text.slice(start + 1), restarts - 1));
+    }
+    return out;
+  }
+
+  /**
+   * Extrai o JSON da resposta do modelo (aceita ```json, prosa em volta e
+   * chain-of-thought).
+   *
+   * A regex gulosa antiga (/\{[\s\S]*\}/) pegava do PRIMEIRO "{" ao ÚLTIMO "}":
+   * em reasoning_content — que mistura prosa, lacunas Cloze {{...}} e rascunhos —
+   * ela ora quebrava o parse, ora devolvia um objeto que NÃO era a resposta final
+   * (ex.: array no topo virava só o 1º elemento; envelope virava o envelope).
+   * Agora varremos blocos balanceados e ficamos com o ÚLTIMO que satisfaz a forma
+   * esperada — a resposta final vem depois do raciocínio.
+   *
+   * @param {string} text
+   * @param {(value:any)=>boolean|null} expect Validador de forma (opcional).
+   */
+  function parseJsonFromText(text, expect = null) {
     let content = (text || '').trim();
     if (!content) throw new Error('Resposta vazia da API');
     if (content.startsWith('```')) {
       content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
     }
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Resposta não contém JSON válido.');
-    return JSON.parse(jsonMatch[0]);
+    const parsed = [];
+    for (const candidate of collectJsonCandidates(content)) {
+      try { parsed.push(JSON.parse(candidate)); } catch { /* rascunho/prosa — segue */ }
+    }
+    if (!parsed.length) throw new Error('Resposta não contém JSON válido.');
+    if (expect) {
+      for (let i = parsed.length - 1; i >= 0; i--) {
+        if (expect(parsed[i])) return parsed[i];
+      }
+      throw new Error('Resposta em formato inesperado.');
+    }
+    return parsed[parsed.length - 1];
   }
 
-  function parseOpenAIResponse(json) {
-    return parseJsonFromText(json?.choices?.[0]?.message?.content);
+  function parseOpenAIResponse(json, expect = null) {
+    return parseJsonFromText(json?.choices?.[0]?.message?.content, expect);
   }
 
   class AIRequestError extends Error {
@@ -2352,7 +2412,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   }
 
   /** Texto bruto do modelo, conforme o wire (chat / messages / responses). */
-  function extractOpencodeText(json, wire, model = '') {
+  function extractOpencodeText(json, wire, model = '', expect = null) {
     if (wire === 'messages' && Array.isArray(json?.content)) {
       const t = extractTextValue(json.content);
       if (t.trim()) return t;
@@ -2375,11 +2435,13 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     if (chat.trim()) return chat;
 
     // Alguns modelos de raciocínio devolvem o JSON em reasoning_content e deixam
-    // content="". Só aceitamos esse campo quando ele próprio contém JSON válido.
+    // content="". Só aceitamos esse campo quando ele contém um JSON DA FORMA
+    // ESPERADA: "tem JSON válido em algum lugar" aceitava rascunho, esquema
+    // ecoado ou fragmento do raciocínio como se fosse o veredito final.
     const reasoning = extractTextValue(message.reasoning_content);
     if (reasoning.trim()) {
       try {
-        parseJsonFromText(reasoning);
+        parseJsonFromText(reasoning, expect);
         console.warn(`⚠️ ${model || 'OpenCode'} devolveu JSON em reasoning_content; recuperando resposta.`);
         return reasoning;
       } catch { /* raciocínio sem resposta final — a camada acima fará retry */ }
@@ -2446,17 +2508,31 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       if (requestOptions.thinking) body.thinking = requestOptions.thinking;
     }
 
+    const expect = requestOptions.expect || null;
+    // Lê o JSON final e CONFERE A FORMA na mesma tentativa: resposta fora do
+    // contrato tem que virar erro retentável aqui, não veredito silencioso lá na frente.
+    const readResult = (payload) => {
+      const parsed = parseJsonFromText(extractOpencodeText(payload, wire, model, expect), expect);
+      if (expect && !expect(parsed)) {
+        throw new AIRequestError(`O ${model} devolveu JSON fora do formato esperado`, {
+          kind: 'bad_shape', retryable: true, provider: 'opencode', model,
+          detail: sanitizeApiDetail(JSON.stringify(parsed).slice(0, 200)),
+        });
+      }
+      return parsed;
+    };
+
     let json = await callOpenAICompatible(endpoint, apiKey, body, {}, { provider: 'opencode', model });
     let combinedUsage = extractOpencodeUsage(json);
-    let rawText;
+    let result;
     try {
-      rawText = extractOpencodeText(json, wire, model);
+      result = readResult(json);
     } catch (err) {
       const canRetryWithoutThinking = wire === 'chat' && /^glm-5/i.test(model)
-        && requestOptions.retryWithoutThinking && err?.kind === 'empty_response';
+        && requestOptions.retryWithoutThinking && (err?.kind === 'empty_response' || err?.kind === 'bad_shape');
       if (!canRetryWithoutThinking) throw err;
 
-      console.warn(`⚠️ ${model} terminou sem JSON final; repetindo Auditor com thinking desativado.`, err.responseSummary || {});
+      console.warn(`⚠️ ${model} ${err?.kind === 'bad_shape' ? 'devolveu JSON fora do contrato' : 'terminou sem JSON final'}; repetindo Auditor com thinking desativado.`, err.responseSummary || err.detail || {});
       const retryBody = {
         ...body,
         max_tokens: Math.max(requestOptions.maxTokens || 8192, 8192),
@@ -2472,16 +2548,16 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
             completionTokens: (combinedUsage?.completionTokens || 0) + retryUsage.completionTokens,
           };
         }
-        rawText = extractOpencodeText(json, wire, model);
+        result = readResult(json);
       } catch (retryErr) {
         if (retryErr?.providerFatal) throw retryErr;
         throw new AIRequestError(`O ${model} não devolveu o JSON do Auditor após a recuperação: ${describeAiError(retryErr)}`, {
-          kind: 'empty_response', retryable: true, provider: 'opencode', model,
+          kind: retryErr?.kind === 'bad_shape' ? 'bad_shape' : 'empty_response',
+          retryable: true, provider: 'opencode', model,
           detail: retryErr?.detail || err?.detail || '', responseSummary: retryErr?.responseSummary || err?.responseSummary,
         });
       }
     }
-    const result = parseJsonFromText(rawText);
     return { result, usage: combinedUsage };
   }
 
@@ -2637,7 +2713,8 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
     const { _opencodeOptions = {}, ...providerExtraBody } = extraBody;
     // OpenCode Go: roteia pelo wire correto (chat / messages / responses).
     // Opções específicas do OpenCode são separadas do payload do OpenRouter para
-    // não vazar parâmetros internos entre provedores.
+    // não vazar parâmetros internos entre provedores (`expect`, o contrato de
+    // forma da resposta, vale para os dois).
     if (isOpencodeModel(model)) {
       const { result, usage } = await callOpencodeModel(model, systemPrompt, userPrompt, _opencodeOptions);
       result._usage = usage;
@@ -2671,9 +2748,72 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
     const usage = json?.usage;
     const costEstimate = usage ? { promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0 } : null;
 
-    const parsed = parseOpenAIResponse(json);
+    const parsed = parseOpenAIResponse(json, _opencodeOptions.expect || null);
     parsed._usage = costEstimate;
     return parsed;
+  }
+
+  // ── Contratos de forma da resposta (o que cada etapa precisa receber) ──────
+  // Servem de gate ANTES de a resposta virar veredito: sem eles, qualquer JSON
+  // achado no raciocínio do modelo passava por resposta final.
+
+  /** Payload do Creator: precisa de matéria + array de cards. */
+  function looksLikeCreatorPayload(value) {
+    return Boolean(value && typeof value === 'object' && value.materia && Array.isArray(value.cards));
+  }
+
+  const AUDITOR_STATUS_KEYS = ['status', 'veredito', 'veredicto', 'resultado', 'decisao', 'decisão', 'julgamento'];
+  const AUDITOR_LIST_KEYS = ['cards', 'vereditos', 'veredictos', 'resultado', 'resultados', 'auditoria', 'result', 'data', 'output'];
+
+  /** 'Aprovado ✅', 'APROVAR', true → 'APROVADO'. Desconhecido → null. */
+  function normalizeAuditorStatus(verdict) {
+    for (const key of AUDITOR_STATUS_KEYS) {
+      const raw = verdict?.[key];
+      if (typeof raw === 'string' && raw.trim()) {
+        const flat = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+        if (/APROV/.test(flat)) return 'APROVADO';
+        if (/REJEIT|REPROV|RECUS|NEGA/.test(flat)) return 'REJEITADO';
+      }
+    }
+    if (typeof verdict?.aprovado === 'boolean') return verdict.aprovado ? 'APROVADO' : 'REJEITADO';
+    return null;
+  }
+
+  /**
+   * Aceita as variações que os modelos de raciocínio produzem — array no topo,
+   * envelope ({"resultado": {...}}), chave de status sinônima — e devolve sempre
+   * { cards: [{ index, status: 'APROVADO'|'REJEITADO'|null, justificativa }] }.
+   */
+  function normalizeAuditorPayload(raw) {
+    let list = null;
+    if (Array.isArray(raw)) list = raw;
+    else if (raw && typeof raw === 'object') {
+      for (const key of AUDITOR_LIST_KEYS) {
+        const value = raw[key];
+        if (Array.isArray(value)) { list = value; break; }
+        if (value && typeof value === 'object' && Array.isArray(value.cards)) { list = value.cards; break; }
+      }
+    }
+    // Lote de 1 card: modelo às vezes devolve o veredito solto, sem o array.
+    if (!list && raw && typeof raw === 'object' && normalizeAuditorStatus(raw)) list = [raw];
+    if (!Array.isArray(list)) return null;
+
+    const cards = list.map((verdict, position) => {
+      const rawIndex = verdict?.index ?? verdict?.card ?? verdict?.card_index ?? verdict?.id ?? position;
+      const index = Number.parseInt(rawIndex, 10);
+      return {
+        index: Number.isInteger(index) ? index : position,
+        status: normalizeAuditorStatus(verdict),
+        justificativa: verdict?.justificativa || verdict?.justificacao || verdict?.motivo || verdict?.razao || '',
+      };
+    });
+    return { cards };
+  }
+
+  /** Veredito do Auditor: lista normalizável com ao menos um status reconhecido. */
+  function looksLikeAuditorPayload(value) {
+    const normalized = normalizeAuditorPayload(value);
+    return Boolean(normalized && normalized.cards.length && normalized.cards.some(c => c.status));
   }
 
   /**
@@ -2690,7 +2830,8 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
     const result = await callOpenRouterWithModel(
       model,
       SYSTEM_PROMPT + '\n\n' + CARD_JSON_CONTRACT,
-      userPrompt
+      userPrompt,
+      { _opencodeOptions: { expect: looksLikeCreatorPayload } }
     );
 
     if (!result.materia || !result.cards || !Array.isArray(result.cards)) {
@@ -2779,7 +2920,7 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
 
   /**
    * Step 3: Call the Auditor model to validate cards.
-   * Returns { cards: [{ index, status, justificativa? }] }
+   * Returns { cards: [{ index, status: 'APROVADO'|'REJEITADO'|null, justificativa }] }
    */
   async function callAuditor(filteredPayload) {
     const model = getSetting('auditorModel');
@@ -2789,14 +2930,20 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       filteredPayload,
       {
         reasoning: { effort: 'high' },
-        _opencodeOptions: { maxTokens: 8192, retryWithoutThinking: true },
+        _opencodeOptions: { maxTokens: 8192, retryWithoutThinking: true, expect: looksLikeAuditorPayload },
       }
     );
 
-    if (!result.cards || !Array.isArray(result.cards)) {
-      throw new Error('Resposta do Auditor em formato inválido.');
+    const normalized = normalizeAuditorPayload(result);
+    if (!normalized) {
+      const shape = sanitizeApiDetail(JSON.stringify(result).slice(0, 200));
+      console.warn('⚠️ Auditor devolveu payload sem lista de vereditos:', shape);
+      throw new AIRequestError('Resposta do Auditor em formato inválido.', {
+        kind: 'bad_shape', retryable: true, provider: aiProviderForModel(model), model, detail: shape,
+      });
     }
-    return result;
+    normalized._usage = result._usage;
+    return normalized;
   }
 
   /**
@@ -2987,7 +3134,7 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     }
     if (auditorResult._usage) totalCost += trackPipelineCost(auditorResult._usage, getSetting('auditorModel'));
 
-    console.log('⚖️ Auditor result:', auditorResult.cards.map(c => `${c.index}:${c.status}`).join(', '));
+    console.log('⚖️ Auditor result:', auditorResult.cards.map(c => `${c.index}:${c.status || 'ilegível'}`).join(', '));
 
     // ── Process auditor verdicts ──
     const approved = [];
@@ -2999,8 +3146,15 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       judged.add(verdict.index);
       if (verdict.status === 'APROVADO') {
         approved.push(card);
-      } else {
+      } else if (verdict.status === 'REJEITADO') {
         rejected.push({ card, justificativa: verdict.justificativa || 'Sem justificativa' });
+      } else {
+        // Veredito ilegível ≠ reprovação: regenerar aqui gastava um round inteiro
+        // do Creator por causa de um erro de transporte. Mesmo tratamento do
+        // card sem veredito: mantém e manda para revisão manual.
+        card._needsReview = true;
+        card._rejectReason = 'Veredito do auditor ilegível — revisar manualmente';
+        approved.push(card);
       }
     }
     // Card sem veredito não pode sumir em silêncio: mantém, marcado para revisão manual.
@@ -3067,7 +3221,9 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
             } else {
               // Still rejected after retry — add with 'revisar' tag
               card._needsReview = true;
-              card._rejectReason = verdict.justificativa;
+              card._rejectReason = verdict.status === 'REJEITADO'
+                ? (verdict.justificativa || 'Sem justificativa')
+                : 'Veredito do auditor ilegível — revisar manualmente';
               approved.push(card);
             }
           }
