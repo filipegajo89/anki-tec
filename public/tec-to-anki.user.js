@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.16.2
+// @version      1.16.3
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.16.2';
+  const SCRIPT_VERSION = '1.16.3';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2337,11 +2337,22 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return { id, label: OPENCODE_MODEL_LABELS[id] || fallbackLabel, wire: inferOpencodeWire(id, service), group: inferOpencodeGroup(id) };
   }
 
+  const OPENCODE_CATALOG_CACHE_VERSION = 'v117';
+
+  /** O catálogo público do Zen é a fonte de disponibilidade. Uma resposta
+   *  parcial nunca pode apagar modelos oficiais essenciais como Luna e GLM. */
+  function normalizeOpencodeCatalogIds(ids, service = getOpencodeService()) {
+    service = normalizeOpencodeService(service);
+    const remoteIds = Array.isArray(ids) ? ids.filter(isSupportedOpencodeModelId) : [];
+    const fallbackIds = getOpencodeServiceDef(service).fallbackIds.filter(isSupportedOpencodeModelId);
+    if (service === 'zen') return [...new Set([...remoteIds, ...fallbackIds])];
+    return remoteIds.length ? [...new Set(remoteIds)] : fallbackIds;
+  }
+
   function getCachedOpencodeIds(service = getOpencodeService()) {
     service = normalizeOpencodeService(service);
-    const cached = GM_getValue(`opencodeModelIdsCache_v116_${service}`, null);
-    const fallback = getOpencodeServiceDef(service).fallbackIds;
-    return Array.isArray(cached) && cached.length ? cached.filter(isSupportedOpencodeModelId) : fallback;
+    const cached = GM_getValue(`opencodeModelIdsCache_${OPENCODE_CATALOG_CACHE_VERSION}_${service}`, null);
+    return normalizeOpencodeCatalogIds(cached, service);
   }
 
   const OPENCODE_MODELS_BY_SERVICE = {
@@ -2408,6 +2419,19 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     GM_setValue('migratedVisibleLunaDefault_v1162', true);
   })();
 
+  // v1.16.3: descarta o catálogo Zen parcial salvo pela consulta autenticada
+  // anterior e reaplica uma vez o pipeline solicitado.
+  (function migratePublicZenCatalogV1163() {
+    if (GM_getValue('migratedPublicZenCatalog_v1163', false)) return;
+    setSetting('aiProvider', 'opencode');
+    setSetting('opencodeService', 'zen');
+    setSetting('pipelineMode', 'dual');
+    setSetting('opencodeModel', 'gpt-5.6-luna');
+    setSetting('creatorModel', 'gpt-5.6-luna');
+    setSetting('auditorModel', 'glm-5.2');
+    GM_setValue('migratedPublicZenCatalog_v1163', true);
+  })();
+
   // Escopo OpenCode-only (v1.11.0): seleções de provedores antigos (OpenRouter/
   // Gemini) caem no padrão OpenCode; provider + modo dual viram padrão uma vez.
   (function migrateToOpencodeOnly() {
@@ -2461,29 +2485,29 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return Boolean(key && !/^YOUR_|^\.{3}$/.test(key));
   }
 
-  /** Atualiza o catálogo no máximo 1x/dia; falha silenciosa mantém o cache. */
-  async function refreshOpencodeModelCatalog(force = false, apiKey = null, service = getOpencodeService()) {
+  /** Atualiza o catálogo público no máximo 1x/dia; chamadas de geração e teste
+   *  continuam autenticadas separadamente com a credencial do serviço. */
+  async function refreshOpencodeModelCatalog(force = false, _apiKey = null, service = getOpencodeService()) {
     service = normalizeOpencodeService(service);
     const def = getOpencodeServiceDef(service);
-    apiKey = apiKey || getOpencodeApiKey(service);
-    if (!hasConfiguredApiKey(apiKey)) return { ok: false, reason: `Chave do ${def.label} não configurada.` };
     const models = getOpencodeModels(service);
-    const cacheKey = `opencodeModelCatalogUpdatedAt_v116_${service}`;
+    const cacheKey = `opencodeModelCatalogUpdatedAt_${OPENCODE_CATALOG_CACHE_VERSION}_${service}`;
     const last = GM_getValue(cacheKey, 0);
     if (!force && Date.now() - last < 24 * 60 * 60 * 1000) {
       return { ok: true, cached: true, count: models.length, service, serviceLabel: def.label };
     }
     try {
       const res = await gmFetch(def.modelsUrl, {
-        headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        headers: { 'Accept': 'application/json' },
         timeout: 15000,
       });
       if (!res.ok) return { ok: false, reason: `Catálogo HTTP ${res.status}` };
       const json = await res.json();
-      const ids = [...new Set((json?.data || []).map(m => m?.id).filter(isSupportedOpencodeModelId))];
+      const remoteIds = [...new Set((json?.data || []).map(m => m?.id).filter(isSupportedOpencodeModelId))];
+      const ids = normalizeOpencodeCatalogIds(remoteIds, service);
       if (!ids.length) return { ok: false, reason: 'Catálogo vazio.' };
       OPENCODE_MODELS_BY_SERVICE[service] = ids.map(id => makeOpencodeModelDef(id, service));
-      GM_setValue(`opencodeModelIdsCache_v116_${service}`, ids);
+      GM_setValue(`opencodeModelIdsCache_${OPENCODE_CATALOG_CACHE_VERSION}_${service}`, ids);
       GM_setValue(cacheKey, Date.now());
       if (service === getOpencodeService()) reconcileOpencodeSelections(service);
       return { ok: true, cached: false, count: ids.length, service, serviceLabel: def.label };

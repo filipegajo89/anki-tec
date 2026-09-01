@@ -154,7 +154,7 @@ TEC/{Matéria}/{Subtópico}/Q{id}.md
 1. Você verá a toolbar flutuante no canto inferior direito: `📋 Salvar | 📋📋 Erros | ⚙️ | 🟢`
 2. Clique no **⚙️** para abrir as configurações
 3. Preencha:
-   - **Serviço OpenCode:** escolha `Zen` (créditos pay-as-you-go) ou `Go` (assinatura). O Zen continua selecionado por padrão
+   - **Serviço OpenCode:** escolha `Zen` (créditos pay-as-you-go) ou `Go` (assinatura). O Zen continua selecionado por padrão; cada serviço sincroniza seu catálogo público sem misturar credenciais
    - **OpenCode API Key:** cole a chave do serviço escolhido; as credenciais de Zen e Go ficam salvas separadamente
    - **Pipeline:** mantenha `Dual estrito` para usar Luna xhigh como Creator e GLM 5.2 como Auditor; se um deles falhar, nenhum modelo substituto salva cards silenciosamente
    - **Modelos:** Luna e GLM aparecem em `⭐ Recomendados`, no topo. Se necessário, use `⭐ Aplicar Zen + Luna xhigh + GLM 5.2`; os seletores continuam livres para futuras trocas, e Zen ↔ Go também muda rota e catálogo automaticamente
