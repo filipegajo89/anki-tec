@@ -156,12 +156,12 @@ TEC/{Matéria}/{Subtópico}/Q{id}.md
 3. Preencha:
    - **Serviço OpenCode:** escolha `Zen` (créditos pay-as-you-go) ou `Go` (assinatura). O Zen continua selecionado por padrão
    - **OpenCode API Key:** cole a chave do serviço escolhido; as credenciais de Zen e Go ficam salvas separadamente
-   - **Pipeline:** mantenha `Dual` para usar Luna xhigh como Creator e GLM 5.2 como Auditor
+   - **Pipeline:** mantenha `Dual estrito` para usar Luna xhigh como Creator e GLM 5.2 como Auditor; se um deles falhar, nenhum modelo substituto salva cards silenciosamente
    - **Modelos:** os dois seletores podem ser alterados quando você quiser; ao trocar Zen ↔ Go, rotas e catálogo também mudam automaticamente
    - **Nome do Vault:** o nome exato do seu vault no Obsidian
    - **REST API Token:** cole o token do plugin Local REST API
    - **Demais campos:** os padrões já estão bons
-4. Clique **"🔌 Testar Conexões"** — ambos devem mostrar ✅
+4. Clique **"🔌 Testar Conexões"** — o teste confirma separadamente o Creator e o Auditor selecionados
 5. Clique **"💾 Salvar"**
 
 ### 5.2 Verificar o Status
@@ -289,7 +289,8 @@ O `_Estatisticas.md` oferece análise mais profunda:
 
 - Verifique se a **API key** está correta nas configurações
 - Verifique sua chave, assinatura/saldo e limites no console do OpenCode
-- O script ainda salvará no Obsidian/Anki mesmo se a IA falhar (sem flashcards)
+- Confirme em **Serviço OpenCode** se a rota desejada é Zen ou Go; no console, Zen usa `/zen/v1/...` e Go usa `/zen/go/v1/...`
+- No pipeline estrito, uma falha do Luna interrompe a geração em vez de usar o GLM como Creator; uma falha do GLM também impede cards sem auditoria
 
 ### Cards duplicados no Anki
 

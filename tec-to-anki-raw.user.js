@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.16.0
+// @version      1.16.1
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.16.0';
+  const SCRIPT_VERSION = '1.16.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2383,6 +2383,17 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     GM_setValue('migratedOpencodeServices_v116', true);
   })();
 
+  // v1.16.1: a build anterior podia ficar salva em Go durante a inspeção da
+  // tela e ainda exibia o antigo modelo Single (Kimi) ao lado do Creator Luna.
+  // Restaura uma vez o estado solicitado: Zen + Luna; escolhas futuras ficam livres.
+  (function migrateStrictLunaZenV1161() {
+    if (GM_getValue('migratedStrictLunaZen_v1161', false)) return;
+    setSetting('opencodeService', 'zen');
+    if (getSetting('opencodeModel') === 'kimi-k2.6') setSetting('opencodeModel', 'gpt-5.6-luna');
+    if (getSetting('creatorModel') === 'kimi-k2.6') setSetting('creatorModel', 'gpt-5.6-luna');
+    GM_setValue('migratedStrictLunaZen_v1161', true);
+  })();
+
   // Escopo OpenCode-only (v1.11.0): seleções de provedores antigos (OpenRouter/
   // Gemini) caem no padrão OpenCode; provider + modo dual viram padrão uma vez.
   (function migrateToOpencodeOnly() {
@@ -2467,24 +2478,55 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     }
   }
 
-  /** Teste mínimo e billable (1–2 tokens) para distinguir catálogo acessível de saldo real. */
-  async function testOpencodeAccess(apiKey, service = getOpencodeService()) {
+  async function testOpencodeModelAccess(apiKey, service, model, role) {
+    const wire = getOpencodeWire(model, service);
+    const prompt = 'Responda somente com o JSON {"ok":true}.';
+    let body;
+    if (wire === 'responses') {
+      body = {
+        model, instructions: 'Retorne JSON válido, sem markdown.', input: prompt,
+        reasoning: model === 'gpt-5.6-luna' ? { effort: 'low' } : undefined,
+        max_output_tokens: 512, stream: false, store: false,
+      };
+    } else if (wire === 'messages') {
+      body = { model, max_tokens: 64, system: 'Retorne JSON válido, sem markdown.', messages: [{ role: 'user', content: prompt }] };
+    } else {
+      body = {
+        model, messages: [
+          { role: 'system', content: 'Retorne JSON válido, sem markdown.' },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 64, response_format: { type: 'json_object' },
+      };
+      if (/^glm-5/i.test(model)) body.thinking = { type: 'disabled' };
+    }
+    // `undefined` não é serializado, mas removemos para deixar o diagnóstico claro.
+    if (!body.reasoning) delete body.reasoning;
+    const payload = await callOpenAICompatible(getOpencodeEndpoint(model, service), apiKey, body, {}, {
+      provider: 'opencode', service, model,
+    });
+    const text = extractOpencodeText(payload, wire, model, value => value?.ok === true, service);
+    const parsed = parseJsonFromText(text, value => value?.ok === true);
+    if (parsed?.ok !== true) throw new Error(`${role} ${model} respondeu fora do formato esperado.`);
+    return model;
+  }
+
+  /** Testa catálogo + Creator + Auditor reais; é billable, mas usa prompts mínimos. */
+  async function testOpencodeAccess(apiKey, service = getOpencodeService(), creatorModel = null, auditorModel = null) {
     service = normalizeOpencodeService(service);
     const def = getOpencodeServiceDef(service);
     if (!hasConfiguredApiKey(apiKey)) throw new Error(`Chave do ${def.label} não configurada.`);
     const catalog = await refreshOpencodeModelCatalog(true, apiKey, service);
     if (!catalog.ok) throw new Error(catalog.reason || 'Não foi possível consultar o catálogo do OpenCode.');
     const models = getOpencodeModels(service);
-    const model = models.some(m => m.id === 'glm-5.1') ? 'glm-5.1'
-      : models.find(m => m.wire === 'chat')?.id;
-    if (!model) throw new Error('Nenhum modelo chat disponível para o teste.');
-    await callOpenAICompatible(getOpencodeEndpoint(model, service), apiKey, {
-      model,
-      messages: [{ role: 'user', content: 'Responda somente OK.' }],
-      max_tokens: 2,
-    }, {}, { provider: 'opencode', service, model });
+    const defaults = reliableOpencodeDefaults(service);
+    creatorModel = models.some(model => model.id === creatorModel) ? creatorModel : defaults.creator;
+    auditorModel = models.some(model => model.id === auditorModel) ? auditorModel : defaults.auditor;
+    await testOpencodeModelAccess(apiKey, service, creatorModel, 'Creator');
+    if (auditorModel !== creatorModel) await testOpencodeModelAccess(apiKey, service, auditorModel, 'Auditor');
     providerCircuitBreakers.delete('opencode');
-    return { ok: true, model, catalogCount: catalog.count, service, serviceLabel: def.label };
+    creatorCircuitBreakers.delete(creatorModel);
+    return { ok: true, creatorModel, auditorModel, catalogCount: catalog.count, service, serviceLabel: def.label };
   }
 
   /** Monta <optgroup>/<option> (agrupados por família) para os seletores OpenCode. */
@@ -2508,15 +2550,18 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     }).join('');
   }
 
-  function extractTextValue(value) {
+  function extractTextValue(value, depth = 0) {
     if (typeof value === 'string') return value;
-    if (!Array.isArray(value)) return '';
-    return value.map(part => {
-      if (typeof part === 'string') return part;
-      if (typeof part?.text === 'string') return part.text;
-      if (typeof part?.content === 'string') return part.content;
-      return '';
-    }).join('');
+    if (!value || depth > 6) return '';
+    if (Array.isArray(value)) return value.map(part => extractTextValue(part, depth + 1)).join('');
+    if (typeof value !== 'object') return '';
+    // Compatível com o formato oficial ({type:'output_text', text:'...'}) e
+    // wrappers observados em gateways ({text:{value:'...'}}, content/output_text).
+    for (const key of ['output_text', 'text', 'value', 'content']) {
+      const text = extractTextValue(value[key], depth + 1);
+      if (text) return text;
+    }
+    return '';
   }
 
   function summarizeOpencodeResponse(json, wire) {
@@ -2531,6 +2576,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       reasoningChars: reasoning.length,
       completionTokens: json?.usage?.completion_tokens ?? json?.usage?.output_tokens ?? null,
       messageFields: Object.keys(message).slice(0, 8),
+      outputTypes: Array.isArray(json?.output) ? json.output.map(item => item?.type || 'sem-tipo').slice(0, 8) : [],
     };
   }
 
@@ -2541,16 +2587,24 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       if (t.trim()) return t;
     }
     if (wire === 'responses') {
-      if (typeof json?.output_text === 'string' && json.output_text.trim()) return json.output_text;
-      if (Array.isArray(json?.output)) {
-        const parts = [];
-        for (const item of json.output) {
-          for (const c of (item?.content || [])) {
-            const text = extractTextValue(c);
-            if (text) parts.push(text);
+      // Alguns gateways embrulham a resposta em `response` ou `data`; percorremos
+      // somente os campos de saída final, sem confundir raciocínio com resposta.
+      for (const payload of [json, json?.response, json?.data].filter(Boolean)) {
+        const direct = extractTextValue(payload?.output_text);
+        if (direct.trim()) return direct;
+        if (Array.isArray(payload?.output)) {
+          const parts = [];
+          for (const item of payload.output) {
+            if (item?.type === 'message') {
+              const text = extractTextValue(item.content);
+              if (text) parts.push(text);
+            } else if (/output_text|text/i.test(item?.type || '')) {
+              const text = extractTextValue(item);
+              if (text) parts.push(text);
+            }
           }
+          if (parts.join('').trim()) return parts.join('');
         }
-        if (parts.join('').trim()) return parts.join('');
       }
     }
     const message = json?.choices?.[0]?.message || {};
@@ -2572,9 +2626,12 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
     const summary = summarizeOpencodeResponse(json, wire);
     const finish = summary.finishReason !== 'desconhecido' ? `; término: ${summary.finishReason}` : '';
-    throw new AIRequestError(`O modelo ${model || 'OpenCode'} não devolveu o JSON final${finish}`, {
+    const goLunaHint = service === 'go' && model === 'gpt-5.6-luna'
+      ? ' O gateway do Go concluiu sem conteúdo; nenhum outro modelo será usado no lugar do Luna. Troque para Zen ou tente novamente.'
+      : '';
+    throw new AIRequestError(`O modelo ${model || 'OpenCode'} não devolveu o JSON final${finish}.${goLunaHint}`.trim(), {
       kind: 'empty_response', retryable: true, provider: 'opencode', service, model,
-      detail: `content=${summary.contentChars} chars; reasoning=${summary.reasoningChars} chars; completion_tokens=${summary.completionTokens ?? 'n/d'}; campos=${summary.messageFields.join(',') || 'nenhum'}`,
+      detail: `content=${summary.contentChars} chars; reasoning=${summary.reasoningChars} chars; completion_tokens=${summary.completionTokens ?? 'n/d'}; campos=${summary.messageFields.join(',') || 'nenhum'}; output=${summary.outputTypes.join(',') || 'nenhum'}`,
       responseSummary: summary,
     });
   }
@@ -2612,7 +2669,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     } else if (wire === 'responses') {
       // OpenAI Responses: modelos de raciocínio rejeitam temperature ≠ 1 → omitir.
       // JSON garantido pelo CARD_JSON_CONTRACT + parseJsonFromText (evita 400 de text.format).
-      body = { model, instructions: systemPrompt, input: userPrompt };
+      body = { model, instructions: systemPrompt, input: userPrompt, stream: false, store: false };
       // O Luna é o Creator padrão e roda com raciocínio extra-alto. A opção
       // continua sobrescrevível para chamadas específicas e não afeta outros modelos.
       const reasoning = requestOptions.reasoning
@@ -2639,6 +2696,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     }
 
     const expect = requestOptions.expect || null;
+    console.log(`🤖 ${serviceDef.label} · ${model} · ${wire}${model === 'gpt-5.6-luna' ? ' · reasoning=xhigh' : ''}`);
     // Lê o JSON final e CONFERE A FORMA na mesma tentativa: resposta fora do
     // contrato tem que virar erro retentável aqui, não veredito silencioso lá na frente.
     const readResult = (payload) => {
@@ -2657,7 +2715,28 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     let result;
     try {
       result = readResult(json);
-    } catch (err) {
+    } catch (firstErr) {
+      let err = firstErr;
+      // Resposta HTTP 200 sem texto é uma falha observada no gateway do Go.
+      // Repete o MESMO modelo uma vez; jamais substitui o Creator pelo Auditor.
+      if (wire === 'responses' && (err?.kind === 'empty_response' || err?.kind === 'bad_shape')) {
+        console.warn(`⚠️ ${serviceDef.label}/${model} terminou sem JSON final; repetindo o mesmo modelo uma vez.`, err.responseSummary || err.detail || {});
+        await delay(1000);
+        try {
+          json = await callOpenAICompatible(endpoint, apiKey, body, {}, { provider: 'opencode', service, model });
+          const retryUsage = extractOpencodeUsage(json);
+          if (retryUsage) {
+            combinedUsage = {
+              promptTokens: (combinedUsage?.promptTokens || 0) + retryUsage.promptTokens,
+              completionTokens: (combinedUsage?.completionTokens || 0) + retryUsage.completionTokens,
+            };
+          }
+          result = readResult(json);
+          return { result, usage: combinedUsage };
+        } catch (retryErr) {
+          err = retryErr;
+        }
+      }
       const canRetryWithoutThinking = wire === 'chat' && /^glm-5/i.test(model)
         && requestOptions.retryWithoutThinking && (err?.kind === 'empty_response' || err?.kind === 'bad_shape');
       if (!canRetryWithoutThinking) throw err;
@@ -3163,34 +3242,19 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     providerCircuitBreakers.clear();
   }
 
-  async function callFallbackCreator(questionData, fallbackModel) {
-    const fallbackProvider = aiProviderForModel(fallbackModel);
-    const providerBlock = activeCircuit(providerCircuitBreakers, fallbackProvider);
-    if (providerBlock) {
-      throw new AIRequestError(providerBlock.reason, {
-        kind: providerBlock.error?.kind || 'api', providerFatal: true,
-        provider: fallbackProvider, model: fallbackModel,
-        status: providerBlock.error?.status || null,
-      });
-    }
-    const modelBlock = activeCircuit(creatorCircuitBreakers, fallbackModel);
-    if (modelBlock) {
-      const err = new AIRequestError(`${fallbackModel} está temporariamente pausado: ${modelBlock.reason}`, {
-        kind: modelBlock.error?.kind || 'api', provider: fallbackProvider, model: fallbackModel,
-      });
-      err.pipelineFatal = true;
-      throw err;
-    }
-    try {
-      const result = await callCreator(questionData, null, fallbackModel);
-      creatorCircuitBreakers.delete(fallbackModel);
-      return result;
-    } catch (err) {
-      if (err?.providerFatal) openProviderCircuit(fallbackProvider, err);
-      else openCreatorCircuit(fallbackModel, err);
-      err.pipelineFatal = true;
-      throw err;
-    }
+  function failClosedPipeline(stage, model, err, provider) {
+    const policy = stage === 'Creator'
+      ? 'Nenhum outro modelo foi usado no lugar do Creator.'
+      : 'Nenhum card será salvo sem aprovação do Auditor.';
+    const wrapped = new AIRequestError(`${stage} ${model} falhou: ${describeAiError(err)}. ${policy}`, {
+      kind: err?.kind || 'api', status: err?.status || null, code: err?.code || '',
+      retryable: Boolean(err?.retryable), providerFatal: Boolean(err?.providerFatal),
+      provider, service: err?.service || (provider === 'opencode' ? getOpencodeService() : ''),
+      model, detail: err?.detail || '', responseSummary: err?.responseSummary,
+    });
+    wrapped.pipelineFatal = true;
+    wrapped.cause = err;
+    return wrapped;
   }
 
   /**
@@ -3198,7 +3262,6 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
    */
   async function callDualPipeline(questionData, onStatus = () => {}) {
     const creatorModel = getSetting('creatorModel');
-    const fallbackModel = getSetting('auditorModel');
     const provider = aiProviderForModel(creatorModel);
     const apiKey = provider === 'opencode' ? getOpencodeApiKey() : getSetting('openrouterApiKey');
     const providerLabel = provider === 'opencode' ? getOpencodeServiceDef().label : 'OpenRouter';
@@ -3212,22 +3275,13 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     }
 
     let totalCost = 0;
-    let usedCreatorModel = creatorModel;
+    const usedCreatorModel = creatorModel;
 
     // ── Step 1: Creator ──
     let creatorResult;
     const creatorBlock = activeCircuit(creatorCircuitBreakers, creatorModel);
     if (creatorBlock) {
-      if (fallbackModel === creatorModel) {
-        const err = new AIRequestError(`${creatorModel} está temporariamente pausado: ${creatorBlock.reason}`, {
-          kind: creatorBlock.error?.kind || 'api', model: creatorModel, provider,
-        });
-        err.pipelineFatal = true;
-        throw err;
-      }
-      usedCreatorModel = fallbackModel;
-      onStatus(`🛟 ${creatorModel} pausado — usando ${fallbackModel}...`);
-      creatorResult = await callFallbackCreator(questionData, fallbackModel);
+      throw failClosedPipeline('Creator', creatorModel, creatorBlock.error || new Error(creatorBlock.reason), provider);
     } else {
       onStatus(`🧠 Creator ${creatorModel} gerando flashcards...`);
       try {
@@ -3238,17 +3292,10 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
         console.warn('⚠️ Creator falhou:', { model: creatorModel, kind: err?.kind || 'unknown', status: err?.status || null, message: describeAiError(err) });
         if (err?.providerFatal) {
           openProviderCircuit(provider, err);
-          throw err;
+        } else {
+          openCreatorCircuit(creatorModel, err);
         }
-        openCreatorCircuit(creatorModel, err);
-        if (fallbackModel === creatorModel) {
-          err.pipelineFatal = true;
-          throw err;
-        }
-        usedCreatorModel = fallbackModel;
-        onStatus(`🛟 ${creatorModel} falhou — usando ${fallbackModel}...`);
-        creatorResult = await callFallbackCreator(questionData, fallbackModel);
-        showToast(`Creator <b>${escapeHtml(creatorModel)}</b> falhou: ${escapeHtml(describeAiError(err))}.<br>Cards gerados por <b>${escapeHtml(fallbackModel)}</b>; próximas questões irão direto ao fallback.`, 'warning', 9000);
+        throw failClosedPipeline('Creator', creatorModel, err, provider);
       }
     }
     if (creatorResult._usage) totalCost += trackPipelineCost(creatorResult._usage, usedCreatorModel);
@@ -3266,13 +3313,11 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       auditorResult = await callAuditor(filteredPayload);
     } catch (err) {
       console.warn(`⚠️ Auditor ${getSetting('auditorModel')} falhou [${err?.kind || 'unknown'}${err?.status ? ` HTTP ${err.status}` : ''}]: ${describeAiError(err)}`, err?.detail ? { detail: err.detail } : '');
+      const auditorProvider = aiProviderForModel(getSetting('auditorModel'));
       if (err?.providerFatal) {
-        openProviderCircuit(aiProviderForModel(getSetting('auditorModel')), err);
-        throw err;
+        openProviderCircuit(auditorProvider, err);
       }
-      showToast(`Auditor indisponível: ${escapeHtml(describeAiError(err))}. Cards marcados para revisão manual.`, 'warning', 7000);
-      for (const c of creatorResult.cards) { c._needsReview = true; c._rejectReason = 'Auditor indisponível — não validado'; }
-      return normalizeGeneratedResult(creatorResult);
+      throw failClosedPipeline('Auditor', getSetting('auditorModel'), err, auditorProvider);
     }
     if (auditorResult._usage) totalCost += trackPipelineCost(auditorResult._usage, getSetting('auditorModel'));
 
@@ -3291,20 +3336,14 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       } else if (verdict.status === 'REJEITADO') {
         rejected.push({ card, justificativa: verdict.justificativa || 'Sem justificativa' });
       } else {
-        // Veredito ilegível ≠ reprovação: regenerar aqui gastava um round inteiro
-        // do Creator por causa de um erro de transporte. Mesmo tratamento do
-        // card sem veredito: mantém e manda para revisão manual.
-        card._needsReview = true;
-        card._rejectReason = 'Veredito do auditor ilegível — revisar manualmente';
-        approved.push(card);
+        // Política estrita: veredito ilegível nunca equivale a aprovação.
+        rejected.push({ card, justificativa: 'Veredito do auditor ilegível' });
       }
     }
-    // Card sem veredito não pode sumir em silêncio: mantém, marcado para revisão manual.
+    // Política estrita: card sem veredito também precisa ser regenerado e re-auditado.
     creatorResult.cards.forEach((card, i) => {
       if (judged.has(i)) return;
-      card._needsReview = true;
-      card._rejectReason = 'Auditor não emitiu veredito para este card';
-      approved.push(card);
+      rejected.push({ card, justificativa: 'Auditor não emitiu veredito para este card' });
     });
 
     // Cards approved in round 1 were audited against the creator's erro_identificado;
@@ -3342,49 +3381,44 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
           retryAudit = await callAuditor(retryFiltered);
           if (retryAudit._usage) totalCost += trackPipelineCost(retryAudit._usage, getSetting('auditorModel'));
         } catch (err) {
+          const auditorProvider = aiProviderForModel(getSetting('auditorModel'));
           if (err?.providerFatal) {
-            openProviderCircuit(aiProviderForModel(getSetting('auditorModel')), err);
-            throw err;
+            openProviderCircuit(auditorProvider, err);
           }
-          // If re-audit fails, accept retried cards (flagged for manual review)
-          for (const c of retryResult.cards) { c._needsReview = true; c._rejectReason = 'Re-auditoria indisponível — não validado'; }
-          approved.push(...retryResult.cards);
-          retryAudit = null;
+          throw failClosedPipeline('Auditor', getSetting('auditorModel'), err, auditorProvider);
         }
 
-        if (retryAudit) {
-          const retryJudged = new Set();
-          for (const verdict of retryAudit.cards) {
-            const card = retryResult.cards[verdict.index];
-            if (!card) continue; // índice inválido — ignora
-            retryJudged.add(verdict.index);
-            if (verdict.status === 'APROVADO') {
-              approved.push(card);
-            } else {
-              // Still rejected after retry — add with 'revisar' tag
-              card._needsReview = true;
-              card._rejectReason = verdict.status === 'REJEITADO'
-                ? (verdict.justificativa || 'Sem justificativa')
-                : 'Veredito do auditor ilegível — revisar manualmente';
-              approved.push(card);
-            }
-          }
-          retryResult.cards.forEach((card, i) => {
-            if (retryJudged.has(i)) return;
-            card._needsReview = true;
-            card._rejectReason = 'Auditor não emitiu veredito para este card (retry)';
+        const retryJudged = new Set();
+        for (const verdict of retryAudit.cards) {
+          const card = retryResult.cards[verdict.index];
+          if (!card) continue; // índice inválido — ignora
+          retryJudged.add(verdict.index);
+          if (verdict.status === 'APROVADO') {
             approved.push(card);
-          });
+          } else {
+            console.warn(`⛔ Card ${verdict.index} não aprovado na re-auditoria; não será salvo.`, verdict.justificativa || verdict.status || 'veredito ilegível');
+          }
         }
+        retryResult.cards.forEach((_card, i) => {
+          if (!retryJudged.has(i)) console.warn(`⛔ Card ${i} sem veredito na re-auditoria; não será salvo.`);
+        });
       } catch (err) {
-        if (err?.providerFatal) throw err;
-        console.warn('⚠️ Retry falhou, adicionando cards originais com tag revisar:', err.message);
-        for (const r of rejected) {
-          r.card._needsReview = true;
-          r.card._rejectReason = r.justificativa;
-          approved.push(r.card);
+        if (err?.providerFatal || !approved.length) {
+          if (!err?.pipelineFatal) err.pipelineFatal = true;
+          throw err;
         }
+        console.warn('⚠️ Retry falhou; mantendo somente os cards já aprovados pelo Auditor:', err.message);
+        showToast(`${rejected.length} card(s) rejeitado(s) não foram salvos; somente os aprovados pelo Auditor serão mantidos.`, 'warning', 7000);
       }
+    }
+
+    if (!approved.length) {
+      const err = new AIRequestError('O Auditor não aprovou nenhum card. Nada será salvo.', {
+        kind: 'audit_rejected', provider: aiProviderForModel(getSetting('auditorModel')),
+        service: getOpencodeService(), model: getSetting('auditorModel'),
+      });
+      err.pipelineFatal = true;
+      throw err;
     }
 
     // Build final result
@@ -3399,10 +3433,8 @@ ${approved.map(c => `- ${c.frente_texto_limpo || c.frente || ''}`).join('\n')}`
       _auditorModel: getSetting('auditorModel'),
     };
 
-    const reviewCount = approved.filter(c => c._needsReview).length;
     const costCents = (totalCost * 100).toFixed(1);
-    let summaryMsg = `✅ Pipeline: ${approved.length} cards (custo: $${totalCost.toFixed(4)} / ${costCents}¢)`;
-    if (reviewCount > 0) summaryMsg += ` | ⚠️ ${reviewCount} para revisão manual`;
+    const summaryMsg = `✅ Pipeline estrito: ${approved.length} card(s) por ${usedCreatorModel}, aprovados por ${getSetting('auditorModel')} (custo: $${totalCost.toFixed(4)} / ${costCents}¢)`;
     console.log(summaryMsg);
 
     // As redes de segurança (placeholder genérico, answer-line/explanation no verso,
@@ -4639,7 +4671,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
                 <option value="zen" ${getOpencodeService() === 'zen' ? 'selected' : ''}>Zen — créditos pay-as-you-go</option>
                 <option value="go" ${getOpencodeService() === 'go' ? 'selected' : ''}>Go — assinatura</option>
               </select>
-              <small style="color:#888;font-size:11px">A troca aplica a rota, o catálogo e a credencial do serviço a todo o pipeline.</small>
+              <small style="color:#888;font-size:11px">A troca aplica a rota, o catálogo e a credencial do serviço a todo o pipeline após clicar em <b>Salvar</b>.</small>
             </div>
             <div class="tec-field" id="tec-cfg-opencode-zen-key-field">
               <label>OpenCode Zen API Key</label>
@@ -4651,13 +4683,14 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <input type="password" id="tec-cfg-opencode-go-key" value="${getOpencodeApiKey('go')}" placeholder="Chave do Go">
               <small style="color:#888;font-size:11px">Credencial guardada separadamente para o Go. Gerencie em <a href="https://opencode.ai" target="_blank" style="color:#60cdff">opencode.ai</a>.</small>
             </div>
-            <div class="tec-field">
-              <label>Modelo OpenCode</label>
+            <div class="tec-field" id="tec-cfg-opencode-single-model-field">
+              <label>Modelo do modo Single (sem Auditor)</label>
               <select id="tec-cfg-opencode-model">
                 ${buildOpencodeOptions(getSetting('opencodeModel'), getOpencodeService())}
               </select>
-              <small style="color:#888;font-size:11px">Catálogo compatível sincronizado automaticamente com o <span class="tec-opencode-service-label">${getOpencodeServiceDef().label}</span>.</small>
+              <small style="color:#888;font-size:11px">Este seletor só é usado no modo Single.</small>
             </div>
+            <small class="tec-opencode-catalog-status" style="display:block;color:#888;font-size:11px;margin-top:-4px">Catálogo do ${getOpencodeServiceDef().label}.</small>
           </div>
 
           <hr class="tec-divider">
@@ -4666,9 +4699,9 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <label>Modo</label>
             <select id="tec-cfg-pipeline-mode">
               <option value="single" ${getSetting('pipelineMode') === 'single' ? 'selected' : ''}>Single (1 modelo, sem auditoria)</option>
-              <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual (Creator \u2192 Auditor, mais preciso)</option>
+              <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual estrito (Creator \u2192 Auditor, sem fallback)</option>
             </select>
-            <small style="color:#888;font-size:11px">Padrão: Creator <b>GPT 5.6 Luna (xhigh)</b> → Auditor <b>GLM 5.2</b>, ambos pelo <b class="tec-opencode-service-label">${getOpencodeServiceDef().label}</b>. Você pode trocar o serviço ou qualquer modelo quando quiser.</small>
+            <small style="color:#888;font-size:11px">Padrão: Creator <b>GPT 5.6 Luna (xhigh)</b> → Auditor <b>GLM 5.2</b>, ambos pelo <b class="tec-opencode-service-label">${getOpencodeServiceDef().label}</b>. Se qualquer etapa falhar, nenhum modelo substituto gera cards silenciosamente.</small>
           </div>
           <div id="tec-cfg-pipeline-section" style="display:none">
             <div class="tec-field">
@@ -4780,6 +4813,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     const opencodeServiceSelect = overlay.querySelector('#tec-cfg-opencode-service');
     const opencodeZenKeyField = overlay.querySelector('#tec-cfg-opencode-zen-key-field');
     const opencodeGoKeyField = overlay.querySelector('#tec-cfg-opencode-go-key-field');
+    const opencodeSingleModelField = overlay.querySelector('#tec-cfg-opencode-single-model-field');
     const opencodeModelRoles = [
       ['tec-cfg-opencode-model', 'creator'],
       ['tec-cfg-creator-model', 'creator'],
@@ -4797,10 +4831,15 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     function applyOpencodeServiceUi() {
       const service = normalizeOpencodeService(opencodeServiceSelect.value);
       const serviceDef = getOpencodeServiceDef(service);
+      const models = getOpencodeModels(service);
       opencodeZenKeyField.style.display = service === 'zen' ? '' : 'none';
       opencodeGoKeyField.style.display = service === 'go' ? '' : 'none';
       overlay.querySelectorAll('.tec-opencode-service-label')
         .forEach(element => { element.textContent = serviceDef.label; });
+      overlay.querySelectorAll('.tec-opencode-catalog-status').forEach(element => {
+        const lunaAvailable = models.some(model => model.id === 'gpt-5.6-luna');
+        element.textContent = `${serviceDef.label}: ${models.length} modelos compatíveis · Luna ${lunaAvailable ? 'disponível ✅' : 'indisponível ⚠️'}`;
+      });
       for (const [id, role] of opencodeModelRoles) {
         rebuildOpencodeSelect(overlay.querySelector(`#${id}`), role, service);
       }
@@ -4812,7 +4851,9 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     const pipelineModeSelect = overlay.querySelector('#tec-cfg-pipeline-mode');
     const pipelineSection = overlay.querySelector('#tec-cfg-pipeline-section');
     function togglePipelineSection() {
-      pipelineSection.style.display = pipelineModeSelect.value === 'dual' ? '' : 'none';
+      const isDual = pipelineModeSelect.value === 'dual';
+      pipelineSection.style.display = isDual ? '' : 'none';
+      opencodeSingleModelField.style.display = isDual ? 'none' : '';
     }
     pipelineModeSelect.addEventListener('change', togglePipelineSection);
     togglePipelineSection();
@@ -4863,7 +4904,8 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         setSetting('enableAnki', overlay.querySelector('#tec-cfg-enable-anki').checked);
         setSetting('enableObsidian', overlay.querySelector('#tec-cfg-enable-obs').checked);
         clearAiCircuitBreakers();
-        showToast('Configura\u00E7\u00F5es salvas!', 'success');
+        const savedServiceLabel = getOpencodeServiceDef(opencodeService).label;
+        showToast(`Configurações salvas: <b>${escapeHtml(savedServiceLabel)}</b> · Creator <b>${escapeHtml(overlay.querySelector('#tec-cfg-creator-model').value)}</b> · Auditor <b>${escapeHtml(overlay.querySelector('#tec-cfg-auditor-model').value)}</b>.`, 'success', 6000);
         overlay.remove();
         updateStatusDot();
       }
@@ -4872,24 +4914,28 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         statusDiv.innerHTML = '<span class="tec-spinner" style="border-color:rgba(0,0,0,.1);border-top-color:#4361ee"></span> Testando...';
         const opencodeService = normalizeOpencodeService(opencodeServiceSelect.value);
         const opencodeKey = overlay.querySelector(`#tec-cfg-opencode-${opencodeService}-key`).value;
+        const creatorModel = overlay.querySelector('#tec-cfg-creator-model').value;
+        const auditorModel = overlay.querySelector('#tec-cfg-auditor-model').value;
         const [anki, obs, ai] = await Promise.all([
           ankiIsConnected().catch(() => false),
           obsidianIsConnected().catch(() => false),
-          testOpencodeAccess(opencodeKey, opencodeService).catch(err => ({ ok: false, error: describeAiError(err) })),
+          testOpencodeAccess(opencodeKey, opencodeService, creatorModel, auditorModel)
+            .catch(err => ({ ok: false, error: describeAiError(err) })),
         ]);
         if (ai?.ok) {
           for (const [id, role] of opencodeModelRoles) {
             rebuildOpencodeSelect(overlay.querySelector(`#${id}`), role, opencodeService);
           }
+          applyOpencodeServiceUi();
         }
         const testedServiceLabel = ai?.serviceLabel || getOpencodeServiceDef(opencodeService).label;
         statusDiv.innerHTML = `
           <div>\uD83D\uDDC2\uFE0F AnkiConnect: ${anki ? '<span style="color:#06d6a0">\u2705 Conectado</span>' : '<span style="color:#ef476f">\u274C N\u00E3o conectado</span> \u2014 Verifique se o Anki est\u00E1 aberto com o add-on AnkiConnect (2055492159)'}</div>
           <div style="margin-top:4px">\uD83D\uDCD3 Obsidian REST API: ${obs ? '<span style="color:#06d6a0">\u2705 Conectado</span>' : '<span style="color:#ef476f">\u274C N\u00E3o conectado</span> \u2014 Verifique se o Obsidian est\u00E1 aberto com o plugin Local REST API'}</div>
           <div style="margin-top:4px">🤖 ${escapeHtml(testedServiceLabel)}: ${ai?.ok
-            ? `<span style="color:#06d6a0">✅ API e saldo ativos</span> — ${escapeHtml(ai.model)}, ${ai.catalogCount} modelos`
+            ? `<span style="color:#06d6a0">✅ Creator e Auditor ativos</span> — ${escapeHtml(ai.creatorModel)} → ${escapeHtml(ai.auditorModel)}, ${ai.catalogCount} modelos`
             : `<span style="color:#ef476f">❌ ${escapeHtml(ai?.error || 'Não conectado')}</span>`}</div>
-          <div style="margin-top:4px;color:#888;font-size:10px">O teste da IA usa uma resposta mínima de até 2 tokens.</div>
+          <div style="margin-top:4px;color:#888;font-size:10px">O teste da IA faz duas respostas mínimas e confirma os modelos selecionados.</div>
         `;
       }
     });
