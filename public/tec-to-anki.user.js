@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.14.3
-// @description  Extrai questões do TEC Concursos, gera flashcards com IA (pipeline resiliente, revisão do batch, cards visuais MathJax/SVG e Cloze nativo) e salva no Anki + Obsidian
+// @version      1.15.0
+// @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor (pipeline resiliente, cards visuais e Cloze nativo) e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.14.3';
+  const SCRIPT_VERSION = '1.15.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -46,7 +46,7 @@
     openrouterApiKey: 'YOUR_OPENROUTER_API_KEY_HERE',
     openrouterModel: 'qwen/qwen3-235b-a22b-2507',
     opencodeApiKey: 'YOUR_OPENCODE_API_KEY_HERE',
-    opencodeModel: 'kimi-k2.6',
+    opencodeModel: 'gpt-5.6-luna',
     obsidianVault: 'Filipe - Obs',
     obsidianToken: 'YOUR_OBSIDIAN_TOKEN_HERE',
     obsidianPort: 27123,
@@ -60,7 +60,7 @@
     askThoughts: true, // ask "qual foi seu raciocínio?" before generating cards
     maxCardsPerQuestion: 2, // upper bound of cards the AI may generate per question
     pipelineMode: 'dual', // 'single' or 'dual'
-    creatorModel: 'kimi-k2.6',
+    creatorModel: 'gpt-5.6-luna',
     auditorModel: 'glm-5.2',
     pipelineCostTotal: 0, // cumulative cost in USD
   };
@@ -2219,16 +2219,20 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   // seletor funcional antes da primeira sincronização ou quando não há rede.
   const OPENCODE_MODELS_URL = 'https://opencode.ai/zen/go/v1/models';
   const OPENCODE_FALLBACK_IDS = [
-    'glm-5.2', 'glm-5.1', 'glm-5',
-    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5',
-    'deepseek-v4-pro', 'deepseek-v4-flash',
+    'gpt-5.6-luna', 'grok-4.6', 'grok-4.5', 'muse-spark-1.2-contributor',
+    'glm-5.3-flash', 'glm-5.3', 'glm-5.2', 'glm-5.1', 'glm-5',
+    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5', 'longcat-2.0',
+    'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
     'mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni',
     'minimax-m3', 'minimax-m2.7', 'minimax-m2.5',
-    'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus', 'qwen3.5-plus',
-    'grok-4.5', 'hy3', 'hy3-preview', 'gpt-5.6-luna',
+    'qwen3.8-max', 'qwen3.8-flash', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus', 'qwen3.5-plus',
+    'hy4-preview', 'hy3', 'hy3-preview',
   ];
 
   const OPENCODE_MODEL_LABELS = {
+    'gpt-5.6-luna': 'GPT 5.6 Luna ⭐ creator • xhigh',
+    'glm-5.3-flash': 'GLM 5.3 Flash',
+    'glm-5.3': 'GLM 5.3',
     'glm-5.2': 'GLM 5.2 ⭐ auditor',
     'glm-5.1': 'GLM 5.1',
     'kimi-k2.7-code': 'Kimi K2.7 Code — só código',
@@ -2236,18 +2240,21 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     'deepseek-v4-pro': 'DeepSeek V4 Pro',
     'deepseek-v4-flash': 'DeepSeek V4 Flash',
     'mimo-v2.5-pro': 'MiMo V2.5 Pro',
-    'gpt-5.6-luna': 'GPT 5.6 Luna',
+    'grok-4.6': 'Grok 4.6',
+    'muse-spark-1.2-contributor': 'Muse Spark 1.2 Contributor',
+    'qwen3.8-max': 'Qwen 3.8 Max',
+    'qwen3.8-flash': 'Qwen 3.8 Flash',
   };
 
   function inferOpencodeWire(id) {
     if (/^(qwen|minimax|claude)/i.test(id)) return 'messages';
-    if (/^gpt-/i.test(id)) return 'responses';
+    if (/^gpt-/i.test(id) || id === 'grok-4.6' || id === 'muse-spark-1.2-contributor') return 'responses';
     return 'chat';
   }
 
   function inferOpencodeGroup(id) {
     const prefix = (id.split('-')[0] || 'Outros').toLowerCase();
-    const names = { glm: 'GLM', kimi: 'Kimi', deepseek: 'DeepSeek', mimo: 'MiMo', minimax: 'MiniMax', qwen3: 'Qwen', grok: 'Grok', hy3: 'HY', gpt: 'GPT', claude: 'Claude' };
+    const names = { glm: 'GLM', kimi: 'Kimi', longcat: 'LongCat', deepseek: 'DeepSeek', mimo: 'MiMo', minimax: 'MiniMax', qwen3: 'Qwen', grok: 'Grok', hy: 'HY', gpt: 'GPT', muse: 'Muse', claude: 'Claude' };
     const key = Object.keys(names).find(k => prefix.startsWith(k));
     return names[key] || 'Outros';
   }
@@ -2258,7 +2265,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   }
 
   function getCachedOpencodeIds() {
-    const cached = GM_getValue('opencodeModelIdsCache_v114', null);
+    const cached = GM_getValue('opencodeModelIdsCache_v115', null);
     return Array.isArray(cached) && cached.length ? cached.filter(id => typeof id === 'string' && id) : OPENCODE_FALLBACK_IDS;
   }
 
@@ -2266,7 +2273,8 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
   function reliableOpencodeDefaults() {
     const valid = (id) => OPENCODE_MODELS.some(m => m.id === id);
-    const creator = valid('kimi-k2.6') ? 'kimi-k2.6' : (valid('glm-5.1') ? 'glm-5.1' : OPENCODE_MODELS[0]?.id);
+    const creator = valid('gpt-5.6-luna') ? 'gpt-5.6-luna'
+      : (valid('kimi-k2.6') ? 'kimi-k2.6' : (valid('glm-5.1') ? 'glm-5.1' : OPENCODE_MODELS[0]?.id));
     return { creator, auditor: valid('glm-5.2') ? 'glm-5.2' : creator };
   }
 
@@ -2290,6 +2298,13 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       setSetting('aiProvider', 'opencode');
       setSetting('pipelineMode', 'dual');
       GM_setValue('migratedOpencodeOnly_v111', true);
+    }
+    // v1.15: quem ainda estava no antigo Creator padrão (Kimi K2.6) passa para
+    // Luna xhigh uma única vez. Depois disso, qualquer escolha manual é preservada.
+    if (!GM_getValue('migratedLunaCreator_v115', false)) {
+      if (getSetting('opencodeModel') === 'kimi-k2.6') setSetting('opencodeModel', 'gpt-5.6-luna');
+      if (getSetting('creatorModel') === 'kimi-k2.6') setSetting('creatorModel', 'gpt-5.6-luna');
+      GM_setValue('migratedLunaCreator_v115', true);
     }
     // Corrige apenas instalações que chegaram a executar uma build intermediária
     // da v1.14, que migrou automaticamente Kimi → GLM. Escolhas manuais ficam intactas.
@@ -2325,7 +2340,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   /** Atualiza o catálogo no máximo 1x/dia; falha silenciosa mantém o cache. */
   async function refreshOpencodeModelCatalog(force = false, apiKey = getSetting('opencodeApiKey')) {
     if (!hasConfiguredApiKey(apiKey)) return { ok: false, reason: 'Chave do OpenCode não configurada.' };
-    const last = GM_getValue('opencodeModelCatalogUpdatedAt_v114', 0);
+    const last = GM_getValue('opencodeModelCatalogUpdatedAt_v115', 0);
     if (!force && Date.now() - last < 24 * 60 * 60 * 1000) {
       return { ok: true, cached: true, count: OPENCODE_MODELS.length };
     }
@@ -2339,8 +2354,8 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       const ids = [...new Set((json?.data || []).map(m => m?.id).filter(id => typeof id === 'string' && id))];
       if (!ids.length) return { ok: false, reason: 'Catálogo vazio.' };
       OPENCODE_MODELS = ids.map(makeOpencodeModelDef);
-      GM_setValue('opencodeModelIdsCache_v114', ids);
-      GM_setValue('opencodeModelCatalogUpdatedAt_v114', Date.now());
+      GM_setValue('opencodeModelIdsCache_v115', ids);
+      GM_setValue('opencodeModelCatalogUpdatedAt_v115', Date.now());
       reconcileOpencodeSelections();
       return { ok: true, cached: false, count: ids.length };
     } catch (err) {
@@ -2488,6 +2503,11 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       // OpenAI Responses: modelos de raciocínio rejeitam temperature ≠ 1 → omitir.
       // JSON garantido pelo CARD_JSON_CONTRACT + parseJsonFromText (evita 400 de text.format).
       body = { model, instructions: systemPrompt, input: userPrompt };
+      // O Luna é o Creator padrão e roda com raciocínio extra-alto. A opção
+      // continua sobrescrevível para chamadas específicas e não afeta outros modelos.
+      const reasoning = requestOptions.reasoning
+        || (model === 'gpt-5.6-luna' ? { effort: 'xhigh' } : null);
+      if (reasoning) body.reasoning = reasoning;
       if (requestOptions.maxTokens) body.max_output_tokens = requestOptions.maxTokens;
     } else {
       // OpenAI chat/completions (GLM, DeepSeek, Kimi, MiniMax, Grok, grátis).
@@ -2953,7 +2973,10 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     if (!usage) return 0;
     // Approximate pricing per 1M tokens (input/output) for known models
     const pricing = {
-      // OpenCode Go (jul/2026)
+      // OpenCode Go (set/2026); valores aproximados por 1M tokens.
+      'gpt-5.6-luna':         { input: 0.20, output: 1.20 },
+      'glm-5.3-flash':        { input: 0.15, output: 0.50 },
+      'glm-5.3':              { input: 1.40, output: 4.40 },
       'glm-5.2':              { input: 1.40, output: 4.40 },
       'glm-5.1':              { input: 1.40, output: 4.40 },
       'glm-5':                { input: 1.00, output: 3.20 },
@@ -2961,13 +2984,19 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       'kimi-k2.7-code':       { input: 0.95, output: 4.00 },
       'kimi-k2.5':            { input: 0.60, output: 3.00 },
       'kimi-k3':              { input: 3.00, output: 15.00 },
+      'longcat-2.0':          { input: 0.30, output: 1.20 },
       'deepseek-v4-pro':      { input: 0.435, output: 0.87 },
       'deepseek-v4-flash':    { input: 0.14, output: 0.28 },
       'mimo-v2.5-pro':        { input: 0.435, output: 0.87 },
       'mimo-v2.5':            { input: 0.14, output: 0.28 },
       'minimax-m3':           { input: 0.30, output: 1.20 },
       'grok-4.5':             { input: 2.00, output: 6.00 },
+      'grok-4.6':             { input: 2.00, output: 6.00 },
+      'muse-spark-1.2-contributor': { input: 0.10, output: 0.20 },
+      'hy4-preview':          { input: 0.834, output: 2.501 },
       'hy3':                  { input: 0.14, output: 0.58 },
+      'qwen3.8-max':          { input: 2.00, output: 6.00 },
+      'qwen3.8-flash':        { input: 0.15, output: 0.47 },
       'qwen3.7-max':          { input: 2.50, output: 7.50 },
       'qwen3.7-plus':         { input: 0.40, output: 1.60 },
       'gpt-5.5':              { input: 5.00, output: 30.00 },
@@ -4513,7 +4542,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <option value="single" ${getSetting('pipelineMode') === 'single' ? 'selected' : ''}>Single (1 modelo, sem auditoria)</option>
               <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual (Creator \u2192 Auditor, mais preciso)</option>
             </select>
-            <small style="color:#888;font-size:11px">Padrão: Creator <b>Kimi K2.6</b> → Auditor <b>GLM 5.2</b> (OpenCode Go), com payload compatível para o modo thinking do Kimi.</small>
+            <small style="color:#888;font-size:11px">Padrão: Creator <b>GPT 5.6 Luna (xhigh)</b> → Auditor <b>GLM 5.2</b> (OpenCode Go). Você pode trocar qualquer um nos seletores abaixo.</small>
           </div>
           <div id="tec-cfg-pipeline-section" style="display:none">
             <div class="tec-field">

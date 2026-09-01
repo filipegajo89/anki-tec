@@ -1,6 +1,6 @@
 # 🚀 TEC → Anki + Obsidian
 
-Automação completa: extrai questões do **TEC Concursos**, gera flashcards cirúrgicos com **Gemini AI** focados no seu erro, salva notas organizadas no **Obsidian** e envia cards para o **Anki** via AnkiConnect.
+Automação completa: extrai questões do **TEC Concursos**, gera flashcards cirúrgicos com **GPT 5.6 Luna (xhigh)** e os valida com um **Auditor GLM 5.2** via OpenCode Go, salva notas organizadas no **Obsidian** e envia os cards para o **Anki** via AnkiConnect.
 
 ---
 
@@ -154,7 +154,9 @@ TEC/{Matéria}/{Subtópico}/Q{id}.md
 1. Você verá a toolbar flutuante no canto inferior direito: `📋 Salvar | 📋📋 Erros | ⚙️ | 🟢`
 2. Clique no **⚙️** para abrir as configurações
 3. Preencha:
-   - **Gemini API Key:** já vem preenchida
+   - **OpenCode API Key:** cole sua chave do OpenCode Go
+   - **Pipeline:** mantenha `Dual` para usar Luna xhigh como Creator e GLM 5.2 como Auditor
+   - **Modelos:** os dois seletores podem ser alterados quando você quiser; o catálogo é sincronizado automaticamente
    - **Nome do Vault:** o nome exato do seu vault no Obsidian
    - **REST API Token:** cole o token do plugin Local REST API
    - **Demais campos:** os padrões já estão bons
@@ -179,7 +181,8 @@ O ponto colorido na toolbar indica:
 3. Pressione **`Shift+Enter`** ou clique no botão **"📋 Salvar"**
 4. O script irá:
    - 🔍 Extrair dados da questão do DOM
-   - 🤖 Gerar 2-3 flashcards com Gemini AI
+   - 🧠 Gerar até 2 flashcards com GPT 5.6 Luna em `xhigh`
+   - ⚖️ Revisar os cards com o Auditor configurado
    - 📋 Mostrar preview para confirmação
    - 💾 Salvar no Anki + Obsidian ao confirmar
 5. Toast de sucesso aparece com resumo
@@ -281,10 +284,10 @@ O `_Estatisticas.md` oferece análise mais profunda:
 - Use o **Discovery Mode** (menu Tampermonkey → 🔍) para diagnosticar
 - Abra o console (F12) para ver detalhes técnicos
 
-### "Erro na IA / Gemini"
+### "Erro na IA / OpenCode"
 
 - Verifique se a **API key** está correta nas configurações
-- Verifique sua cota no [Google AI Studio](https://aistudio.google.com/)
+- Verifique sua chave, assinatura/saldo e limites no console do OpenCode
 - O script ainda salvará no Obsidian/Anki mesmo se a IA falhar (sem flashcards)
 
 ### Cards duplicados no Anki
@@ -314,13 +317,13 @@ O `_Estatisticas.md` oferece análise mais profunda:
            │ Extrai DOM
            ▼
 ┌─────────────────────────────┐
-│     Gemini 2.0 Flash        │
+│ GPT 5.6 Luna (xhigh)        │
 │     (API REST)              │
 │                             │
-│  papiro_skill como system   │
+│  Creator + Auditor GLM 5.2  │
 │  instruction + dados da     │
 │  questão → JSON estruturado │
-│  com 2-3 flashcards         │
+│  com até 2 flashcards       │
 └──────────┬──────────────────┘
            │ JSON {materia, subtopico,
            │       erro_identificado, cards[]}
