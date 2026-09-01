@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.15.0
-// @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor (pipeline resiliente, cards visuais e Cloze nativo) e salva no Anki + Obsidian
+// @version      1.15.1
+// @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
 // @match        https://tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.15.0';
+  const SCRIPT_VERSION = '1.15.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2088,7 +2088,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     let message = `Falha da API${status ? ` (HTTP ${status})` : ''}`;
     let providerFatal = false;
     if (/insufficient balance|credits?error|billing|saldo/.test(haystack)) {
-      const providerName = context.provider === 'openrouter' ? 'OpenRouter' : 'OpenCode Go';
+      const providerName = context.provider === 'openrouter' ? 'OpenRouter' : 'OpenCode Zen';
       kind = 'credits'; message = `Saldo, créditos ou assinatura do ${providerName} insuficientes`; providerFatal = true;
     } else if (status === 401 || status === 403 || /invalid api key|unauthori|forbidden/.test(haystack)) {
       kind = 'auth'; message = 'Chave da API inválida, expirada ou sem acesso'; providerFatal = true;
@@ -2214,47 +2214,57 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     { id: 'google/gemini-3.1-pro-preview',       label: '\u2B50 Gemini 3.1 Pro Preview \u2014 GPQA 94.1% ($1.25/$10 M tok)' },
   ];
 
-  // ── OpenCode Go — catálogo vivo com fallback offline ─────────────────
+  // ── OpenCode Zen — catálogo vivo com fallback offline ────────────────
   // O endpoint /models é a fonte de verdade. A lista local abaixo só mantém o
   // seletor funcional antes da primeira sincronização ou quando não há rede.
-  const OPENCODE_MODELS_URL = 'https://opencode.ai/zen/go/v1/models';
+  const OPENCODE_MODELS_URL = 'https://opencode.ai/zen/v1/models';
   const OPENCODE_FALLBACK_IDS = [
-    'gpt-5.6-luna', 'grok-4.6', 'grok-4.5', 'muse-spark-1.2-contributor',
-    'glm-5.3-flash', 'glm-5.3', 'glm-5.2', 'glm-5.1', 'glm-5',
-    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5', 'longcat-2.0',
-    'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
-    'mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni',
+    'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol',
+    'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano',
+    'gpt-5.3-codex-spark', 'gpt-5.3-codex', 'gpt-5.2', 'gpt-5.2-codex',
+    'gpt-5.1', 'gpt-5.1-codex-max', 'gpt-5.1-codex', 'gpt-5.1-codex-mini',
+    'gpt-5', 'gpt-5-codex', 'gpt-5-nano',
+    'claude-fable-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7',
+    'claude-opus-4-6', 'claude-opus-4-5', 'claude-sonnet-5', 'claude-sonnet-4-6',
+    'claude-sonnet-4-5', 'claude-sonnet-4', 'claude-haiku-4-5',
+    'grok-build-0.1', 'grok-4.6', 'grok-4.5', 'muse-spark-1.2',
+    'deepseek-v4-pro', 'deepseek-v4-flash', 'glm-5.2', 'glm-5.1', 'glm-5',
     'minimax-m3', 'minimax-m2.7', 'minimax-m2.5',
-    'qwen3.8-max', 'qwen3.8-flash', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus', 'qwen3.5-plus',
-    'hy4-preview', 'hy3', 'hy3-preview',
+    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5',
+    'qwen3.6-plus', 'qwen3.5-plus',
+    'big-pickle', 'deepseek-v4-flash-free', 'muse-spark-1.2-contributor-free',
+    'mimo-v2.5-free', 'ling-3.0-flash-fin-free', 'nemotron-3-ultra-free',
+    'nemotron-3.5-lightning-free', 'laguna-s-2.1-free',
   ];
 
   const OPENCODE_MODEL_LABELS = {
     'gpt-5.6-luna': 'GPT 5.6 Luna ⭐ creator • xhigh',
-    'glm-5.3-flash': 'GLM 5.3 Flash',
-    'glm-5.3': 'GLM 5.3',
     'glm-5.2': 'GLM 5.2 ⭐ auditor',
     'glm-5.1': 'GLM 5.1',
     'kimi-k2.7-code': 'Kimi K2.7 Code — só código',
     'kimi-k2.6': 'Kimi K2.6 ⭐ creator',
     'deepseek-v4-pro': 'DeepSeek V4 Pro',
     'deepseek-v4-flash': 'DeepSeek V4 Flash',
-    'mimo-v2.5-pro': 'MiMo V2.5 Pro',
     'grok-4.6': 'Grok 4.6',
-    'muse-spark-1.2-contributor': 'Muse Spark 1.2 Contributor',
-    'qwen3.8-max': 'Qwen 3.8 Max',
-    'qwen3.8-flash': 'Qwen 3.8 Flash',
+    'muse-spark-1.2': 'Muse Spark 1.2',
   };
 
+  // O endpoint Gemini do Zen usa o protocolo Google generateContent, ainda não
+  // usado por este pipeline JSON. Mantemos nos seletores apenas os três wires
+  // suportados abaixo para nunca enviar um modelo ao endpoint errado.
+  function isSupportedOpencodeModelId(id) {
+    return typeof id === 'string' && Boolean(id) && !/^gemini-/i.test(id);
+  }
+
   function inferOpencodeWire(id) {
-    if (/^(qwen|minimax|claude)/i.test(id)) return 'messages';
-    if (/^gpt-/i.test(id) || id === 'grok-4.6' || id === 'muse-spark-1.2-contributor') return 'responses';
+    if (/^(qwen|claude)/i.test(id)) return 'messages';
+    if (/^(gpt-|grok-|muse-spark)/i.test(id)) return 'responses';
     return 'chat';
   }
 
   function inferOpencodeGroup(id) {
     const prefix = (id.split('-')[0] || 'Outros').toLowerCase();
-    const names = { glm: 'GLM', kimi: 'Kimi', longcat: 'LongCat', deepseek: 'DeepSeek', mimo: 'MiMo', minimax: 'MiniMax', qwen3: 'Qwen', grok: 'Grok', hy: 'HY', gpt: 'GPT', muse: 'Muse', claude: 'Claude' };
+    const names = { glm: 'GLM', kimi: 'Kimi', deepseek: 'DeepSeek', mimo: 'MiMo', minimax: 'MiniMax', qwen3: 'Qwen', grok: 'Grok', gpt: 'GPT', muse: 'Muse', claude: 'Claude', big: 'Gratuitos', ling: 'Gratuitos', nemotron: 'Gratuitos', laguna: 'Gratuitos' };
     const key = Object.keys(names).find(k => prefix.startsWith(k));
     return names[key] || 'Outros';
   }
@@ -2265,8 +2275,8 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   }
 
   function getCachedOpencodeIds() {
-    const cached = GM_getValue('opencodeModelIdsCache_v115', null);
-    return Array.isArray(cached) && cached.length ? cached.filter(id => typeof id === 'string' && id) : OPENCODE_FALLBACK_IDS;
+    const cached = GM_getValue('opencodeModelIdsCache_v1151', null);
+    return Array.isArray(cached) && cached.length ? cached.filter(isSupportedOpencodeModelId) : OPENCODE_FALLBACK_IDS;
   }
 
   let OPENCODE_MODELS = getCachedOpencodeIds().map(makeOpencodeModelDef);
@@ -2320,13 +2330,13 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return OPENCODE_MODELS.find(m => m.id === model) || (model ? makeOpencodeModelDef(model) : null);
   }
 
-  /** Wire (formato de API) do modelo OpenCode Go; default 'chat'. */
+  /** Wire (formato de API) do modelo OpenCode Zen; default 'chat'. */
   function getOpencodeWire(model) {
     return getOpencodeModelDef(model)?.wire || 'chat';
   }
 
   function getOpencodeEndpoint(model) {
-    const base = 'https://opencode.ai/zen/go/v1';
+    const base = 'https://opencode.ai/zen/v1';
     const wire = getOpencodeWire(model);
     if (wire === 'messages') return `${base}/messages`;
     if (wire === 'responses') return `${base}/responses`;
@@ -2340,7 +2350,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   /** Atualiza o catálogo no máximo 1x/dia; falha silenciosa mantém o cache. */
   async function refreshOpencodeModelCatalog(force = false, apiKey = getSetting('opencodeApiKey')) {
     if (!hasConfiguredApiKey(apiKey)) return { ok: false, reason: 'Chave do OpenCode não configurada.' };
-    const last = GM_getValue('opencodeModelCatalogUpdatedAt_v115', 0);
+    const last = GM_getValue('opencodeModelCatalogUpdatedAt_v1151', 0);
     if (!force && Date.now() - last < 24 * 60 * 60 * 1000) {
       return { ok: true, cached: true, count: OPENCODE_MODELS.length };
     }
@@ -2351,11 +2361,11 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       });
       if (!res.ok) return { ok: false, reason: `Catálogo HTTP ${res.status}` };
       const json = await res.json();
-      const ids = [...new Set((json?.data || []).map(m => m?.id).filter(id => typeof id === 'string' && id))];
+      const ids = [...new Set((json?.data || []).map(m => m?.id).filter(isSupportedOpencodeModelId))];
       if (!ids.length) return { ok: false, reason: 'Catálogo vazio.' };
       OPENCODE_MODELS = ids.map(makeOpencodeModelDef);
-      GM_setValue('opencodeModelIdsCache_v115', ids);
-      GM_setValue('opencodeModelCatalogUpdatedAt_v115', Date.now());
+      GM_setValue('opencodeModelIdsCache_v1151', ids);
+      GM_setValue('opencodeModelCatalogUpdatedAt_v1151', Date.now());
       reconcileOpencodeSelections();
       return { ok: true, cached: false, count: ids.length };
     } catch (err) {
@@ -2371,7 +2381,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     const model = OPENCODE_MODELS.some(m => m.id === 'glm-5.1') ? 'glm-5.1'
       : OPENCODE_MODELS.find(m => m.wire === 'chat')?.id;
     if (!model) throw new Error('Nenhum modelo chat disponível para o teste.');
-    await callOpenAICompatible('https://opencode.ai/zen/go/v1/chat/completions', apiKey, {
+    await callOpenAICompatible('https://opencode.ai/zen/v1/chat/completions', apiKey, {
       model,
       messages: [{ role: 'user', content: 'Responda somente OK.' }],
       max_tokens: 2,
@@ -2482,7 +2492,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   }
 
   /**
-   * Chamada unificada a um modelo do OpenCode Go, roteando pelo wire correto.
+   * Chamada unificada a um modelo do OpenCode Zen, roteando pelo wire correto.
    * Retorna { result: <objeto JSON>, usage: {promptTokens, completionTokens}|null }.
    */
   async function callOpencodeModel(model, systemPrompt, userPrompt, requestOptions = {}) {
@@ -2731,7 +2741,7 @@ Seja RIGOROSO. Na dúvida, REJEITE. É melhor gerar de novo do que enviar um car
 
   async function callOpenRouterWithModel(model, systemPrompt, userPrompt, extraBody = {}) {
     const { _opencodeOptions = {}, ...providerExtraBody } = extraBody;
-    // OpenCode Go: roteia pelo wire correto (chat / messages / responses).
+    // OpenCode Zen: roteia pelo wire correto (chat / messages / responses).
     // Opções específicas do OpenCode são separadas do payload do OpenRouter para
     // não vazar parâmetros internos entre provedores (`expect`, o contrato de
     // forma da resposta, vale para os dois).
@@ -2973,7 +2983,7 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     if (!usage) return 0;
     // Approximate pricing per 1M tokens (input/output) for known models
     const pricing = {
-      // OpenCode Go (set/2026); valores aproximados por 1M tokens.
+      // OpenCode Zen (set/2026); valores aproximados por 1M tokens.
       'gpt-5.6-luna':         { input: 0.20, output: 1.20 },
       'glm-5.3-flash':        { input: 0.15, output: 0.50 },
       'glm-5.3':              { input: 1.40, output: 4.40 },
@@ -4485,7 +4495,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
             <select id="tec-cfg-ai-provider">
               <option value="gemini" ${getSetting('aiProvider') === 'gemini' ? 'selected' : ''}>Google Gemini (gratuito)</option>
               <option value="openrouter" ${getSetting('aiProvider') === 'openrouter' ? 'selected' : ''}>OpenRouter (multi-modelo)</option>
-              <option value="opencode" ${getSetting('aiProvider') === 'opencode' ? 'selected' : ''}>OpenCode Go</option>
+              <option value="opencode" ${getSetting('aiProvider') === 'opencode' ? 'selected' : ''}>OpenCode Zen</option>
             </select>
           </div>
 
@@ -4530,7 +4540,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <select id="tec-cfg-opencode-model">
                 ${buildOpencodeOptions(getSetting('opencodeModel'))}
               </select>
-              <small style="color:#888;font-size:11px">Catálogo sincronizado automaticamente com o OpenCode Go.</small>
+              <small style="color:#888;font-size:11px">Catálogo compatível sincronizado automaticamente com o OpenCode Zen.</small>
             </div>
           </div>
 
@@ -4542,7 +4552,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
               <option value="single" ${getSetting('pipelineMode') === 'single' ? 'selected' : ''}>Single (1 modelo, sem auditoria)</option>
               <option value="dual" ${getSetting('pipelineMode') === 'dual' ? 'selected' : ''}>Dual (Creator \u2192 Auditor, mais preciso)</option>
             </select>
-            <small style="color:#888;font-size:11px">Padrão: Creator <b>GPT 5.6 Luna (xhigh)</b> → Auditor <b>GLM 5.2</b> (OpenCode Go). Você pode trocar qualquer um nos seletores abaixo.</small>
+            <small style="color:#888;font-size:11px">Padrão: Creator <b>GPT 5.6 Luna (xhigh)</b> → Auditor <b>GLM 5.2</b>, ambos pelo <b>OpenCode Zen</b>. Você pode trocar qualquer um nos seletores abaixo.</small>
           </div>
           <div id="tec-cfg-pipeline-section" style="display:none">
             <div class="tec-field">
@@ -4722,7 +4732,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         statusDiv.innerHTML = `
           <div>\uD83D\uDDC2\uFE0F AnkiConnect: ${anki ? '<span style="color:#06d6a0">\u2705 Conectado</span>' : '<span style="color:#ef476f">\u274C N\u00E3o conectado</span> \u2014 Verifique se o Anki est\u00E1 aberto com o add-on AnkiConnect (2055492159)'}</div>
           <div style="margin-top:4px">\uD83D\uDCD3 Obsidian REST API: ${obs ? '<span style="color:#06d6a0">\u2705 Conectado</span>' : '<span style="color:#ef476f">\u274C N\u00E3o conectado</span> \u2014 Verifique se o Obsidian est\u00E1 aberto com o plugin Local REST API'}</div>
-          <div style="margin-top:4px">🤖 OpenCode Go: ${ai?.ok
+          <div style="margin-top:4px">🤖 OpenCode Zen: ${ai?.ok
             ? `<span style="color:#06d6a0">✅ API e saldo ativos</span> — ${escapeHtml(ai.model)}, ${ai.catalogCount} modelos`
             : `<span style="color:#ef476f">❌ ${escapeHtml(ai?.error || 'Não conectado')}</span>`}</div>
           <div style="margin-top:4px;color:#888;font-size:10px">O teste da IA usa uma resposta mínima de até 2 tokens.</div>

@@ -1,6 +1,6 @@
 # 🚀 TEC → Anki + Obsidian
 
-Automação completa: extrai questões do **TEC Concursos**, gera flashcards cirúrgicos com **GPT 5.6 Luna (xhigh)** e os valida com um **Auditor GLM 5.2** via OpenCode Go, salva notas organizadas no **Obsidian** e envia os cards para o **Anki** via AnkiConnect.
+Automação completa: extrai questões do **TEC Concursos**, gera flashcards cirúrgicos com **GPT 5.6 Luna (xhigh)** e os valida com um **Auditor GLM 5.2** via OpenCode Zen, salva notas organizadas no **Obsidian** e envia os cards para o **Anki** via AnkiConnect.
 
 ---
 
@@ -154,7 +154,7 @@ TEC/{Matéria}/{Subtópico}/Q{id}.md
 1. Você verá a toolbar flutuante no canto inferior direito: `📋 Salvar | 📋📋 Erros | ⚙️ | 🟢`
 2. Clique no **⚙️** para abrir as configurações
 3. Preencha:
-   - **OpenCode API Key:** cole sua chave do OpenCode Go
+   - **OpenCode API Key:** cole sua chave do OpenCode Zen
    - **Pipeline:** mantenha `Dual` para usar Luna xhigh como Creator e GLM 5.2 como Auditor
    - **Modelos:** os dois seletores podem ser alterados quando você quiser; o catálogo é sincronizado automaticamente
    - **Nome do Vault:** o nome exato do seu vault no Obsidian
