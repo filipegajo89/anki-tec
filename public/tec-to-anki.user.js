@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.16.1
+// @version      1.16.2
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.16.1';
+  const SCRIPT_VERSION = '1.16.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2394,6 +2394,20 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     GM_setValue('migratedStrictLunaZen_v1161', true);
   })();
 
+  // v1.16.2: a lista nativa do macOS abre rolada até o item já selecionado e
+  // podia esconder o Luna, que ficava vários grupos acima. Restaura uma única
+  // vez o padrão pedido; depois disso, todas as trocas manuais são preservadas.
+  (function migrateVisibleLunaDefaultV1162() {
+    if (GM_getValue('migratedVisibleLunaDefault_v1162', false)) return;
+    setSetting('aiProvider', 'opencode');
+    setSetting('opencodeService', 'zen');
+    setSetting('pipelineMode', 'dual');
+    setSetting('opencodeModel', 'gpt-5.6-luna');
+    setSetting('creatorModel', 'gpt-5.6-luna');
+    setSetting('auditorModel', 'glm-5.2');
+    GM_setValue('migratedVisibleLunaDefault_v1162', true);
+  })();
+
   // Escopo OpenCode-only (v1.11.0): seleções de provedores antigos (OpenRouter/
   // Gemini) caem no padrão OpenCode; provider + modo dual viram padrão uma vez.
   (function migrateToOpencodeOnly() {
@@ -2529,25 +2543,40 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return { ok: true, creatorModel, auditorModel, catalogCount: catalog.count, service, serviceLabel: def.label };
   }
 
-  /** Monta <optgroup>/<option> (agrupados por família) para os seletores OpenCode. */
+  /** Mantém os modelos recomendados imediatamente visíveis mesmo quando o
+   *  seletor nativo abre rolado até outro modelo já selecionado. */
   function buildOpencodeOptions(selectedId, service = getOpencodeService()) {
     const catalogModels = getOpencodeModels(service);
     const models = !selectedId || catalogModels.some(m => m.id === selectedId)
       ? catalogModels
       : [makeOpencodeModelDef(selectedId, service), ...catalogModels];
+    const recommendedIds = ['gpt-5.6-luna', 'glm-5.2'];
+    const recommended = recommendedIds
+      .map(id => models.find(model => model.id === id))
+      .filter(Boolean);
+    const regularModels = models.filter(model => !recommendedIds.includes(model.id));
     const order = [];
     const byGroup = new Map();
-    for (const m of models) {
+    for (const m of regularModels) {
       const g = m.group || 'Outros';
       if (!byGroup.has(g)) { byGroup.set(g, []); order.push(g); }
       byGroup.get(g).push(m);
     }
-    return order.map(g => {
-      const opts = byGroup.get(g).map(m =>
+    const selectedGroup = regularModels.find(model => model.id === selectedId)?.group || null;
+    const orderedGroups = selectedGroup
+      ? [selectedGroup, ...order.filter(group => group !== selectedGroup)]
+      : order;
+    const renderOptions = groupModels => groupModels.map(m =>
         `<option value="${escapeHtml(m.id)}"${selectedId === m.id ? ' selected' : ''}>${escapeHtml(m.label)}${!catalogModels.some(x => x.id === m.id) ? ' ⚠️ fora do catálogo atual' : ''}</option>`
       ).join('');
-      return `<optgroup label="${escapeHtml(g)}">${opts}</optgroup>`;
-    }).join('');
+    const sections = [];
+    if (recommended.length) {
+      sections.push(`<optgroup label="⭐ Recomendados">${renderOptions(recommended)}</optgroup>`);
+    }
+    for (const group of orderedGroups) {
+      sections.push(`<optgroup label="${escapeHtml(group)}">${renderOptions(byGroup.get(group))}</optgroup>`);
+    }
+    return sections.join('');
   }
 
   function extractTextValue(value, depth = 0) {
@@ -4695,6 +4724,9 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
 
           <hr class="tec-divider">
           <h3>\uD83D\uDD00 Pipeline Dual (Creator + Auditor)</h3>
+          <button id="tec-cfg-apply-luna-default" type="button" style="width:100%;margin:0 0 12px;padding:10px 12px;cursor:pointer;background:#eef2ff;color:#3558d4;border:1px solid #9eb1ff;border-radius:8px;font-weight:700;">
+            ⭐ Aplicar Zen + Luna xhigh + GLM 5.2
+          </button>
           <div class="tec-field">
             <label>Modo</label>
             <select id="tec-cfg-pipeline-mode">
@@ -4857,6 +4889,23 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
     }
     pipelineModeSelect.addEventListener('change', togglePipelineSection);
     togglePipelineSection();
+
+    // Atalho visível para recuperar o padrão sem procurar o Luna numa lista longa.
+    const applyLunaDefaultBtn = overlay.querySelector('#tec-cfg-apply-luna-default');
+    applyLunaDefaultBtn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      providerSelect.value = 'opencode';
+      toggleProviderSections();
+      opencodeServiceSelect.value = 'zen';
+      applyOpencodeServiceUi();
+      pipelineModeSelect.value = 'dual';
+      togglePipelineSection();
+      overlay.querySelector('#tec-cfg-opencode-model').value = 'gpt-5.6-luna';
+      overlay.querySelector('#tec-cfg-creator-model').value = 'gpt-5.6-luna';
+      overlay.querySelector('#tec-cfg-auditor-model').value = 'glm-5.2';
+      showToast('Padrão aplicado na tela: Zen · Luna xhigh → GLM 5.2. Clique em Salvar.', 'success', 6000);
+    });
 
     // Reset cost button
     const resetCostBtn = overlay.querySelector('#tec-cfg-reset-cost');
