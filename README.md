@@ -157,7 +157,7 @@ TEC/{Matéria}/{Subtópico}/Q{id}.md
    - **Serviço OpenCode:** escolha `Zen` (créditos pay-as-you-go) ou `Go` (assinatura). O Zen continua selecionado por padrão; cada serviço sincroniza seu catálogo público sem misturar credenciais
    - **OpenCode API Key:** cole a chave do serviço escolhido; as credenciais de Zen e Go ficam salvas separadamente
    - **Pipeline:** mantenha `Dual estrito` para usar Luna xhigh como Creator e GLM 5.2 como Auditor; se um deles falhar, nenhum modelo substituto salva cards silenciosamente
-   - **Modelos:** Luna e GLM aparecem em `⭐ Recomendados`, no topo. Se necessário, use `⭐ Aplicar Zen + Luna xhigh + GLM 5.2`; os seletores continuam livres para futuras trocas, e Zen ↔ Go também muda rota e catálogo automaticamente
+   - **Modelos:** GPT 5.6 Luna, GPT 6 Luna e GLM 5.2 aparecem em `⭐ Recomendados`, no topo. Os dois Luna rodam em `xhigh`; o GPT 6 Luna é mais novo e custa metade, mas o padrão continua o 5.6 até você trocar. Se necessário, use `⭐ Aplicar Zen + Luna xhigh + GLM 5.2`; os seletores continuam livres para futuras trocas, e Zen ↔ Go também muda rota e catálogo automaticamente
    - **Nome do Vault:** o nome exato do seu vault no Obsidian
    - **REST API Token:** cole o token do plugin Local REST API
    - **Demais campos:** os padrões já estão bons

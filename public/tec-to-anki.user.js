@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.16.4
+// @version      1.17.0
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.16.4';
+  const SCRIPT_VERSION = '1.17.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2265,34 +2265,37 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   // Cada serviço tem base, catálogo, cache e credencial próprios. O Zen é
   // pay-as-you-go; o Go usa a assinatura. A lista local mantém os seletores
   // funcionais antes da primeira sincronização ou quando não há rede.
+  // Espelham a documentação (set/2026) sem os modelos descontinuados: no Zen a
+  // lista é somada ao catálogo, então um legado aqui nunca sairia do seletor.
   const OPENCODE_ZEN_FALLBACK_IDS = [
-    'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol',
+    'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
     'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano',
-    'gpt-5.3-codex-spark', 'gpt-5.3-codex', 'gpt-5.2', 'gpt-5.2-codex',
-    'gpt-5.1', 'gpt-5.1-codex-max', 'gpt-5.1-codex', 'gpt-5.1-codex-mini',
-    'gpt-5', 'gpt-5-codex', 'gpt-5-nano',
-    'claude-fable-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7',
-    'claude-opus-4-6', 'claude-opus-4-5', 'claude-sonnet-5', 'claude-sonnet-4-6',
-    'claude-sonnet-4-5', 'claude-sonnet-4', 'claude-haiku-4-5',
-    'grok-build-0.1', 'grok-4.6', 'grok-4.5', 'muse-spark-1.2',
-    'deepseek-v4-pro', 'deepseek-v4-flash', 'glm-5.2', 'glm-5.1', 'glm-5',
-    'minimax-m3', 'minimax-m2.7', 'minimax-m2.5',
-    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5',
-    'qwen3.6-plus', 'qwen3.5-plus',
-    'big-pickle', 'deepseek-v4-flash-free', 'muse-spark-1.2-contributor-free',
+    'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2', 'gpt-5.1', 'gpt-5', 'gpt-5-nano',
+    'claude-fable-5-1', 'claude-fable-5', 'claude-opus-5-5', 'claude-opus-5',
+    'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5',
+    'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5',
+    'grok-4.7', 'grok-4.6', 'grok-4.5', 'grok-build-0.1',
+    'muse-spark-1.3', 'muse-spark-1.2',
+    'qwen3.8-max', 'qwen3.8-flash', 'qwen3.6-plus', 'qwen3.5-plus',
+    'deepseek-v4.1-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
+    'minimax-m3', 'minimax-m2.7',
+    'glm-5.3-flash', 'glm-5.3', 'glm-5.2', 'glm-5.1',
+    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6',
+    'big-pickle', 'space-bunny-free', 'longcat-2.5-preview-free', 'mimo-v2.6-flash-free',
     'mimo-v2.5-free', 'ling-3.0-flash-fin-free', 'nemotron-3-ultra-free',
-    'nemotron-3.5-lightning-free', 'laguna-s-2.1-free',
+    'nemotron-3.5-lightning-free', 'muse-spark-1.3-contributor-free',
   ];
 
   const OPENCODE_GO_FALLBACK_IDS = [
-    'gpt-5.6-luna', 'grok-4.6', 'grok-4.5', 'muse-spark-1.2-contributor',
-    'glm-5.3-flash', 'glm-5.3', 'glm-5.2', 'glm-5.1', 'glm-5',
-    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'kimi-k2.5', 'longcat-2.0',
-    'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
-    'mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni',
-    'minimax-m3', 'minimax-m2.7', 'minimax-m2.5',
-    'qwen3.8-max', 'qwen3.8-flash', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-plus', 'qwen3.5-plus',
-    'hy4-preview', 'hy3', 'hy3-preview',
+    'gpt-6-luna', 'gpt-5.6-luna', 'grok-4.7', 'grok-4.6',
+    'muse-spark-1.3-contributor', 'muse-spark-1.2-contributor',
+    'glm-5.3-flash', 'glm-5.3', 'glm-5.2',
+    'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'longcat-2.0', 'longcat-2.5-preview-free',
+    'deepseek-v4.1-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp',
+    'mimo-v2.6-pro', 'mimo-v2.6-flash', 'mimo-v2.5-pro', 'mimo-v2.5',
+    'minimax-m3', 'minimax-m2.7',
+    'qwen3.8-max', 'qwen3.8-flash', 'qwen3.7-plus',
+    'hy4-preview', 'hy3', 'space-bunny-free',
   ];
 
   const OPENCODE_SERVICE_DEFS = {
@@ -2314,6 +2317,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
   const OPENCODE_MODEL_LABELS = {
     'gpt-5.6-luna': 'GPT 5.6 Luna ⭐ creator • xhigh',
+    'gpt-6-luna': 'GPT 6 Luna • xhigh (mais novo, metade do preço)',
     'glm-5.2': 'GLM 5.2 ⭐ auditor',
     'glm-5.1': 'GLM 5.1',
     'kimi-k2.7-code': 'Kimi K2.7 Code — só código',
@@ -2329,6 +2333,11 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     'qwen3.8-flash': 'Qwen 3.8 Flash',
     'mimo-v2.5-pro': 'MiMo V2.5 Pro',
   };
+
+  /** Família Luna (GPT 5.6 Luna, GPT 6 Luna…): Creator com raciocínio xhigh. */
+  function isLunaModel(id) {
+    return /^gpt-[\d.]+-luna$/i.test(id || '');
+  }
 
   function normalizeOpencodeService(service) {
     return service === 'go' ? 'go' : 'zen';
@@ -2349,20 +2358,21 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return getSetting('opencodeApiKey'); // compatibilidade com instalações <= 1.15
   }
 
-  // O endpoint Gemini do Zen usa Google generateContent, ainda não implementado
-  // neste pipeline JSON. Os seletores mostram apenas os três wires suportados.
+  // No Zen, o Gemini usa Google generateContent e o Jev usa /systemone, ainda
+  // não implementados neste pipeline JSON. Os seletores mostram apenas os três
+  // wires suportados.
   function isSupportedOpencodeModelId(id) {
-    return typeof id === 'string' && Boolean(id) && !/^gemini-/i.test(id);
+    return typeof id === 'string' && Boolean(id) && !/^(?:gemini|jev)-/i.test(id);
   }
 
+  // Tabela de endpoints da documentação (set/2026): Grok, GPT e Muse Spark usam
+  // /responses nos dois serviços (o Go moveu o Grok para lá em ago/2026); Qwen e
+  // Claude usam /messages, e o MiniMax também no Go. A única exceção por modelo
+  // é o Qwen 3.8 Max do Zen, servido em /chat/completions.
   function inferOpencodeWire(id, service = getOpencodeService()) {
     service = normalizeOpencodeService(service);
-    if (service === 'go') {
-      if (/^(qwen|minimax|claude)/i.test(id)) return 'messages';
-      if (/^gpt-/i.test(id) || id === 'grok-4.6' || /^muse-spark/i.test(id)) return 'responses';
-      return 'chat';
-    }
-    if (/^(qwen|claude)/i.test(id)) return 'messages';
+    if (service === 'zen' && id === 'qwen3.8-max') return 'chat';
+    if (/^(qwen|claude)/i.test(id) || (service === 'go' && /^minimax/i.test(id))) return 'messages';
     if (/^(gpt-|grok-|muse-spark)/i.test(id)) return 'responses';
     return 'chat';
   }
@@ -2409,8 +2419,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   function reliableOpencodeDefaults(service = getOpencodeService()) {
     const models = getOpencodeModels(service);
     const valid = (id) => models.some(m => m.id === id);
-    const creator = valid('gpt-5.6-luna') ? 'gpt-5.6-luna'
-      : (valid('kimi-k2.6') ? 'kimi-k2.6' : (valid('glm-5.1') ? 'glm-5.1' : models[0]?.id));
+    const creator = ['gpt-5.6-luna', 'gpt-6-luna', 'kimi-k2.6', 'glm-5.1'].find(valid) || models[0]?.id;
     return { creator, auditor: valid('glm-5.2') ? 'glm-5.2' : creator };
   }
 
@@ -2565,7 +2574,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     if (wire === 'responses') {
       body = {
         model, instructions: 'Retorne JSON válido, sem markdown.', input: prompt,
-        reasoning: model === 'gpt-5.6-luna' ? { effort: 'low' } : undefined,
+        reasoning: isLunaModel(model) ? { effort: 'low' } : undefined,
         max_output_tokens: 512, stream: false, store: false,
       };
     } else if (wire === 'messages') {
@@ -2616,7 +2625,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     const models = !selectedId || catalogModels.some(m => m.id === selectedId)
       ? catalogModels
       : [makeOpencodeModelDef(selectedId, service), ...catalogModels];
-    const recommendedIds = ['gpt-5.6-luna', 'glm-5.2'];
+    const recommendedIds = ['gpt-5.6-luna', 'gpt-6-luna', 'glm-5.2'];
     const recommended = recommendedIds
       .map(id => models.find(model => model.id === id))
       .filter(Boolean);
@@ -2721,7 +2730,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
     const summary = summarizeOpencodeResponse(json, wire);
     const finish = summary.finishReason !== 'desconhecido' ? `; término: ${summary.finishReason}` : '';
-    const goLunaHint = service === 'go' && model === 'gpt-5.6-luna'
+    const goLunaHint = service === 'go' && isLunaModel(model)
       ? ' O gateway do Go concluiu sem conteúdo; nenhum outro modelo será usado no lugar do Luna. Troque para Zen ou tente novamente.'
       : '';
     throw new AIRequestError(`O modelo ${model || 'OpenCode'} não devolveu o JSON final${finish}.${goLunaHint}`.trim(), {
@@ -2765,14 +2774,14 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       // OpenAI Responses: modelos de raciocínio rejeitam temperature ≠ 1 → omitir.
       // JSON garantido pelo CARD_JSON_CONTRACT + parseJsonFromText (evita 400 de text.format).
       body = { model, instructions: systemPrompt, input: userPrompt, stream: false, store: false };
-      // O Luna é o Creator padrão e roda com raciocínio extra-alto. A opção
+      // Os Luna (5.6 e 6) rodam como Creator com raciocínio extra-alto. A opção
       // continua sobrescrevível para chamadas específicas e não afeta outros modelos.
       const reasoning = requestOptions.reasoning
-        || (model === 'gpt-5.6-luna' ? { effort: 'xhigh' } : null);
+        || (isLunaModel(model) ? { effort: 'xhigh' } : null);
       if (reasoning) body.reasoning = reasoning;
       if (requestOptions.maxTokens) body.max_output_tokens = requestOptions.maxTokens;
     } else {
-      // OpenAI chat/completions (GLM, DeepSeek, Kimi, MiniMax, Grok, grátis).
+      // OpenAI chat/completions (GLM, DeepSeek, Kimi, MiniMax do Zen, Qwen 3.8 Max do Zen, grátis).
       // Sem campo `reasoning` — esses modelos raciocinam nativamente e o gateway
       // openai-compatible pode rejeitar params não-padrão.
       body = {
@@ -2791,7 +2800,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     }
 
     const expect = requestOptions.expect || null;
-    console.log(`🤖 ${serviceDef.label} · ${model} · ${wire}${model === 'gpt-5.6-luna' ? ' · reasoning=xhigh' : ''}`);
+    console.log(`🤖 ${serviceDef.label} · ${model} · ${wire}${body.reasoning?.effort ? ` · reasoning=${body.reasoning.effort}` : ''}`);
     // Lê o JSON final e CONFERE A FORMA na mesma tentativa: resposta fora do
     // contrato tem que virar erro retentável aqui, não veredito silencioso lá na frente.
     const readResult = (payload) => {
@@ -3261,6 +3270,9 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
     const pricing = {
       // OpenCode Zen/Go (set/2026); valores aproximados por 1M tokens.
       'gpt-5.6-luna':         { input: 0.20, output: 1.20 },
+      'gpt-6-luna':           { input: 0.10, output: 0.50 },
+      'gpt-6-sol':            { input: 2.00, output: 10.00 },
+      'gpt-6-astra':          { input: 10.00, output: 50.00 },
       'glm-5.3-flash':        { input: 0.15, output: 0.50 },
       'glm-5.3':              { input: 1.40, output: 4.40 },
       'glm-5.2':              { input: 1.40, output: 4.40 },
@@ -3271,13 +3283,19 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       'kimi-k2.5':            { input: 0.60, output: 3.00 },
       'kimi-k3':              { input: 3.00, output: 15.00 },
       'longcat-2.0':          { input: 0.30, output: 1.20 },
-      'deepseek-v4-pro':      { input: 0.435, output: 0.87 },
+      'deepseek-v4.1-flash':  { input: 0.30, output: 1.20 },
+      'deepseek-v4-pro':      { input: 1.74, output: 3.48 },
       'deepseek-v4-flash':    { input: 0.14, output: 0.28 },
+      'mimo-v2.6-pro':        { input: 0.435, output: 0.87 },
+      'mimo-v2.6-flash':      { input: 0.14, output: 0.28 },
       'mimo-v2.5-pro':        { input: 0.435, output: 0.87 },
       'mimo-v2.5':            { input: 0.14, output: 0.28 },
       'minimax-m3':           { input: 0.30, output: 1.20 },
+      'minimax-m2.7':         { input: 0.30, output: 1.20 },
       'grok-4.5':             { input: 2.00, output: 6.00 },
       'grok-4.6':             { input: 2.00, output: 6.00 },
+      'grok-4.7':             { input: 2.00, output: 6.00 },
+      'muse-spark-1.3-contributor': { input: 0.10, output: 0.20 },
       'muse-spark-1.2-contributor': { input: 0.10, output: 0.20 },
       'hy4-preview':          { input: 0.834, output: 2.501 },
       'hy3':                  { input: 0.14, output: 0.58 },
@@ -3289,9 +3307,11 @@ Use o relato SÓ para julgar se o card mira a dúvida certa (relevância). Ele N
       'gpt-5.4':              { input: 2.50, output: 15.00 },
       'gpt-5.2':              { input: 1.75, output: 14.00 },
       'gpt-5':                { input: 1.07, output: 8.50 },
-      'claude-opus-4.8':      { input: 5.00, output: 25.00 },
+      'claude-fable-5-1':     { input: 10.00, output: 50.00 },
+      'claude-opus-5-5':      { input: 4.00, output: 20.00 },
+      'claude-opus-4-8':      { input: 5.00, output: 25.00 },
       'claude-sonnet-5':      { input: 2.00, output: 10.00 },
-      'claude-haiku-4.5':     { input: 1.00, output: 5.00 },
+      'claude-haiku-4-5':     { input: 1.00, output: 5.00 },
       // OpenRouter (provedor avulso)
       'moonshotai/kimi-k2.5':           { input: 0.60, output: 2.00 },
       'google/gemini-3.1-pro-preview':   { input: 1.25, output: 10.00 },
