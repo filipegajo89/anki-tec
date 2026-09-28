@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.16.3
+// @version      1.16.4
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.16.3';
+  const SCRIPT_VERSION = '1.16.4';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2087,18 +2087,23 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
   function classifyApiError(status, code, detail, context = {}) {
     const haystack = `${code} ${detail}`.toLowerCase();
+    const providerName = context.provider === 'openrouter'
+      ? 'OpenRouter'
+      : getOpencodeServiceDef(context.service).label;
     let kind = 'api';
-    let message = `Falha da API${status ? ` (HTTP ${status})` : ''}`;
+    // Status sem categoria própria (ex.: 404, 410) leva o motivo do servidor:
+    // só "HTTP 410" não diz se o problema é o modelo, a rota ou a conta.
+    let message = `Falha da API${status ? ` (HTTP ${status})` : ''}${detail ? `: ${detail}` : ''}`;
     let providerFatal = false;
-    if (/insufficient balance|credits?error|billing|saldo/.test(haystack)) {
-      const providerName = context.provider === 'openrouter'
-        ? 'OpenRouter'
-        : getOpencodeServiceDef(context.service).label;
-      kind = 'credits'; message = `Saldo, créditos ou assinatura do ${providerName} insuficientes`; providerFatal = true;
+    if (/subscription (?:is )?required|active [a-z ]*subscription/.test(haystack)) {
+      kind = 'credits'; message = `Assinatura do ${providerName} inativa para esta chave`; providerFatal = true;
+    } else if (status === 402 || /insufficient (?:balance|account funds|funds|credits?)|credits?error|billing|saldo/.test(haystack)) {
+      kind = 'credits'; message = `Saldo ou créditos do ${providerName} insuficientes`; providerFatal = true;
     } else if (status === 401 || status === 403 || /invalid api key|unauthori|forbidden/.test(haystack)) {
       kind = 'auth'; message = 'Chave da API inválida, expirada ou sem acesso'; providerFatal = true;
     } else if (status === 429) {
-      kind = 'rate_limit'; message = 'Limite temporário da API atingido';
+      // O limite de 5 h/semana/mês do Go também chega como 429; o detalhe diz qual.
+      kind = 'rate_limit'; message = `Limite temporário da API atingido${detail ? `: ${detail}` : ''}`;
     } else if (status >= 500) {
       kind = 'provider'; message = 'Provedor de IA temporariamente indisponível';
     } else if (status === 400) {
@@ -2118,11 +2123,47 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     return sanitizeApiDetail(err?.message || String(err));
   }
 
+  // ── Sessão OpenCode (x-opencode-session) ────────────────────────────
+  // Desde 06/09/2026 o Zen e o Go recusam chamadas sem um ID de sessão estável
+  // por conversa (HTTP 400 MissingSessionID): o gateway usa o ID para manter a
+  // conversa no mesmo provedor e reaproveitar o cache do prompt. Aqui a conversa
+  // é o período de estudo — Creator, Auditor e regenerações repetem o mesmo
+  // prompt de sistema, então dividir o ID barateia as chamadas seguintes.
+  // Depois de 30 min sem chamadas, o próximo pedido abre uma sessão nova.
+  const OPENCODE_SESSION_IDLE_MS = 30 * 60 * 1000;
+  let opencodeSession = null;
+
+  function getOpencodeSessionId() {
+    const now = Date.now();
+    if (!opencodeSession || now - opencodeSession.lastUsedAt > OPENCODE_SESSION_IDLE_MS) {
+      // O ID só roteia; se o Web Crypto faltar, Math.random basta e não derruba a IA.
+      const bytes = globalThis.crypto?.getRandomValues
+        ? globalThis.crypto.getRandomValues(new Uint8Array(16))
+        : Uint8Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+      opencodeSession = { id: `ses_${Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')}` };
+    }
+    opencodeSession.lastUsedAt = now;
+    return opencodeSession.id;
+  }
+
+  /** Headers do gateway OpenCode: a sessão é obrigatória, e o docs do Go pede
+   *  que o cliente se identifique com user agent próprio. */
+  function opencodeRequestHeaders() {
+    return {
+      'x-opencode-session': getOpencodeSessionId(),
+      'x-opencode-client': 'tec-to-anki',
+      'User-Agent': `tec-to-anki/${SCRIPT_VERSION}`,
+    };
+  }
+
   async function callOpenAICompatible(url, apiKey, body, extraHeaders = {}, context = {}) {
     const MAX_RETRIES = 3;
+    // Calculado uma vez: as retentativas continuam a mesma conversa.
+    const providerHeaders = context.provider === 'opencode' ? opencodeRequestHeaders() : {};
+    const sessionLog = providerHeaders['x-opencode-session'] ? ` · sessão ${providerHeaders['x-opencode-session'].slice(0, 12)}…` : '';
     let res;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      console.log(`🌐 OpenAI-compatible request → ${url} (tentativa ${attempt}/${MAX_RETRIES})`);
+      console.log(`🌐 OpenAI-compatible request → ${url} (tentativa ${attempt}/${MAX_RETRIES})${sessionLog}`);
       try {
         res = await gmFetch(url, {
           method: 'POST',
@@ -2130,6 +2171,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization': `Bearer ${apiKey}`,
+            ...providerHeaders,
             ...extraHeaders,
           },
           body: JSON.stringify(body),
