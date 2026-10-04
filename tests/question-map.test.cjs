@@ -186,6 +186,69 @@ test('question map opens from the toolbar and current checkbox persists the choi
   assert.equal(h.document.getElementById('tec-mark-current').checked, true);
 });
 
+test('More tools closes with Escape and outside interaction and shares space with the map', t => {
+  const h = harness(t);
+  h.run('injectToolbar');
+  const more = h.document.getElementById('tec-btn-more');
+  const menu = h.document.getElementById('tec-tools-menu');
+  const map = h.document.getElementById('tec-btn-map');
+  assert.ok(more);
+  assert.ok(menu.hidden);
+  assert.equal(more.getAttribute('aria-controls'), menu.id);
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+
+  more.click();
+  assert.equal(menu.hidden, false);
+  assert.equal(more.getAttribute('aria-expanded'), 'true');
+  const action = h.document.getElementById('tec-btn-save');
+  action.focus();
+  action.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.ok(menu.hidden);
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+  assert.equal(h.document.activeElement, more);
+
+  more.click();
+  const outside = h.document.createElement('button');
+  h.document.body.appendChild(outside);
+  outside.focus();
+  outside.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true }));
+  outside.click();
+  assert.ok(menu.hidden);
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+  assert.equal(h.document.activeElement, outside);
+
+  more.click();
+  map.click();
+  const panel = h.document.getElementById('tec-question-map');
+  assert.ok(menu.hidden);
+  assert.equal(panel.hidden, false);
+  assert.equal(map.getAttribute('aria-expanded'), 'true');
+  more.click();
+  assert.equal(menu.hidden, false);
+  assert.ok(panel.hidden);
+  assert.equal(map.getAttribute('aria-expanded'), 'false');
+});
+
+test('choosing a More tools action after toolbar reinsertion invokes it once and closes the disclosure', t => {
+  const h = harness(t);
+  let invoked = 0;
+  h.override('processBatchQuestions', async () => { invoked++; });
+  h.run('injectToolbar');
+  h.document.getElementById('tec-anki-toolbar').remove();
+  h.run('injectToolbar');
+  const more = h.document.getElementById('tec-btn-more');
+  const menu = h.document.getElementById('tec-tools-menu');
+  more.click();
+  assert.equal(menu.hidden, false);
+  const action = h.document.getElementById('tec-btn-batch');
+  action.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true }));
+  assert.equal(menu.hidden, false, 'reinserted toolbar controls must not count as outside interaction');
+  action.click();
+  assert.equal(invoked, 1);
+  assert.ok(menu.hidden);
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+});
+
 test('automatic click invokes a delegated handler once even with Angular and jQuery available', t => {
   const h = harness(t);
   const button = h.document.createElement('button');

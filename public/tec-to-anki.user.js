@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.18.0
+// @version      1.18.1
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.18.0';
+  const SCRIPT_VERSION = '1.18.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -89,59 +89,86 @@
   GM_addStyle(`
     /* \u2500\u2500 Floating Toolbar \u2500\u2500 */
     #tec-anki-toolbar {
-      position: fixed; bottom: 24px; right: 24px; z-index: 99999;
-      display: flex; align-items: center; gap: 6px;
-      background: #1a1a2e; border-radius: 14px; padding: 6px 10px;
-      box-shadow: 0 4px 20px rgba(0,0,0,.35); font-family: system-ui, sans-serif;
-      transition: opacity .2s; user-select: none;
+      position: fixed; bottom: 16px; right: 16px; z-index: 99999;
+      display: flex; align-items: center; gap: 4px; padding: 5px;
+      color: #344054; background: #fff; border: 1px solid #e4e7ec; border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(16,24,40,.12), 0 1px 3px rgba(16,24,40,.04);
+      font: 500 12px/1.4 system-ui, -apple-system, sans-serif; user-select: none;
     }
-    #tec-anki-toolbar button {
-      border: none; border-radius: 10px; padding: 8px 14px; cursor: pointer;
-      font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 5px;
-      transition: background .15s, transform .1s;
+    #tec-anki-toolbar *, #tec-question-map * { box-sizing: border-box; }
+    #tec-anki-toolbar svg, #tec-question-map svg { width: 16px; height: 16px; flex: none; display: block; }
+    #tec-anki-toolbar button, #tec-mark-label {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      min-height: 34px; padding: 7px 10px; border: 0; border-radius: 7px;
+      background: transparent; color: #475467; font: inherit; cursor: pointer;
+      transition: background .15s, color .15s;
     }
-    #tec-anki-toolbar button:active { transform: scale(.96); }
-    .tec-btn-primary { background: #4361ee; color: #fff; }
-    .tec-btn-primary:hover { background: #3a56d4; }
-    .tec-btn-batch { background: #f72585; color: #fff; }
-    .tec-btn-batch:hover { background: #d61f6f; }
-    .tec-btn-icon { background: transparent !important; color: #aaa; font-size: 18px !important; padding: 8px !important; }
-    .tec-btn-icon:hover { color: #fff; }
-    #tec-btn-map { background: #e9edf8; color: #273456; }
-    #tec-mark-label { display: flex; align-items: center; gap: 5px; color: #fff; font-size: 12px; padding: 0 5px; cursor: pointer; }
-    #tec-mark-current { accent-color: #4361ee; width: 16px; height: 16px; }
+    #tec-anki-toolbar button:hover, #tec-mark-label:hover { background: #f2f4f7; color: #182230; }
+    #tec-anki-toolbar button:focus-visible, #tec-question-map button:focus-visible,
+    #tec-mark-label:focus-within, .tec-map-cell:focus-within { outline: 2px solid #6172f3; outline-offset: 2px; }
+    #tec-anki-toolbar button:disabled { opacity: .5; cursor: default; }
+    #tec-mark-label { position: relative; min-width: 124px; justify-content: flex-start; }
+    #tec-mark-label.marked { background: #eef2ff; color: #3538cd; }
+    #tec-mark-label.marked svg { fill: #e0e7ff; }
+    #tec-mark-label.disabled { opacity: .5; cursor: default; }
+    #tec-mark-current, .tec-map-cell input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+    #tec-btn-map[aria-expanded="true"], #tec-btn-more[aria-expanded="true"] { background: #f2f4f7; color: #182230; }
+    #tec-map-count { min-width: 18px; padding: 1px 5px; border-radius: 5px; background: #eef2ff; color: #3538cd; font-size: 10px; font-weight: 650; }
+    .tec-toolbar-divider { width: 1px; height: 18px; margin: 0 3px; background: #e4e7ec; }
+    #tec-anki-toolbar #tec-btn-more { width: 34px; padding: 7px; }
+    #tec-tools-menu {
+      position: absolute; bottom: calc(100% + 9px); right: 0; width: 248px;
+      max-width: calc(100vw - 24px); padding: 5px; border: 1px solid #e4e7ec;
+      border-radius: 12px; background: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.14);
+    }
+    #tec-tools-menu[hidden], #tec-question-map[hidden], #tec-map-pager[hidden], #tec-map-count[hidden], #tec-map-stop[hidden] { display: none !important; }
+    #tec-tools-menu .tec-menu-heading { padding: 7px 9px 5px; color: #98a2b3; font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    #tec-anki-toolbar #tec-tools-menu button { width: 100%; min-height: 35px; justify-content: flex-start; padding: 8px 9px; gap: 10px; text-align: left; }
+    #tec-tools-menu .tec-menu-divider { height: 1px; margin: 5px 8px; background: #eaecf0; }
+    .tec-menu-status { display: flex; gap: 7px; align-items: center; margin: 4px 8px 3px; padding-top: 8px; border-top: 1px solid #eaecf0; color: #667085; font-size: 10px; }
+    .tec-status-dot { width: 6px; height: 6px; border-radius: 50%; background: #98a2b3; flex: none; }
+    .tec-status-dot.green { background: #12b76a; }
+    .tec-status-dot.yellow { background: #f79009; }
+    .tec-status-dot.red { background: #f04438; }
     #tec-question-map {
-      position: fixed; bottom: 84px; right: 24px; z-index: 99999;
-      width: min(370px, calc(100vw - 32px)); box-sizing: border-box;
-      background: #fff; color: #273456; border: 1px solid #dbe1ec; border-radius: 14px;
-      box-shadow: 0 8px 30px rgba(20,30,55,.2); font: 13px/1.5 system-ui, sans-serif;
+      position: fixed; bottom: 72px; right: 16px; z-index: 99999; display: flex; flex-direction: column;
+      width: min(310px, calc(100vw - 24px)); max-height: calc(100vh - 100px); overflow: hidden;
+      background: #fff; color: #344054; border: 1px solid #e4e7ec; border-radius: 12px;
+      box-shadow: 0 8px 30px rgba(16,24,40,.14); font: 12px/1.5 system-ui, -apple-system, sans-serif;
     }
-    #tec-question-map[hidden] { display: none; }
-    #tec-question-map header { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid #edf0f5; }
-    #tec-question-map header strong { flex: 1; }
-    #tec-question-map button { cursor: pointer; border: 1px solid #dbe1ec; background: #f7f9fc; color: #273456; border-radius: 7px; padding: 6px 10px; font: inherit; }
-    #tec-question-map button:disabled { cursor: default; opacity: .5; }
-    #tec-map-body { padding: 12px 14px; }
-    #tec-map-summary, #tec-map-hint { margin: 0 0 10px; font-size: 12px; color: #68758d; }
-    #tec-map-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; max-height: 34vh; overflow-y: auto; padding: 3px; }
-    .tec-map-cell { position: relative; display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 35px; border: 1px solid #dbe1ec; border-radius: 7px; cursor: pointer; font-weight: 600; }
-    .tec-map-cell[data-result="ok"] { border-bottom: 3px solid #18a47a; }
-    .tec-map-cell[data-result="err"] { border-bottom: 3px solid #e65067; }
-    .tec-map-cell.selected { background: #eaf0ff; border-color: #4361ee; }
-    .tec-map-cell.current { outline: 2px solid #273456; outline-offset: 1px; }
-    .tec-map-cell input { accent-color: #4361ee; width: 14px; height: 14px; margin: 0; }
-    #tec-map-pager { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
-    #tec-question-map footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid #edf0f5; }
-    #tec-question-map #tec-map-generate { background: #4361ee; color: #fff; border-color: #4361ee; flex: 1; }
-    #tec-question-map #tec-map-stop { color: #b62c44; }
-    @media (max-width: 640px) { #tec-anki-toolbar { right: 8px; bottom: 8px; max-width: calc(100vw - 16px); flex-wrap: wrap; } #tec-anki-toolbar button { padding: 7px 9px; } #tec-question-map { right: 16px; bottom: 112px; } }
-    .tec-status-dot {
-      width: 10px; height: 10px; border-radius: 50%; margin-left: 4px;
-      background: #888; transition: background .3s;
-    }
-    .tec-status-dot.green { background: #06d6a0; }
-    .tec-status-dot.yellow { background: #ffd166; }
-    .tec-status-dot.red { background: #ef476f; }
+    #tec-question-map header { display: flex; align-items: flex-start; gap: 8px; padding: 12px 14px 10px; border-bottom: 1px solid #f2f4f7; }
+    #tec-question-map header > div { flex: 1; }
+    #tec-question-map header strong { display: block; color: #182230; font-size: 13px; font-weight: 650; }
+    #tec-map-meta { display: block; margin-top: 2px; color: #98a2b3; font-size: 10px; }
+    #tec-question-map button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; border: 0; background: #f9fafb; color: #667085; border-radius: 7px; padding: 7px 10px; font: inherit; }
+    #tec-question-map button:hover { background: #f2f4f7; color: #182230; }
+    #tec-question-map button:disabled { cursor: default; opacity: .4; }
+    #tec-question-map #tec-map-close { background: transparent; width: 26px; height: 26px; padding: 5px; }
+    #tec-map-body { padding: 10px 12px 12px; overflow-y: auto; }
+    #tec-map-summary { margin: 0 0 9px; color: #667085; font-size: 11px; }
+    #tec-map-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 2px; max-height: 34vh; overflow-y: auto; }
+    .tec-map-cell { position: relative; display: flex; align-items: center; justify-content: center; height: 33px; border: 1px solid #eaecf0; border-radius: 6px; background: #fff; color: #667085; cursor: pointer; font-size: 12px; font-weight: 550; }
+    .tec-map-cell:hover { background: #f9fafb; border-color: #d0d5dd; }
+    .tec-map-cell.selected { background: #eef2ff; border-color: #a4bcfd; color: #3538cd; }
+    .tec-map-cell.current { outline: 1px solid #475467; outline-offset: 1px; }
+    .tec-map-cell[data-result="ok"]::after, .tec-map-cell[data-result="err"]::after { content: ''; position: absolute; bottom: 3px; right: 4px; width: 4px; height: 4px; border-radius: 50%; }
+    .tec-map-cell[data-result="ok"]::after { background: #12b76a; }
+    .tec-map-cell[data-result="err"]::after { background: #f04438; }
+    .tec-map-check { display: none; position: absolute; top: 2px; right: 2px; color: #6172f3; }
+    .tec-map-cell.selected .tec-map-check { display: block; }
+    #tec-question-map .tec-map-check svg { width: 9px; height: 9px; }
+    #tec-map-legend { display: flex; align-items: center; gap: 12px; margin-top: 10px; color: #98a2b3; font-size: 9px; }
+    #tec-map-legend span { display: inline-flex; align-items: center; gap: 4px; }
+    #tec-map-legend i { width: 4px; height: 4px; border-radius: 50%; background: #12b76a; }
+    #tec-map-legend .tec-legend-error { background: #f04438; }
+    #tec-map-legend .tec-legend-current { width: 7px; height: 7px; border: 1px solid #475467; border-radius: 2px; background: transparent; }
+    #tec-map-pager { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 10px; color: #98a2b3; }
+    #tec-map-pager button { padding: 5px; }
+    #tec-question-map footer { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid #f2f4f7; }
+    #tec-question-map #tec-map-generate { min-height: 33px; background: #4f46e5; color: #fff; flex: 1; font-size: 11px; font-weight: 550; }
+    #tec-question-map #tec-map-generate:hover { background: #4338ca; }
+    #tec-question-map #tec-map-stop { color: #b42318; }
+    @media (max-width: 480px) { #tec-anki-toolbar { right: 12px; bottom: 12px; } #tec-question-map { right: 12px; bottom: 66px; } }
 
     /* \u2500\u2500 Toast \u2500\u2500 */
     #tec-toast-container {
@@ -5400,10 +5427,29 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
   // A seleção é independente do resultado: acertar não impede pedir um card.
   // Só lê o estado já carregado. Abrir/marcar o mapa não navega nem chama IA.
+  const uiSvg = body => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const UI_ICON = {
+    bookmark: uiSvg('<path d="M6 4h12v17l-6-4-6 4z"/>'),
+    grid: uiSvg('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>'),
+    more: uiSvg('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'),
+    cards: uiSvg('<rect x="7" y="7" width="13" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h2"/>'),
+    errors: uiSvg('<circle cx="12" cy="12" r="8"/><path d="M12 8v5m0 3h.01"/>'),
+    thought: uiSvg('<path d="M20 11a7 7 0 0 1-7 7H8l-5 3 1-6a7 7 0 0 1-1-4 8 8 0 0 1 17 0z"/><path d="M7 10h9m-9 4h5"/>'),
+    target: uiSvg('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="m12 12 8-8"/>'),
+    repair: uiSvg('<path d="M20 7a6 6 0 0 1-7 7l-7 7-3-3 7-7a6 6 0 0 1 7-7l-4 4 3 3z"/>'),
+    settings: uiSvg('<path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>'),
+    check: uiSvg('<path d="m5 12 4 4L19 6"/>'),
+    close: uiSvg('<path d="m6 6 12 12M6 18 18 6"/>'),
+    left: uiSvg('<path d="m14 6-6 6 6 6"/>'),
+    right: uiSvg('<path d="m10 6 6 6-6 6"/>'),
+  };
+  function toolbarButtonContent(icon, label) { return `${UI_ICON[icon]}<span>${label}</span>`; }
+
   const QUESTION_MAP_PREFIX = 'tecQuestionMap:v1:';
   let questionMapOpen = false;
   let questionMapPage = 0;
   let questionMapSignature = '';
+  let toolsDismissBound = false;
   let batchBusy = false; // inclui os modais de seleção e revisão, além da navegação
 
   function getQuestionMapContext() {
@@ -5504,10 +5550,23 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     const state = loadQuestionMap(context);
     const marked = getMarkedQuestions(context);
     const current = state.entries[context.currentNumber];
+    for (const id of ['tec-btn-save', 'tec-btn-batch']) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = batchBusy || isProcessing;
+    }
     const mark = document.getElementById('tec-mark-current');
     if (mark) { mark.checked = !!current?.selected; mark.disabled = !context.key || !context.currentId || !context.currentNumber || batchBusy || isProcessing; }
+    const markLabel = document.getElementById('tec-mark-label');
+    markLabel?.classList.toggle('marked', !!mark?.checked);
+    markLabel?.classList.toggle('disabled', !!mark?.disabled);
+    const markText = document.getElementById('tec-mark-text');
+    if (markText) markText.textContent = mark?.checked ? 'Marcada' : 'Marcar card';
     const mapButton = document.getElementById('tec-btn-map');
-    if (mapButton) { mapButton.textContent = `Mapa${marked.length ? ` (${marked.length})` : ''}`; mapButton.setAttribute('aria-expanded', String(questionMapOpen)); }
+    if (mapButton) {
+      mapButton.setAttribute('aria-expanded', String(questionMapOpen));
+      const count = mapButton.querySelector('#tec-map-count');
+      if (count) { count.textContent = marked.length; count.hidden = !marked.length; }
+    }
     const panel = document.getElementById('tec-question-map');
     if (!panel) return;
     panel.hidden = !questionMapOpen;
@@ -5518,36 +5577,42 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     if (signature === questionMapSignature) return;
     questionMapSignature = signature;
     panel.querySelector('#tec-map-summary').textContent = context.key
-      ? `${marked.length} marcada(s) · ${state.total || '?'} questões · atual: ${context.currentNumber || '?'}`
-      : 'Abra um caderno ou uma questão para selecionar cards.';
-    panel.querySelector('#tec-map-hint').textContent = 'Marque para gerar depois, mesmo se acertou. Borda verde: acerto; vermelha: erro; sem cor: resultado ainda não lido.';
+      ? marked.length ? `${marked.length} selecionada${marked.length === 1 ? '' : 's'}` : 'Selecione as questões para revisar'
+      : 'Abra um caderno para selecionar questões';
+    panel.querySelector('#tec-map-meta').textContent = `${state.total || '?'} questões · atual ${context.currentNumber || '?'}`;
     const start = questionMapPage * 100 + 1;
     const end = Math.min(state.total, start + 99);
+    const focusedNumber = panel.contains(document.activeElement) ? document.activeElement?.dataset.number : null;
     panel.querySelector('#tec-map-grid').innerHTML = Array.from({ length: Math.max(0, end - start + 1) }, (_, i) => {
       const number = start + i;
       const entry = state.entries[number] || {};
-      const label = `Questão ${number}${entry.id ? `, #${entry.id}` : ''}: ${entry.selected ? 'marcada para card' : 'marcar para card'}`;
+      const result = entry.result === 'ok' ? ', acerto' : entry.result === 'err' ? ', erro' : '';
+      const label = `Questão ${number}${entry.id ? `, #${entry.id}` : ''}${result}: ${entry.selected ? 'marcada para card' : 'marcar para card'}`;
       return `<label class="tec-map-cell${entry.selected ? ' selected' : ''}${number === context.currentNumber ? ' current' : ''}" data-result="${escapeHtml(entry.result || 'pending')}" title="${escapeHtml(label)}">
-        <input type="checkbox" data-number="${number}" aria-label="${escapeHtml(label)}" ${entry.selected ? 'checked' : ''} ${batchBusy || isProcessing ? 'disabled' : ''}><span>${number}</span></label>`;
+        <input type="checkbox" data-number="${number}" aria-label="${escapeHtml(label)}" ${entry.selected ? 'checked' : ''} ${batchBusy || isProcessing ? 'disabled' : ''}><span>${number}</span><span class="tec-map-check">${UI_ICON.check}</span></label>`;
     }).join('');
+    if (focusedNumber) panel.querySelector(`input[data-number="${Number(focusedNumber)}"]`)?.focus({ preventScroll: true });
+    panel.querySelector('#tec-map-pager').hidden = pages <= 1;
     panel.querySelector('#tec-map-page-label').textContent = state.total ? `${start}–${end}` : '—';
     panel.querySelector('#tec-map-prev').disabled = questionMapPage === 0;
     panel.querySelector('#tec-map-next').disabled = questionMapPage >= pages - 1;
     const generate = panel.querySelector('#tec-map-generate');
-    generate.textContent = batchBusy ? 'Processando…' : `Gerar marcadas (${marked.length})`;
+    generate.innerHTML = batchBusy ? '<span class="tec-spinner"></span><span>Processando…</span>' : toolbarButtonContent('cards', 'Gerar cards');
     generate.disabled = !marked.length || batchBusy || isProcessing;
     panel.querySelector('#tec-map-stop').hidden = !batchRunning;
   }
 
   function toggleQuestionMap() {
+    setToolsMenuOpen(false);
     let panel = document.getElementById('tec-question-map');
     if (!panel) {
       panel = document.createElement('section');
       panel.id = 'tec-question-map';
       panel.setAttribute('aria-label', 'Mapa de questões para cards');
-      panel.innerHTML = `<header><strong>Questões para cards</strong><button id="tec-map-close" aria-label="Fechar mapa">×</button></header>
-        <div id="tec-map-body"><p id="tec-map-summary" aria-live="polite"></p><p id="tec-map-hint"></p><div id="tec-map-grid"></div>
-        <div id="tec-map-pager"><button id="tec-map-prev" aria-label="Página anterior do mapa">←</button><span id="tec-map-page-label"></span><button id="tec-map-next" aria-label="Próxima página do mapa">→</button></div></div>
+      panel.innerHTML = `<header><div><strong>Cards do caderno</strong><span id="tec-map-meta"></span></div><button id="tec-map-close" aria-label="Fechar mapa">${UI_ICON.close}</button></header>
+        <div id="tec-map-body"><p id="tec-map-summary" aria-live="polite" title="Selecione qualquer questão, inclusive acertos, para gerar cards depois."></p><div id="tec-map-grid"></div>
+        <div id="tec-map-legend" aria-label="Legenda"><span><i></i>Acerto</span><span><i class="tec-legend-error"></i>Erro</span><span><i class="tec-legend-current"></i>Atual</span></div>
+        <div id="tec-map-pager"><button id="tec-map-prev" aria-label="Página anterior do mapa">${UI_ICON.left}</button><span id="tec-map-page-label"></span><button id="tec-map-next" aria-label="Próxima página do mapa">${UI_ICON.right}</button></div></div>
         <footer><button id="tec-map-generate">Gerar marcadas</button><button id="tec-map-stop" hidden>Parar</button></footer>`;
       document.body.appendChild(panel);
       panel.querySelector('#tec-map-close').addEventListener('click', () => { questionMapOpen = false; renderQuestionMap(); document.getElementById('tec-btn-map')?.focus(); });
@@ -5569,25 +5634,38 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     syncQuestionMap();
   }
 
+  function setToolsMenuOpen(open, returnFocus = false) {
+    const menu = document.getElementById('tec-tools-menu');
+    const button = document.getElementById('tec-btn-more');
+    if (!menu || !button) return;
+    menu.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    if (open) { questionMapOpen = false; renderQuestionMap(); }
+    if (returnFocus) button.focus();
+  }
+
   function injectToolbar() {
     if (document.getElementById('tec-anki-toolbar')) return;
 
     const toolbar = document.createElement('div');
     toolbar.id = 'tec-anki-toolbar';
     toolbar.innerHTML = `
-      <button class="tec-btn-primary" id="tec-btn-save" title="Salvar quest\u00E3o atual (Shift+Enter)">
-        \uD83D\uDCCB Salvar
-      </button>
-      <button class="tec-btn-batch" id="tec-btn-batch" title="Processar todos os erros do caderno">
-        \uD83D\uDCCB Erros
-      </button>
-      <label id="tec-mark-label" title="Marcar esta questão para gerar card depois, mesmo se acertou"><input type="checkbox" id="tec-mark-current">Card</label>
-      <button id="tec-btn-map" aria-controls="tec-question-map" aria-expanded="false" title="Abrir mapa e gerar questões marcadas">Mapa</button>
-      <button class="tec-btn-icon" id="tec-btn-thought" title="Anotar/editar meu racioc\u00EDnio nesta quest\u00E3o">\uD83D\uDCAD</button>
-      <button class="tec-btn-icon" id="tec-btn-vespera" title="Modo v\u00E9spera \u2014 drill dos cards mais errados">\uD83C\uDFAF</button>
-      <button class="tec-btn-icon" id="tec-btn-leech" title="Cards problem\u00E1ticos (leeches) \u2014 reformular com IA">\uD83E\uDE78</button>
-      <button class="tec-btn-icon" id="tec-btn-settings" title="Configura\u00E7\u00F5es">\u2699\uFE0F</button>
-      <div class="tec-status-dot" id="tec-status-dot" title="Status das conex\u00F5es"></div>
+      <label id="tec-mark-label" title="Marcar esta questão para gerar card depois, mesmo se acertou"><input type="checkbox" id="tec-mark-current" aria-label="Marcar questão atual para card">${UI_ICON.bookmark}<span id="tec-mark-text">Marcar card</span></label>
+      <button id="tec-btn-map" aria-controls="tec-question-map" aria-expanded="false" title="Mapa de questões para cards">${UI_ICON.grid}<span>Mapa</span><span id="tec-map-count" hidden></span></button>
+      <span class="tec-toolbar-divider" aria-hidden="true"></span>
+      <button id="tec-btn-more" aria-controls="tec-tools-menu" aria-expanded="false" aria-label="Mais ferramentas" title="Mais ferramentas">${UI_ICON.more}</button>
+      <div id="tec-tools-menu" aria-label="Ferramentas de estudo" hidden>
+        <div class="tec-menu-heading">Questões</div>
+        <button id="tec-btn-save" title="Gerar questão atual (Shift+Enter)">${toolbarButtonContent('cards', 'Gerar questão atual')}</button>
+        <button id="tec-btn-batch">${toolbarButtonContent('errors', 'Processar erros do caderno')}</button>
+        <button id="tec-btn-thought">${toolbarButtonContent('thought', 'Anotar raciocínio')}</button>
+        <div class="tec-menu-divider"></div>
+        <button id="tec-btn-vespera">${toolbarButtonContent('target', 'Revisão de véspera')}</button>
+        <button id="tec-btn-leech">${toolbarButtonContent('repair', 'Reformular cards difíceis')}</button>
+        <div class="tec-menu-divider"></div>
+        <button id="tec-btn-settings">${toolbarButtonContent('settings', 'Configurações')}</button>
+        <div class="tec-menu-status"><span class="tec-status-dot" id="tec-status-dot"></span><span id="tec-connection-label">Verificando conexões…</span></div>
+      </div>
     `;
 
     document.body.appendChild(toolbar);
@@ -5595,6 +5673,21 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     document.getElementById('tec-btn-save').addEventListener('click', () => processCurrentQuestion());
     document.getElementById('tec-btn-batch').addEventListener('click', () => processBatchQuestions());
     document.getElementById('tec-btn-map').addEventListener('click', toggleQuestionMap);
+    document.getElementById('tec-btn-more').addEventListener('click', () => setToolsMenuOpen(document.getElementById('tec-tools-menu').hidden));
+    toolbar.querySelector('#tec-tools-menu').addEventListener('click', event => {
+      if (event.target.closest('button')) setToolsMenuOpen(false);
+    });
+    if (!toolsDismissBound) {
+      document.addEventListener('pointerdown', event => {
+        if (!document.getElementById('tec-anki-toolbar')?.contains(event.target)) setToolsMenuOpen(false);
+      });
+      toolsDismissBound = true;
+    }
+    toolbar.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !toolbar.querySelector('#tec-tools-menu').hidden) {
+        event.preventDefault(); event.stopPropagation(); setToolsMenuOpen(false, true);
+      }
+    });
     document.getElementById('tec-mark-current').addEventListener('change', event => {
       if (batchBusy || isProcessing) return;
       const context = getQuestionMapContext();
@@ -5620,7 +5713,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       document.removeEventListener('mouseup', onDragEnd);
     }
     toolbar.addEventListener('mousedown', (e) => {
-      if (e.target.closest('button, label, input')) return;
+      if (e.target.closest('button, label, input, #tec-tools-menu')) return;
       startX = e.clientX; startY = e.clientY;
       const rect = toolbar.getBoundingClientRect();
       origX = rect.left; origY = rect.top;
@@ -5641,8 +5734,12 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       if (anki && obs) { statusDot.classList.add('green'); statusDot.title = 'Anki \u2705 | Obsidian \u2705'; }
       else if (anki || obs) { statusDot.classList.add('yellow'); statusDot.title = `Anki ${anki ? '\u2705' : '\u274C'} | Obsidian ${obs ? '\u2705' : '\u274C'}`; }
       else { statusDot.classList.add('red'); statusDot.title = 'Anki \u274C | Obsidian \u274C'; }
+      const label = document.getElementById('tec-connection-label');
+      if (label) label.textContent = anki && obs ? 'Anki e Obsidian conectados' : anki ? 'Anki conectado · Obsidian offline' : obs ? 'Obsidian conectado · Anki offline' : 'Anki e Obsidian offline';
     } catch {
       statusDot.className = 'tec-status-dot red';
+      const label = document.getElementById('tec-connection-label');
+      if (label) label.textContent = 'Conexões indisponíveis';
     }
   }
 
@@ -5789,7 +5886,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       showToast(`Erro: ${err.message}`, 'error', 8000);
     } finally {
       if (loadingToast) loadingToast.remove();
-      if (saveBtn) saveBtn.innerHTML = '\uD83D\uDCCB Salvar';
+      if (saveBtn) saveBtn.innerHTML = toolbarButtonContent('cards', 'Gerar questão atual');
       isProcessing = false;
       renderQuestionMap();
     }
@@ -5956,7 +6053,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       batchBusy = false;
       batchRunning = false;
       const button = document.getElementById('tec-btn-batch');
-      if (button) button.textContent = '📋 Erros';
+      if (button) button.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       syncQuestionMap();
     }
   }
@@ -6192,7 +6289,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     if (!batchRunning) { showToast('Coleta interrompida.', 'info'); return; }
     if (collected.length === 0) {
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      if (batchBtn) batchBtn.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       showToast('Nenhuma quest\u00E3o errada encontrada a partir da quest\u00E3o atual.', 'warning', 5000);
       return;
     }
@@ -6213,7 +6310,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     const selected = await showBatchSelectionModal(itemsWithDups, options);
     if (!selected || selected.length === 0) {
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      if (batchBtn) batchBtn.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       showToast(selected ? 'Nenhuma quest\u00E3o selecionada \u2014 batch encerrado.' : 'Batch cancelado.', 'info', 4000);
       return;
     }
@@ -6293,7 +6390,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
     if (decision !== 'save' || batchResults.length === 0) {
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      if (batchBtn) batchBtn.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       showToast(`Batch cancelado \u2014 nada foi salvo no Anki/Obsidian${generated ? ` (${generated} quest\u00E3o(\u00F5es) geradas foram descartadas)` : ''}.`, 'info', 6000);
       return;
     }
@@ -6325,7 +6422,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     } finally {
       saveToast.remove();
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      if (batchBtn) batchBtn.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       // Persistent toast \u2014 stays until user clicks \u2715
       const type = savedOk > 0 ? 'success' : 'warning';
       const icons = { success: '\u2705', warning: '\u26A0\uFE0F' };
@@ -6588,9 +6685,6 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
     // Log init
     console.log(`\uD83D\uDE80 TEC\u2192Anki+Obsidian v${SCRIPT_VERSION} carregado em:`, window.location.href);
-
-    // Show confirmation toast on load
-    showToast(`TEC\u2192Anki+Obsidian <b>v${SCRIPT_VERSION}</b> carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB`, 'success', 4000);
 
     // Warn when the installed copy lags the published one (daily check)
     checkScriptFreshness();

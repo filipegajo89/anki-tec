@@ -151,8 +151,8 @@ TEC/{Matéria}/{Subtópico}/Q{id}.md
 
 ### 5.1 Configurar o Userscript
 
-1. Você verá a toolbar flutuante no canto inferior direito: `📋 Salvar | 📋📋 Erros | ⚙️ | 🟢`
-2. Clique no **⚙️** para abrir as configurações
+1. Você verá a barra compacta no canto inferior direito: **Marcar card · Mapa · Mais (⋯)**.
+2. Abra **Mais (⋯) → Configurações**.
 3. Preencha:
    - **Serviço OpenCode:** escolha `Zen` (créditos pay-as-you-go) ou `Go` (assinatura). O Zen continua selecionado por padrão; cada serviço sincroniza seu catálogo público sem misturar credenciais
    - **OpenCode API Key:** cole a chave do serviço escolhido; as credenciais de Zen e Go ficam salvas separadamente
@@ -179,7 +179,7 @@ O ponto colorido na toolbar indica:
 
 1. Responda uma questão no TEC
 2. Abra o **Comentário do Professor** (clique em "Comentário em Texto" ou tecla `O`)
-3. Pressione **`Shift+Enter`** ou clique no botão **"📋 Salvar"**
+3. Pressione **`Shift+Enter`** ou abra **Mais (⋯) → Gerar questão atual**.
 4. O script irá:
    - 🔍 Extrair dados da questão do DOM
    - 🧠 Gerar até 2 flashcards com GPT 5.6 Luna em `xhigh`
@@ -191,7 +191,7 @@ O ponto colorido na toolbar indica:
 ### Processar todas as erradas (batch)
 
 1. Esteja em um caderno de questões
-2. Clique no botão **"📋📋 Erros"**
+2. Abra **Mais (⋯) → Processar erros do caderno**.
 3. Confirme o processamento
 4. O script percorre automaticamente todas as questões erradas
 5. Barra de progresso mostra o andamento
@@ -199,17 +199,19 @@ O ponto colorido na toolbar indica:
 
 ### Salvar questões certas
 
-O botão funciona em **qualquer questão respondida**, não apenas erradas. Para questões certas, a IA gera cards de reforço em vez de correção de erro.
+**Gerar questão atual** funciona em **qualquer questão respondida**, não apenas erradas. Para questões certas, a IA gera cards de reforço em vez de correção de erro.
 
 ### Escolher cards enquanto resolve o caderno (v1.18.0)
 
-1. Marque **Card**, na barra inferior, quando quiser revisar a questão depois. Pode marcar antes de responder ou após acertar.
-2. Clique em **Mapa** para abrir o painel recolhível com os números das questões do caderno. Cada caixa marca ou desmarca uma questão; a atual tem contorno escuro. Verde indica um acerto já lido e vermelho, um erro. Questões ainda não visitadas ficam sem cor.
+1. Clique em **Marcar card**, na barra inferior, quando quiser revisar a questão depois. Pode marcar antes de responder ou após acertar. O controle passa a mostrar **Marcada**; clique novamente para desmarcar.
+2. Clique em **Mapa** para abrir o painel recolhível com os números das questões do caderno. Clique no número para marcar ou desmarcar; uma seleção fica azul e recebe um pequeno check. A questão atual tem contorno escuro. Pontos verdes indicam acertos já lidos e vermelhos, erros. Questões ainda não visitadas ficam sem ponto. Cadernos maiores têm páginas de 100 questões.
 3. As escolhas ficam salvas neste navegador, separadas por caderno, inclusive após recarregar a página. Abrir o mapa ou marcar uma caixa não inicia a geração.
-4. Clique em **Gerar marcadas** quando terminar. O script percorre o caderno, coleta apenas as escolhidas e volta à posição inicial. Confira a seleção e o raciocínio, gere com o Creator + Auditor e revise os cards antes de salvar.
+4. Clique em **Gerar cards** quando terminar. O script percorre o caderno, coleta apenas as escolhidas e volta à posição inicial. Confira a seleção e o raciocínio, gere com o Creator + Auditor e revise os cards antes de salvar.
 5. A marcação é removida quando os cards são salvos nos destinos habilitados. Questões com dados/gabarito indisponíveis, geração cancelada, duplicatas recusadas ou falha de salvamento continuam marcadas. **Parar** interrompe as ações automáticas na posição atual.
 
-O botão **Erros** continua oferecendo a coleta de questões erradas. A seleção manual não muda um acerto para erro nem altera respostas no TEC. Quando uma questão já conhecida muda de posição no caderno, sua seleção acompanha o ID; posições ainda não visitadas são vinculadas ao ID na primeira coleta.
+**Mais (⋯) → Processar erros do caderno** continua oferecendo a coleta de questões erradas. A seleção manual não muda um acerto para erro nem altera respostas no TEC. Quando uma questão já conhecida muda de posição no caderno, sua seleção acompanha o ID; posições ainda não visitadas são vinculadas ao ID na primeira coleta.
+
+Na v1.18.1, a barra reúne somente seleção, mapa e o menu **Mais**. Geração individual, erros, raciocínio, revisão de véspera, reformulação e configurações ficam nesse menu, com ícones vetoriais e status das conexões. O mapa usa uma legenda curta e mostra navegação de páginas somente quando necessária. Feche os painéis pelo botão, por Escape ou, no menu Mais, clicando fora.
 
 ### Cadência das ações automáticas
 
