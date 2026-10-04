@@ -213,9 +213,9 @@ O ponto colorido na toolbar indica:
 
 Na v1.18.1, a barra reúne somente seleção, mapa e o menu **Mais**. Geração individual, erros, raciocínio, revisão de véspera, reformulação e configurações ficam nesse menu, com ícones vetoriais e status das conexões. O mapa usa uma legenda curta e mostra navegação de páginas somente quando necessária. Feche os painéis pelo botão, por Escape ou, no menu Mais, clicando fora.
 
-Na v1.19.0, a coleta das marcadas usa **Acessar questão pelo número**, do próprio TEC, para saltar somente às escolhidas e voltar à posição inicial. Se esse controle estiver indisponível, percorre por setas somente a distância necessária entre os alvos. Exemplo: começar na 5 com 8 e 17 marcadas resulta em **5 → 8 → 17 → 5**, sem passar pela questão 1. A posição e o ID são conferidos após cada salto; uma falha ou divergência mantém as marcações e interrompe a geração. **Parar** continua interrompendo sem navegar de volta.
+Na v1.19.1, a coleta das marcadas usa **Acessar questão pelo número**, do próprio TEC, para saltar somente às escolhidas e voltar à posição inicial. Se esse controle estiver indisponível, percorre por setas somente a distância necessária entre os alvos. Exemplo: começar na 5 com 8 e 17 marcadas resulta em **5 → 8 → 17 → 5**, sem passar pela questão 1. A posição e o ID são conferidos após cada salto; uma falha ou divergência mantém as marcações e interrompe a geração. **Parar** continua interrompendo sem navegar de volta.
 
-### Exportar as questões para planilha (v1.19.0)
+### Exportar as questões para planilha (v1.19.1)
 
 1. Abra **Mais (⋯) → Exportar para planilha**.
 2. Escolha **questão atual**, **marcadas** ou **caderno inteiro**. A seleção para exportar não é desmarcada.
@@ -225,7 +225,7 @@ Na v1.19.0, a coleta das marcadas usa **Acessar questão pelo número**, do pró
 
 A exportação consulta os dados equivalentes aos painéis **O**, **H** e **F** na sessão autenticada do TEC, sem movimentar a tela, responder questões, chamar IA, gerar cards ou enviar para Anki/Obsidian. Os pedidos são sequenciais, com pausas entre consultas/questões e entre lotes. Limites do TEC e sessão expirada pausam a coleta. Falhas ou conteúdo não confirmado aparecem nas colunas **Status** e **Observações**, em vez de serem tratados como conteúdo vazio confirmado. Um gabarito ausente permanece vazio.
 
-Os resultados são salvos localmente durante a coleta. Use **Parar** para interromper, **Baixar planilha** para obter o parcial e **Continuar a coleta salva** para retomar a mesma seleção/caderno/ordem do fórum sem refazer os dados prontos. Deixe essa opção desmarcada para atualizar os dados com uma nova coleta. Não há remoção de marcações ao exportar.
+Os resultados são salvos localmente durante a coleta. Use **Parar** para interromper, **Baixar planilha** para obter o parcial e **Continuar a coleta salva** para retomar a mesma seleção/caderno/ordem do fórum sem refazer os dados prontos. Deixe essa opção desmarcada para atualizar os dados com uma nova coleta. Não há remoção de marcações ao exportar. Se a ordenação por votos retornar erro 500, a coleta usa os dois primeiros por data e informa essa mudança na tela, no CSV e no JSON; não apresenta esse resultado como os dois mais votados.
 
 ### Cadência das ações automáticas
 

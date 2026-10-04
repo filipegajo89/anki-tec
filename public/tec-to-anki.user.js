@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.19.0
+// @version      1.19.1
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.19.0';
+  const SCRIPT_VERSION = '1.19.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -5468,7 +5468,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     const record = {
       numero: target.number, idQuestao: valid ? id : String(target.id || ''), caderno: context.key,
       link: id && valid ? `https://www.tecconcursos.com.br/questoes/${id}` : '',
-      capturadoEm: new Date().toISOString(), forumOrdem: forumOrder,
+      capturadoEm: new Date().toISOString(), forumOrdem: forumOrder, forumOrdemEfetiva: forumOrder,
       status: {questao: 'OK', comentario: 'Não coletado', desempenho: 'Não coletado', forum: 'Não coletado'},
       diagnosticos: [], rawQuestao: valid ? q : null,
       comentarioProfessor: null, desempenho: null, forum: [], forumTotalPosts: null,
@@ -5520,11 +5520,13 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       if (key === 'forum') {
         const page = response.json?.comentarios?.pageComentarios;
         if (page && Array.isArray(page.list)) {
+          record.forumOrdemEfetiva = response.effectiveForumOrder || forumOrder;
           let posts = page.list.filter(c => c.quantidadeVoto == null || Number(c.quantidadeVoto) > -6);
-          if (forumOrder === 'votos') posts = [...posts].sort((a,b) => Number(b.quantidadeVoto ?? 0) - Number(a.quantidadeVoto ?? 0));
+          if (record.forumOrdemEfetiva === 'votos') posts = [...posts].sort((a,b) => Number(b.quantidadeVoto ?? 0) - Number(a.quantidadeVoto ?? 0));
           record.forum = posts.slice(0, 2).map(c => ({usuario: c.apelidoUsuario || '', data: tecExportDate(c.dataPublicacao), votos: c.quantidadeVoto ?? '', texto: exportHtmlText(c.comentario), html: String(c.comentario ?? '')}));
           record.forumTotalPosts = page.resultCount ?? page.list.length;
           record.status.forum = 'OK';
+          if (forumOrder === 'votos' && record.forumOrdemEfetiva === 'data') record.diagnosticos.push('Ordenação por votos indisponível no TEC; coletados os dois primeiros por data.');
         } else { record.status.forum = 'Indisponível'; record.diagnosticos.push('Fórum: formato de resposta não reconhecido.'); }
       }
     }
@@ -5544,7 +5546,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       ['Dificuldade', q => q.desempenho?.dificuldade], ['Tempo médio (s)', q => q.desempenho?.desempenhoGeral?.tempoMedio],
       ['Meus acertos', q => q.desempenho?.desempenhoAluno?.quantidadeAcertos], ['Meus erros', q => q.desempenho?.desempenhoAluno?.quantidadeErros],
       ['Meu histórico completo', q => q.desempenho?.desempenhoAluno ? JSON.stringify(q.desempenho.desempenhoAluno) : ''],
-      ['Total no fórum', q => q.forumTotalPosts], ['Ordem do fórum', q => q.forumOrdem === 'votos' ? 'Mais votados' : 'Ordem por data'],
+      ['Total no fórum', q => q.forumTotalPosts], ['Ordem do fórum', q => (q.forumOrdemEfetiva || q.forumOrdem) === 'votos' ? 'Mais votados' : 'Ordem por data'],
     ];
     for (let i=0; i<2; i++) {
       for (const [title, field] of [['Autor','usuario'], ['Data','data'], ['Votos','votos'], ['Comentário','texto']]) columns.push([`Fórum ${i+1} · ${title}`, q => q.forum?.[i]?.[field]]);
@@ -5587,7 +5589,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       const response = await fetch(url.href, {credentials:'include',signal:controller.signal,headers:{Accept:'application/json'}});
       const text = await response.text();
       let json;
-      try {json=JSON.parse(text);} catch (_) {return {ok:false,status:response.status,sessionExpired:response.status===200,error:'Resposta não JSON; confira sua sessão no TEC.'};}
+      try {json=JSON.parse(text);} catch (_) {return {ok:false,status:response.status,sessionExpired:response.status===200,error:response.status===200 ? 'Resposta não JSON; confira sua sessão no TEC.' : 'O TEC retornou uma resposta não JSON.'};}
       const message = json?.error || json?.mensagem || json?.message;
       const expired = response.redirected && /login|entrar/i.test(response.url);
       return {ok:response.ok && !message && !expired, status:response.status, json, error:expired ? 'Sessão expirada' : undefined};
@@ -5601,13 +5603,19 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     const saved = GM_getValue(key, null);
     const records = resume && saved?.signature === signature && Array.isArray(saved.records) ? [...saved.records] : [];
     const circuit = {};
+    let forumQueryOrder = forumOrder;
     let paused = false, reason = '';
     const checkpoint = () => GM_setValue(key, {signature, records, capturadoEm:new Date().toISOString()});
     const keep = record => {const at=records.findIndex(q=>q.numero===record.numero);if(at<0)records.push(record);else records[at]=record;records.sort((a,b)=>a.numero-b.numero);checkpoint();};
-    const request = async (path, label) => {
+    const request = async (path, label, fallbackPath = null) => {
       onProgress({label, records:[...records]});
       if (!await waitTecExportAction(600,1200,shouldContinue)) return {ok:false,status:0,cancelled:true};
       let r = await fetchTecExportJson(path,shouldContinue);
+      if (!r.ok && !r.cancelled && r.status===500 && fallbackPath && shouldContinue()) {
+        const recovered = await request(fallbackPath, `Questão: fórum por data (ordenação por votos indisponível)`);
+        if (recovered.ok) recovered.effectiveForumOrder = 'data';
+        return recovered;
+      }
       if (!r.ok && !r.cancelled && (r.status===0 || r.status===408 || r.status===425 || r.status>=500) && shouldContinue()) {
         onProgress({label:'Aguardando para tentar novamente…',records:[...records]});
         if (await waitTecExportAction(4000,7000,shouldContinue)) r=await fetchTecExportJson(path,shouldContinue);
@@ -5637,15 +5645,20 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       const sections = {};
       if (previous?.status.comentario==='OK') sections.comment={ok:true,status:200,json:{comentario:{nomeProfessor:previous.comentarioProfessor.professor,textoComentario:previous.comentarioProfessor.html,dataPublicacaoComentario:previous.comentarioProfessor.data}}};
       if (previous?.status.desempenho==='OK') sections.performance={ok:true,status:200,json:{desempenho:previous.desempenho}};
-      if (previous?.status.forum==='OK') sections.forum={ok:true,status:200,json:{comentarios:{pageComentarios:{resultCount:previous.forumTotalPosts,list:previous.forum.map(p=>({apelidoUsuario:p.usuario,dataPublicacao:p.data,quantidadeVoto:p.votos,comentario:p.html}))}}}};
+      if (previous?.status.forum==='OK') sections.forum={ok:true,status:200,effectiveForumOrder:previous.forumOrdemEfetiva || previous.forumOrdem,json:{comentarios:{pageComentarios:{resultCount:previous.forumTotalPosts,list:previous.forum.map(p=>({apelidoUsuario:p.usuario,dataPublicacao:p.data,quantidadeVoto:p.votos,comentario:p.html}))}}}};
       const endpoints = [
         ['comment',`/api/questoes/${q.idQuestao}/comentario?tokenPreVisualizacao=`,'comentário do professor'],
         ['performance',`/api/questoes/${q.idQuestao}/desempenho`,'desempenho'],
-        ['forum',`/api/discussoes/${q.idQuestao}/comentarios-alunos?ordenarPor=${forumOrder}&pagina=1`,'fórum'],
+        ['forum',`/api/discussoes/${q.idQuestao}/comentarios-alunos?ordenarPor=${forumQueryOrder==='votos'?'pontos':'data'}&pagina=1`,'fórum'],
       ];
       for (const [type,path,label] of endpoints) {
         if (!shouldContinue() || paused) break;
-        const r=sections[type] || circuit[type] || await request(path,`Questão ${target.number}: ${label}`);
+        const fallbackPath = type==='forum' && forumQueryOrder==='votos' ? `/api/discussoes/${q.idQuestao}/comentarios-alunos?ordenarPor=data&pagina=1` : null;
+        const r=sections[type] || circuit[type] || await request(path,`Questão ${target.number}: ${label}`,fallbackPath);
+        if (type==='forum' && r.ok) {
+          r.effectiveForumOrder = r.effectiveForumOrder || forumQueryOrder;
+          if (r.effectiveForumOrder==='data') forumQueryOrder='data';
+        }
         sections[type]=r;
         if (!r.ok && /limite|cota|quota/i.test(tecExportFailure(r))) circuit[type]=r;
         keep(buildTecExportRecord(q,target,context,sections,forumOrder));
@@ -5692,7 +5705,8 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
           const result=await collectTecSpreadsheet(context,targets,{forumOrder:order.value,resume:overlay.querySelector('#tec-export-resume').checked,shouldContinue:()=>batchRunning && getQuestionMapContext().key===context.key,onProgress:state=>{lastRecords=state.records;progress.textContent=`${state.label} · ${state.records.length}/${targets.length}`;}});
           lastRecords=result.records;
           const gaps=result.records.filter(q=>Object.values(q.status).some(s=>s!=='OK')).length;
-          progress.textContent=`${result.paused?'Pausada: '+result.reason:result.cancelled?'Coleta interrompida':'Coleta concluída'} · ${lastRecords.length}/${targets.length} questões${gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':''}.`;
+          const forumFallbacks=result.records.filter(q=>q.forumOrdem==='votos' && q.forumOrdemEfetiva==='data' && q.status.forum==='OK').length;
+          progress.textContent=`${result.paused?'Pausada: '+result.reason:result.cancelled?'Coleta interrompida':'Coleta concluída'} · ${lastRecords.length}/${targets.length} questões${gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':''}${forumFallbacks?' · '+forumFallbacks+' com fórum por data; votos indisponíveis (veja Observações)':''}.`;
           if(result.completed && lastRecords.length)downloadTecExport(lastRecords,context);
         });
       } catch(err){progress.textContent=`Coleta interrompida: ${err.message}. Os dados parciais foram mantidos.`;}

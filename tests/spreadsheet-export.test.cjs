@@ -515,3 +515,110 @@ test('stopping an in-flight export request aborts it and reports cancellation', 
   assert.equal(response.ok, false);
   assert.equal(response.cancelled, true);
 });
+
+test('a failing vote endpoint falls back to date once and uses that order for later questions in the collection', async t => {
+  const h = harness(t);
+  const fake = stubCollector(h, {
+    reply: (requestPath, response) => requestPath.includes('ordenarPor=pontos&')
+      ? failed(500, 'Resposta não JSON') : response,
+  });
+  const targets = [{ number: 1, id: '500001' }, { number: 2, id: '500002' }];
+  const result = await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, targets, { forumOrder: 'votos', shouldContinue: () => true });
+  assert.equal(result.completed, true);
+  assert.equal(result.paused, false);
+  assert.equal(fake.calls.filter(requestPath => requestPath.includes('ordenarPor=pontos&')).length, 1);
+  assert.equal(fake.calls.filter(requestPath => requestPath.includes('ordenarPor=data&')).length, 2);
+  for (const row of result.records) {
+    assert.equal(row.status.comentario, 'OK');
+    assert.equal(row.status.desempenho, 'OK');
+    assert.equal(row.status.forum, 'OK');
+    assert.equal(row.forumOrdemEfetiva, 'data');
+    assert.deepEqual(clone(row.forum).map(post => post.usuario), ['Primeiro', 'Segundo']);
+    assert.ok(row.diagnosticos.some(message => /Ordenação por votos indisponível.*dois primeiros por data/i.test(message)));
+  }
+  const checkpoint = h.storage.get('tecSpreadsheet:v1:caderno:111:votos');
+  assert.ok(checkpoint.records.every(row => row.forumOrdemEfetiva === 'data'));
+  const csvRows = parseCsv(h.run('buildTecSpreadsheetCsv', result.records));
+  const effectiveOrder = csvRows[0].findIndex(header => /ordem.*f[oó]rum|f[oó]rum.*ordem/i.test(header));
+  assert.ok(effectiveOrder >= 0, 'CSV must identify the actual forum order');
+  assert.ok(csvRows[1][effectiveOrder].toLowerCase().includes('data'));
+  assert.ok(!/mais votad/i.test(csvRows[1][effectiveOrder]), 'date fallback cannot claim the most-voted posts');
+});
+
+test('the most-voted choice uses the TEC pontos parameter and completes without a fallback', async t => {
+  const h = harness(t);
+  const fake = stubCollector(h);
+  const result = await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, [{ number: 1, id: '500001' }], { forumOrder: 'votos', shouldContinue: () => true });
+  assert.equal(result.completed, true);
+  assert.equal(result.paused, false);
+  const forumRequests = fake.calls.filter(requestPath => requestPath.includes('/comentarios-alunos?'));
+  assert.equal(forumRequests.length, 1);
+  assert.ok(forumRequests[0].includes('ordenarPor=pontos&pagina=1'));
+  assert.ok(!forumRequests[0].includes('ordenarPor=votos&'), 'internal choice name is not the TEC API value');
+  assert.ok(!fake.calls.some(requestPath => requestPath.includes('ordenarPor=data&')));
+  assert.equal(result.records[0].forumOrdem, 'votos');
+  assert.equal(result.records[0].forumOrdemEfetiva, 'votos');
+  assert.deepEqual(clone(result.records[0].forum).map(post => post.usuario), ['Quarto', 'Segundo']);
+  assert.ok(!result.records[0].diagnosticos.some(message => /Ordenação por votos indisponível/i.test(message)));
+});
+
+test('successful date-fallback forum data and its diagnostic survive retrying another section', async t => {
+  const h = harness(t);
+  const targets = [{ number: 1, id: '500001' }];
+  stubCollector(h, {
+    reply: (requestPath, response) => {
+      if (/\/comentario\?/.test(requestPath)) return failed(400, 'Comentário indisponível');
+      if (requestPath.includes('ordenarPor=pontos&')) return failed(500, 'Resposta não JSON');
+      return response;
+    },
+  });
+  const first = await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, targets, { forumOrder: 'votos', shouldContinue: () => true });
+  assert.equal(first.records[0].status.forum, 'OK');
+  assert.equal(first.records[0].forumOrdemEfetiva, 'data');
+  const forum = clone(first.records[0].forum);
+  const retry = stubCollector(h);
+  const resumed = await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, targets, { forumOrder: 'votos', resume: true, shouldContinue: () => true });
+  assert.equal(resumed.completed, true);
+  assert.equal(retry.calls.length, 1, 'only the failed professor section should be retried');
+  assert.ok(retry.calls[0].includes('/comentario?'));
+  assert.equal(resumed.records[0].forumOrdemEfetiva, 'data');
+  assert.deepEqual(clone(resumed.records[0].forum), forum);
+  assert.ok(resumed.records[0].diagnosticos.some(message => /Ordenação por votos indisponível.*dois primeiros por data/i.test(message)));
+});
+
+test('date fallback preference is scoped to one collection rather than leaking into a fresh export', async t => {
+  const h = harness(t);
+  const targets = [{ number: 1, id: '500001' }];
+  const unavailable = stubCollector(h, {
+    reply: (requestPath, response) => requestPath.includes('ordenarPor=pontos&') ? failed(500, 'Resposta não JSON') : response,
+  });
+  const first = await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, targets, { forumOrder: 'votos', shouldContinue: () => true });
+  assert.equal(first.records[0].forumOrdemEfetiva, 'data');
+  assert.equal(unavailable.calls.filter(requestPath => requestPath.includes('ordenarPor=pontos&')).length, 1);
+  const available = stubCollector(h);
+  const fresh = await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, targets, { forumOrder: 'votos', resume: false, shouldContinue: () => true });
+  assert.ok(available.calls.some(requestPath => requestPath.includes('ordenarPor=pontos&')));
+  assert.ok(!available.calls.some(requestPath => requestPath.includes('ordenarPor=data&')));
+  assert.equal(fresh.records[0].forumOrdemEfetiva, 'votos');
+  assert.ok(!fresh.records[0].diagnosticos.some(message => /Ordenação por votos indisponível/i.test(message)));
+});
+
+test('authentication errors and rate limits do not trigger a forum ordering fallback', async t => {
+  for (const status of [401, 429]) {
+    await t.test(`HTTP ${status}`, async t => {
+      const h = harness(t);
+      const fake = stubCollector(h, {
+        reply: (requestPath, response) => requestPath.includes('ordenarPor=pontos&')
+          ? failed(status, status === 401 ? 'Sessão expirada' : 'Limite de requisições') : response,
+      });
+      const result = await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, [{ number: 1, id: '500001' }], { forumOrder: 'votos', shouldContinue: () => true });
+      assert.equal(result.paused, true);
+      assert.equal(result.completed, false);
+      assert.equal(fake.calls.filter(requestPath => requestPath.includes('ordenarPor=pontos&')).length, 1);
+      assert.ok(!fake.calls.some(requestPath => requestPath.includes('ordenarPor=data&')));
+      assert.equal(result.records[0].status.comentario, 'OK');
+      assert.equal(result.records[0].status.desempenho, 'OK');
+      assert.notEqual(result.records[0].status.forum, 'OK');
+    });
+  }
+});
