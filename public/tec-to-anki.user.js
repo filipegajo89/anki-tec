@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.19.1
+// @version      1.19.2
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.19.1';
+  const SCRIPT_VERSION = '1.19.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -223,12 +223,16 @@
     .tec-btn-save:hover { background: #3a56d4; }
     .tec-btn-cancel { background: #e9ecef; color: #495057; }
     .tec-btn-cancel:hover { background: #dee2e6; }
-    .tec-export-modal { width: 540px; font-size: 13px; }
+    #tec-export-overlay { z-index: 2147483647; padding: 16px; box-sizing: border-box; }
+    .tec-export-modal { width: 540px; font-size: 13px; display: flex; flex-direction: column; max-height: calc(100dvh - 32px); overflow: hidden; }
+    #tec-export-overlay .tec-modal-header { flex-shrink: 0; padding: 16px 20px; }
+    #tec-export-overlay .tec-modal-body { min-height: 0; overflow-y: auto; padding: 16px 20px; }
     #tec-export-overlay label { display: block; margin: 14px 0 5px; font-weight: 600; }
     #tec-export-overlay select { width: 100%; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font: inherit; }
     #tec-export-overlay .tec-export-note { color: #667085; font-size: 12px; line-height: 1.5; margin: 16px 0; }
     #tec-export-progress { margin-bottom: 0; color: #344054; line-height: 1.5; }
-    #tec-export-overlay .tec-modal-footer { flex-wrap: wrap; }
+    #tec-export-overlay .tec-modal-footer { flex-shrink: 0; flex-wrap: wrap; padding: 12px 20px; }
+    #tec-export-overlay .tec-btn { padding: 9px 12px; font-size: 12px; }
     #tec-export-overlay [hidden] { display: none !important; }
     #tec-export-overlay label.tec-export-resume { display: flex; align-items: center; gap: 7px; font-weight: 400; }
     #tec-export-resume { margin: 0; }
@@ -5521,7 +5525,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
         const page = response.json?.comentarios?.pageComentarios;
         if (page && Array.isArray(page.list)) {
           record.forumOrdemEfetiva = response.effectiveForumOrder || forumOrder;
-          let posts = page.list.filter(c => c.quantidadeVoto == null || Number(c.quantidadeVoto) > -6);
+          let posts = page.list.filter(c => !c.silenciado && (c.quantidadeVoto == null || Number(c.quantidadeVoto) >= -2));
           if (record.forumOrdemEfetiva === 'votos') posts = [...posts].sort((a,b) => Number(b.quantidadeVoto ?? 0) - Number(a.quantidadeVoto ?? 0));
           record.forum = posts.slice(0, 2).map(c => ({usuario: c.apelidoUsuario || '', data: tecExportDate(c.dataPublicacao), votos: c.quantidadeVoto ?? '', texto: exportHtmlText(c.comentario), html: String(c.comentario ?? '')}));
           record.forumTotalPosts = page.resultCount ?? page.list.length;

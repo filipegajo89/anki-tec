@@ -153,6 +153,25 @@ test('forum exports exactly two posts in the chosen date or vote order, never a 
   assert.ok(!JSON.stringify(byDate.forum).includes('Terceiro por data'));
 });
 
+test('both forum orders match TEC visibility: muted and minus-three posts are excluded while minus-two remains visible', t => {
+  const h = harness(t);
+  const parts = sections({ forum: ok({ comentarios: { pageComentarios: { resultCount: 4, list: [
+    { apelidoUsuario: 'Silenciado', quantidadeVoto: 999, silenciado: true, comentario: '<p>Oculto por moderação</p>' },
+    { apelidoUsuario: 'Menos três', quantidadeVoto: -3, silenciado: false, comentario: '<p>Oculto por pontuação</p>' },
+    { apelidoUsuario: 'Menos dois', quantidadeVoto: -2, silenciado: false, comentario: '<p>Visível no limite</p>' },
+    { apelidoUsuario: 'Positivo', quantidadeVoto: 10, silenciado: false, comentario: '<p>Visível com pontuação positiva</p>' },
+  ] } } }) });
+  for (const order of ['data', 'votos']) {
+    const result = record(h, apiQuestion(), undefined, parts, order);
+    assert.equal(result.forum.length, 2);
+    assert.deepEqual(clone(result.forum).map(post => post.usuario), order === 'data'
+      ? ['Menos dois', 'Positivo'] : ['Positivo', 'Menos dois']);
+    assert.equal(result.forum.find(post => post.usuario === 'Menos dois').votos, -2);
+    assert.ok(!JSON.stringify(result.forum).includes('Oculto'));
+    assert.equal(result.status.forum, 'OK');
+  }
+});
+
 test('optional endpoint failures retain the question and distinct diagnostic statuses', t => {
   const h = harness(t);
   const result = record(h, apiQuestion(), undefined, sections({
