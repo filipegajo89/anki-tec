@@ -201,6 +201,24 @@ O ponto colorido na toolbar indica:
 
 O botão funciona em **qualquer questão respondida**, não apenas erradas. Para questões certas, a IA gera cards de reforço em vez de correção de erro.
 
+### Escolher cards enquanto resolve o caderno (v1.18.0)
+
+1. Marque **Card**, na barra inferior, quando quiser revisar a questão depois. Pode marcar antes de responder ou após acertar.
+2. Clique em **Mapa** para abrir o painel recolhível com os números das questões do caderno. Cada caixa marca ou desmarca uma questão; a atual tem contorno escuro. Verde indica um acerto já lido e vermelho, um erro. Questões ainda não visitadas ficam sem cor.
+3. As escolhas ficam salvas neste navegador, separadas por caderno, inclusive após recarregar a página. Abrir o mapa ou marcar uma caixa não inicia a geração.
+4. Clique em **Gerar marcadas** quando terminar. O script percorre o caderno, coleta apenas as escolhidas e volta à posição inicial. Confira a seleção e o raciocínio, gere com o Creator + Auditor e revise os cards antes de salvar.
+5. A marcação é removida quando os cards são salvos nos destinos habilitados. Questões com dados/gabarito indisponíveis, geração cancelada, duplicatas recusadas ou falha de salvamento continuam marcadas. **Parar** interrompe as ações automáticas na posição atual.
+
+O botão **Erros** continua oferecendo a coleta de questões erradas. A seleção manual não muda um acerto para erro nem altera respostas no TEC. Quando uma questão já conhecida muda de posição no caderno, sua seleção acompanha o ID; posições ainda não visitadas são vinculadas ao ID na primeira coleta.
+
+### Cadência das ações automáticas
+
+Inspirado nas [esperas por condição do Scrapling](https://github.com/D4Vinci/Scrapling/blob/main/docs/fetching/dynamic.md) e no seu [controle de cadência](https://github.com/D4Vinci/Scrapling/blob/main/scrapling/spiders/throttle.py), o UserScript aguarda a mudança da questão e usa pausas variáveis: 1,2–2,8 segundos antes de navegar e 0,65–1,4 segundos antes de ações que abrem ou buscam comentários. Os valores são escolhas deste projeto. Cliques e teclas automáticos disparam uma única vez; marcar caixas e abrir o menu responde imediatamente.
+
+Scrapling é uma biblioteca Python; este script adapta os princípios compatíveis com Tampermonkey. Intervalos aleatórios não garantem invisibilidade nem alteram a identidade do navegador.
+
+Para executar os testes de seleção, persistência e geração em ambiente simulado: `npm ci` e `npm test` (Node 22.22.2 ou posterior). Os testes não chamam TEC, IA, Anki ou Obsidian reais.
+
 ---
 
 ## 7. Estrutura no Obsidian
