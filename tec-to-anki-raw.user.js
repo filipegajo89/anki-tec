@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.18.1
+// @version      1.18.2
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.18.1';
+  const SCRIPT_VERSION = '1.18.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -99,7 +99,7 @@
     #tec-anki-toolbar svg, #tec-question-map svg { width: 16px; height: 16px; flex: none; display: block; }
     #tec-anki-toolbar button, #tec-mark-label {
       display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-      min-height: 34px; padding: 7px 10px; border: 0; border-radius: 7px;
+      min-height: 34px; margin: 0; padding: 7px 10px; border: 0; border-radius: 7px;
       background: transparent; color: #475467; font: inherit; cursor: pointer;
       transition: background .15s, color .15s;
     }
