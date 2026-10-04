@@ -213,6 +213,20 @@ O ponto colorido na toolbar indica:
 
 Na v1.18.1, a barra reúne somente seleção, mapa e o menu **Mais**. Geração individual, erros, raciocínio, revisão de véspera, reformulação e configurações ficam nesse menu, com ícones vetoriais e status das conexões. O mapa usa uma legenda curta e mostra navegação de páginas somente quando necessária. Feche os painéis pelo botão, por Escape ou, no menu Mais, clicando fora.
 
+Na v1.19.0, a coleta das marcadas usa **Acessar questão pelo número**, do próprio TEC, para saltar somente às escolhidas e voltar à posição inicial. Se esse controle estiver indisponível, percorre por setas somente a distância necessária entre os alvos. Exemplo: começar na 5 com 8 e 17 marcadas resulta em **5 → 8 → 17 → 5**, sem passar pela questão 1. A posição e o ID são conferidos após cada salto; uma falha ou divergência mantém as marcações e interrompe a geração. **Parar** continua interrompendo sem navegar de volta.
+
+### Exportar as questões para planilha (v1.19.0)
+
+1. Abra **Mais (⋯) → Exportar para planilha**.
+2. Escolha **questão atual**, **marcadas** ou **caderno inteiro**. A seleção para exportar não é desmarcada.
+3. Escolha **dois mais votados** ou **dois primeiros na ordem por data** para o fórum.
+4. Clique em **Coletar e baixar**. O arquivo **CSV UTF-8**, separado por ponto e vírgula, abre no Excel. Cada questão ocupa uma linha, com enunciado, alternativas, gabarito disponível, metadados, comentário do professor, desempenho geral/pessoal e dois comentários do fórum.
+5. **Dados completos (JSON)** preserva também os objetos originais, HTML e histórico pessoal. Imagens são mantidas como links nos textos e no HTML; não são incorporadas como imagens na planilha.
+
+A exportação consulta os dados equivalentes aos painéis **O**, **H** e **F** na sessão autenticada do TEC, sem movimentar a tela, responder questões, chamar IA, gerar cards ou enviar para Anki/Obsidian. Os pedidos são sequenciais, com pausas entre consultas/questões e entre lotes. Limites do TEC e sessão expirada pausam a coleta. Falhas ou conteúdo não confirmado aparecem nas colunas **Status** e **Observações**, em vez de serem tratados como conteúdo vazio confirmado. Um gabarito ausente permanece vazio.
+
+Os resultados são salvos localmente durante a coleta. Use **Parar** para interromper, **Baixar planilha** para obter o parcial e **Continuar a coleta salva** para retomar a mesma seleção/caderno/ordem do fórum sem refazer os dados prontos. Deixe essa opção desmarcada para atualizar os dados com uma nova coleta. Não há remoção de marcações ao exportar.
+
 ### Cadência das ações automáticas
 
 Inspirado nas [esperas por condição do Scrapling](https://github.com/D4Vinci/Scrapling/blob/main/docs/fetching/dynamic.md) e no seu [controle de cadência](https://github.com/D4Vinci/Scrapling/blob/main/scrapling/spiders/throttle.py), o UserScript aguarda a mudança da questão e usa pausas variáveis: 1,2–2,8 segundos antes de navegar e 0,65–1,4 segundos antes de ações que abrem ou buscam comentários. Os valores são escolhas deste projeto. Cliques e teclas automáticos disparam uma única vez; marcar caixas e abrir o menu responde imediatamente.

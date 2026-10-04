@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.18.2
+// @version      1.19.0
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.18.2';
+  const SCRIPT_VERSION = '1.19.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -223,6 +223,15 @@
     .tec-btn-save:hover { background: #3a56d4; }
     .tec-btn-cancel { background: #e9ecef; color: #495057; }
     .tec-btn-cancel:hover { background: #dee2e6; }
+    .tec-export-modal { width: 540px; font-size: 13px; }
+    #tec-export-overlay label { display: block; margin: 14px 0 5px; font-weight: 600; }
+    #tec-export-overlay select { width: 100%; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font: inherit; }
+    #tec-export-overlay .tec-export-note { color: #667085; font-size: 12px; line-height: 1.5; margin: 16px 0; }
+    #tec-export-progress { margin-bottom: 0; color: #344054; line-height: 1.5; }
+    #tec-export-overlay .tec-modal-footer { flex-wrap: wrap; }
+    #tec-export-overlay [hidden] { display: none !important; }
+    #tec-export-overlay label.tec-export-resume { display: flex; align-items: center; gap: 7px; font-weight: 400; }
+    #tec-export-resume { margin: 0; }
 
     /* \u2500\u2500 Modal Content \u2500\u2500 */
     .tec-meta-grid {
@@ -5427,8 +5436,277 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
   // A seleção é independente do resultado: acertar não impede pedir um card.
   // Só lê o estado já carregado. Abrir/marcar o mapa não navega nem chama IA.
+  // Exportação independente: consultas de leitura na sessão TEC, sem IA ou salvamento externo.
+  const TEC_SPREADSHEET_PREFIX = 'tecSpreadsheet:v1:';
+
+  function exportHtmlText(html) {
+    const source = String(html ?? '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_, text) => escapeHtml(text));
+    const doc = new DOMParser().parseFromString(source, 'text/html');
+    doc.querySelectorAll('script,style').forEach(el => el.remove());
+    doc.querySelectorAll('img').forEach(el => {
+      const src = el.getAttribute('src') || el.getAttribute('data-src') || '';
+      el.replaceWith(doc.createTextNode(` [Imagem${el.alt ? ': ' + el.alt : ''}${src ? ' · ' + src : ''}] `));
+    });
+    doc.querySelectorAll('br').forEach(el => el.replaceWith(doc.createTextNode('\n')));
+    doc.querySelectorAll('p,div,li,tr,h1,h2,h3,h4,blockquote').forEach(el => el.appendChild(doc.createTextNode('\n')));
+    return (doc.body.textContent || '').replace(/\u00a0/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  function tecExportDate(value) {
+    return value && typeof value === 'object' ? String(value.$ ?? JSON.stringify(value)) : String(value ?? '');
+  }
+
+  function tecExportFailure(response) {
+    const json = response?.json;
+    const message = response?.error || json?.error || json?.mensagem || json?.message;
+    return `HTTP ${response?.status ?? 0}${message ? ' · ' + (typeof message === 'string' ? message : JSON.stringify(message)).slice(0, 500) : ''}`;
+  }
+
+  function buildTecExportRecord(q, target, context, sections = {}, forumOrder = 'votos') {
+    const id = q?.idQuestao != null ? String(q.idQuestao) : '';
+    const valid = !!id && (!target.id || String(target.id) === id);
+    const record = {
+      numero: target.number, idQuestao: valid ? id : String(target.id || ''), caderno: context.key,
+      link: id && valid ? `https://www.tecconcursos.com.br/questoes/${id}` : '',
+      capturadoEm: new Date().toISOString(), forumOrdem: forumOrder,
+      status: {questao: 'OK', comentario: 'Não coletado', desempenho: 'Não coletado', forum: 'Não coletado'},
+      diagnosticos: [], rawQuestao: valid ? q : null,
+      comentarioProfessor: null, desempenho: null, forum: [], forumTotalPosts: null,
+    };
+    if (!valid) {
+      record.status.questao = q ? `Erro: ID diverge da marcação (${target.id || '?'} → ${id || '?'})` : 'Erro: questão não recebida';
+      record.diagnosticos.push(record.status.questao);
+      return record;
+    }
+    const labels = q.tipoQuestao === 'CERTO_ERRADO' ? ['Certo', 'Errado'] : 'ABCDEFGHIJ'.split('');
+    const rawAlternatives = Array.isArray(q.alternativas) ? q.alternativas : [];
+    const alternatives = rawAlternatives.map((a, index) => {
+      const html = typeof a === 'string' ? a : a?.texto ?? a?.descricao ?? '';
+      return {letra: labels[index] || String(index + 1), texto: exportHtmlText(html), html: String(html)};
+    });
+    const correctIndex = Number(q.numeroAlternativaCorreta);
+    const selectedIndex = Number(q.alternativaSelecionada);
+    Object.assign(record, {
+      banca: q.bancaSigla || '', orgao: q.orgaoNome || '', cargo: q.cargoSigla || '', ano: q.concursoAno ?? '',
+      concursoUrl: q.urlConcurso ? `https://www.tecconcursos.com.br/concursos/${q.urlConcurso}` : '',
+      materia: q.nomeMateria || '', assunto: q.nomeAssunto || '', tipo: q.tipoQuestao || '',
+      enunciado: exportHtmlText(q.enunciado), enunciadoHtml: String(q.enunciado ?? ''), alternativas: alternatives,
+      gabarito: Number.isInteger(correctIndex) && correctIndex > 0 ? alternatives[correctIndex - 1]?.letra || '' : '',
+      respostaAluno: Number.isInteger(selectedIndex) && selectedIndex > 0 ? alternatives[selectedIndex - 1]?.letra || '' : '',
+      resultado: q.correcaoQuestao === true ? 'Acerto' : q.correcaoQuestao === false ? 'Erro' : 'Não respondida',
+    });
+    if (!record.gabarito) record.diagnosticos.push('Gabarito não informado pelo TEC.');
+    if (!record.enunciado && !record.enunciadoHtml) { record.status.questao = 'Erro: enunciado ausente'; record.diagnosticos.push(record.status.questao); }
+    for (const [key, response] of Object.entries(sections)) {
+      const statusKey = {comment: 'comentario', performance: 'desempenho', forum: 'forum'}[key];
+      if (!statusKey) continue;
+      if (!response?.ok) {
+        record.status[statusKey] = 'Erro: ' + tecExportFailure(response);
+        record.diagnosticos.push(`${statusKey}: ${record.status[statusKey]}`);
+        continue;
+      }
+      if (key === 'comment') {
+        const c = response.json?.comentario;
+        if (c && typeof c.textoComentario === 'string' && c.textoComentario.trim()) {
+          record.comentarioProfessor = {professor: c.nomeProfessor || '', data: tecExportDate(c.dataFormatadaParaHtml5 ?? c.dataPublicacaoComentario), texto: exportHtmlText(c.textoComentario), html: c.textoComentario};
+          record.status.comentario = 'OK';
+        } else { record.status.comentario = 'Não verificado'; record.diagnosticos.push('Professor: o TEC não retornou conteúdo; ausência de comentário não confirmada.'); }
+      }
+      if (key === 'performance') {
+        const d = response.json?.desempenho;
+        if (d && typeof d === 'object') { record.desempenho = d; record.status.desempenho = 'OK'; }
+        else { record.status.desempenho = 'Indisponível'; record.diagnosticos.push('Desempenho não informado pelo TEC.'); }
+      }
+      if (key === 'forum') {
+        const page = response.json?.comentarios?.pageComentarios;
+        if (page && Array.isArray(page.list)) {
+          let posts = page.list.filter(c => c.quantidadeVoto == null || Number(c.quantidadeVoto) > -6);
+          if (forumOrder === 'votos') posts = [...posts].sort((a,b) => Number(b.quantidadeVoto ?? 0) - Number(a.quantidadeVoto ?? 0));
+          record.forum = posts.slice(0, 2).map(c => ({usuario: c.apelidoUsuario || '', data: tecExportDate(c.dataPublicacao), votos: c.quantidadeVoto ?? '', texto: exportHtmlText(c.comentario), html: String(c.comentario ?? '')}));
+          record.forumTotalPosts = page.resultCount ?? page.list.length;
+          record.status.forum = 'OK';
+        } else { record.status.forum = 'Indisponível'; record.diagnosticos.push('Fórum: formato de resposta não reconhecido.'); }
+      }
+    }
+    return record;
+  }
+
+  function buildTecSpreadsheetCsv(records) {
+    const columns = [
+      ['Número', q => q.numero], ['ID TEC', q => q.idQuestao], ['Caderno', q => q.caderno], ['Link', q => q.link],
+      ['Banca', q => q.banca], ['Órgão', q => q.orgao], ['Cargo', q => q.cargo], ['Ano', q => q.ano], ['Concurso', q => q.concursoUrl],
+      ['Matéria', q => q.materia], ['Assunto', q => q.assunto], ['Tipo', q => q.tipo], ['Enunciado', q => q.enunciado],
+      ['Alternativas', q => q.alternativas?.map(a => `${a.letra}: ${a.texto}`).join('\n')], ['Gabarito', q => q.gabarito],
+      ['Minha resposta', q => q.respostaAluno], ['Resultado', q => q.resultado],
+      ['Professor', q => q.comentarioProfessor?.professor], ['Data do comentário', q => q.comentarioProfessor?.data], ['Comentário do professor', q => q.comentarioProfessor?.texto],
+      ['Acertos gerais', q => q.desempenho?.desempenhoGeral?.acertos], ['Erros gerais', q => q.desempenho?.desempenhoGeral?.erros],
+      ['Acertos (%)', q => {const g=q.desempenho?.desempenhoGeral;const total=Number(g?.acertos)+Number(g?.erros);return total > 0 ? (Number(g.acertos)/total*100).toFixed(2) : ''; }],
+      ['Dificuldade', q => q.desempenho?.dificuldade], ['Tempo médio (s)', q => q.desempenho?.desempenhoGeral?.tempoMedio],
+      ['Meus acertos', q => q.desempenho?.desempenhoAluno?.quantidadeAcertos], ['Meus erros', q => q.desempenho?.desempenhoAluno?.quantidadeErros],
+      ['Meu histórico completo', q => q.desempenho?.desempenhoAluno ? JSON.stringify(q.desempenho.desempenhoAluno) : ''],
+      ['Total no fórum', q => q.forumTotalPosts], ['Ordem do fórum', q => q.forumOrdem === 'votos' ? 'Mais votados' : 'Ordem por data'],
+    ];
+    for (let i=0; i<2; i++) {
+      for (const [title, field] of [['Autor','usuario'], ['Data','data'], ['Votos','votos'], ['Comentário','texto']]) columns.push([`Fórum ${i+1} · ${title}`, q => q.forum?.[i]?.[field]]);
+    }
+    columns.push(['Status questão',q=>q.status.questao], ['Status professor',q=>q.status.comentario], ['Status desempenho',q=>q.status.desempenho], ['Status fórum',q=>q.status.forum], ['Observações',q=>q.diagnosticos.join('\n')], ['Capturado em',q=>q.capturadoEm], ['Enunciado HTML',q=>q.enunciadoHtml], ['Alternativas HTML',q=>q.alternativas?.map(a=>`${a.letra}: ${a.html}`).join('\n')], ['Professor HTML',q=>q.comentarioProfessor?.html], ['Fórum 1 HTML',q=>q.forum?.[0]?.html], ['Fórum 2 HTML',q=>q.forum?.[1]?.html], ['Desempenho completo JSON',q=>q.desempenho ? JSON.stringify(q.desempenho) : '']);
+    const cell = value => {
+      let text = String(value ?? '');
+      if (/^[\s\uFEFF]*[=+\-@]/.test(text)) text = "'" + text;
+      return '"' + text.replace(/"/g, '""') + '"';
+    };
+    return '\uFEFF' + [columns.map(c=>cell(c[0])).join(';'), ...records.map(q=>columns.map(c=>cell(c[1](q))).join(';'))].join('\r\n');
+  }
+
+  function downloadTecExport(records, context, format = 'csv') {
+    const suffix = context.key.replace(':', '_');
+    const data = format === 'csv' ? buildTecSpreadsheetCsv(records) : JSON.stringify({caderno: context.key, capturadoEm: new Date().toISOString(), questoes: records}, null, 2);
+    const blob = new Blob([data], {type: format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = `tec_${suffix}_questoes.${format}`;
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  async function waitTecExportAction(min = 600, max = 1200, shouldContinue = () => true) {
+    const end = Date.now() + min + Math.random() * (max - min);
+    while (Date.now() < end) {
+      if (!shouldContinue()) return false;
+      await delay(Math.min(100, end - Date.now()));
+    }
+    return shouldContinue();
+  }
+
+  async function fetchTecExportJson(path, shouldContinue = () => true) {
+    if (!shouldContinue()) return {ok:false,status:0,cancelled:true,error:'Coleta interrompida'};
+    const url = new URL(path, window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) return {ok:false,status:400,error:'Consulta fora da API do TEC recusada'};
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const cancelled = setInterval(() => {if (!shouldContinue()) controller.abort();}, 100);
+    try {
+      const response = await fetch(url.href, {credentials:'include',signal:controller.signal,headers:{Accept:'application/json'}});
+      const text = await response.text();
+      let json;
+      try {json=JSON.parse(text);} catch (_) {return {ok:false,status:response.status,sessionExpired:response.status===200,error:'Resposta não JSON; confira sua sessão no TEC.'};}
+      const message = json?.error || json?.mensagem || json?.message;
+      const expired = response.redirected && /login|entrar/i.test(response.url);
+      return {ok:response.ok && !message && !expired, status:response.status, json, error:expired ? 'Sessão expirada' : undefined};
+    } catch (err) {return {ok:false,status:0,cancelled:!shouldContinue(),error:shouldContinue() ? 'Falha de conexão ou tempo esgotado' : 'Coleta interrompida'};}
+    finally {clearTimeout(timeout);clearInterval(cancelled);}
+  }
+
+  async function collectTecSpreadsheet(context, targets, {forumOrder = 'votos', resume = true, onProgress = () => {}, shouldContinue = () => true} = {}) {
+    const signature = JSON.stringify(targets.map(t=>[t.number,t.id || null]));
+    const key = TEC_SPREADSHEET_PREFIX + context.key + ':' + forumOrder;
+    const saved = GM_getValue(key, null);
+    const records = resume && saved?.signature === signature && Array.isArray(saved.records) ? [...saved.records] : [];
+    const circuit = {};
+    let paused = false, reason = '';
+    const checkpoint = () => GM_setValue(key, {signature, records, capturadoEm:new Date().toISOString()});
+    const keep = record => {const at=records.findIndex(q=>q.numero===record.numero);if(at<0)records.push(record);else records[at]=record;records.sort((a,b)=>a.numero-b.numero);checkpoint();};
+    const request = async (path, label) => {
+      onProgress({label, records:[...records]});
+      if (!await waitTecExportAction(600,1200,shouldContinue)) return {ok:false,status:0,cancelled:true};
+      let r = await fetchTecExportJson(path,shouldContinue);
+      if (!r.ok && !r.cancelled && (r.status===0 || r.status===408 || r.status===425 || r.status>=500) && shouldContinue()) {
+        onProgress({label:'Aguardando para tentar novamente…',records:[...records]});
+        if (await waitTecExportAction(4000,7000,shouldContinue)) r=await fetchTecExportJson(path,shouldContinue);
+      }
+      if (!r.ok && !r.cancelled && (r.status===0 || r.status===401 || r.status===402 || r.status===429 || r.status===408 || r.status===425 || r.status>=500 || r.sessionExpired || /sessão expirada/i.test(r.error || ''))) {paused=true;reason=tecExportFailure(r);}
+      return r;
+    };
+    for (const target of targets) {
+      if (!shouldContinue() || paused) break;
+      const previous=records.find(q=>q.numero===target.number && (!target.id || q.idQuestao===String(target.id)));
+      if (previous && Object.values(previous.status).every(s=>s==='OK')) continue;
+      const cadernoId = context.key.match(/^caderno:(\d+)$/)?.[1];
+      let q, base;
+      if (previous?.rawQuestao && previous.status.questao === 'OK') {
+        q=previous.rawQuestao;base={ok:true,status:200};
+      } else if (cadernoId) {
+        base=await request(`/api/cadernos/${cadernoId}/questoes/${target.number}?atualizarCronometro=false`,`Questão ${target.number}: enunciado e alternativas`);
+        q=base.ok ? base.json?.questao : null;
+      } else {q=getAngularVm().vm?.questao;base={ok:!!q,status:200};}
+      if (!shouldContinue() || base.cancelled) break;
+      if (!q || (target.id && String(q.idQuestao)!==String(target.id))) {
+        const record=buildTecExportRecord(q,target,context,{},forumOrder);
+        if (!base.ok) {record.status.questao='Erro: '+tecExportFailure(base);record.diagnosticos=[record.status.questao];}
+        if (!q && !paused && (base.status===200 || base.status===403)) {paused=true;reason='O TEC não disponibilizou a questão. Confira sua sessão e o acesso ao caderno. '+tecExportFailure(base);}
+        keep(record); continue;
+      }
+      const sections = {};
+      if (previous?.status.comentario==='OK') sections.comment={ok:true,status:200,json:{comentario:{nomeProfessor:previous.comentarioProfessor.professor,textoComentario:previous.comentarioProfessor.html,dataPublicacaoComentario:previous.comentarioProfessor.data}}};
+      if (previous?.status.desempenho==='OK') sections.performance={ok:true,status:200,json:{desempenho:previous.desempenho}};
+      if (previous?.status.forum==='OK') sections.forum={ok:true,status:200,json:{comentarios:{pageComentarios:{resultCount:previous.forumTotalPosts,list:previous.forum.map(p=>({apelidoUsuario:p.usuario,dataPublicacao:p.data,quantidadeVoto:p.votos,comentario:p.html}))}}}};
+      const endpoints = [
+        ['comment',`/api/questoes/${q.idQuestao}/comentario?tokenPreVisualizacao=`,'comentário do professor'],
+        ['performance',`/api/questoes/${q.idQuestao}/desempenho`,'desempenho'],
+        ['forum',`/api/discussoes/${q.idQuestao}/comentarios-alunos?ordenarPor=${forumOrder}&pagina=1`,'fórum'],
+      ];
+      for (const [type,path,label] of endpoints) {
+        if (!shouldContinue() || paused) break;
+        const r=sections[type] || circuit[type] || await request(path,`Questão ${target.number}: ${label}`);
+        sections[type]=r;
+        if (!r.ok && /limite|cota|quota/i.test(tecExportFailure(r))) circuit[type]=r;
+        keep(buildTecExportRecord(q,target,context,sections,forumOrder));
+      }
+      keep(buildTecExportRecord(q,target,context,sections,forumOrder));
+      if (!shouldContinue() || paused) break;
+      const remaining=targets.some(t=>t.number>target.number);
+      if (remaining && !await waitTecExportAction(2500,4500,shouldContinue)) break;
+      if (remaining && (targets.indexOf(target)+1)%40===0) {
+        onProgress({label:'Pausa entre lotes; a coleta será retomada…',records:[...records]});
+        if (!await waitTecExportAction(45000,75000,shouldContinue)) break;
+      }
+    }
+    checkpoint();
+    return {records,completed:!paused && shouldContinue(),cancelled:!shouldContinue(),paused,reason};
+  }
+
+  function showSpreadsheetExportPanel() {
+    if (batchBusy || isProcessing) {showToast('Aguarde a operação atual terminar.', 'warning');return;}
+    syncQuestionMap();
+    const context=getQuestionMapContext();
+    if (!context.key || !context.currentId || !context.currentNumber) {showToast('Abra uma questão e aguarde carregar.', 'warning');return;}
+    document.getElementById('tec-export-overlay')?.remove();
+    const selected=getMarkedQuestions(context);
+    const overlay=document.createElement('div'); overlay.id='tec-export-overlay';overlay.className='tec-modal-overlay';
+    overlay.innerHTML=`<div class="tec-modal tec-export-modal" role="dialog" aria-modal="true" aria-labelledby="tec-export-title"><div class="tec-modal-header"><h2 id="tec-export-title">Exportar para planilha</h2><button class="tec-modal-close" aria-label="Fechar exportação">×</button></div><div class="tec-modal-body"><p>Questão completa, comentário do professor, desempenho e dois comentários do fórum.</p><label for="tec-export-scope">Quais questões?</label><select id="tec-export-scope"><option value="current">Questão atual (${context.currentNumber})</option><option value="selected" ${!selected.length?'disabled':''} ${selected.length?'selected':''}>Marcadas (${selected.length})</option><option value="all" ${context.total<=1?'disabled':''}>Caderno inteiro (${context.total})</option></select><label for="tec-export-forum-order">Comentários do fórum</label><select id="tec-export-forum-order"><option value="votos">Dois mais votados</option><option value="data">Dois primeiros na ordem por data</option></select><label class="tec-export-resume"><input type="checkbox" id="tec-export-resume"> Continuar a coleta salva, sem refazer os dados prontos</label><p class="tec-export-note">A planilha CSV abre no Excel. Textos, links de imagens e dados completos ficam preservados. A coleta usa sua sessão do TEC e não movimenta a questão aberta.</p><p id="tec-export-progress" role="status" aria-live="polite">Pronto para coletar.</p></div><div class="tec-modal-footer"><button class="tec-btn tec-btn-cancel" id="tec-export-json" hidden>Dados completos (JSON)</button><button class="tec-btn tec-btn-cancel" id="tec-export-download" hidden>Baixar planilha</button><button class="tec-btn tec-btn-cancel" id="tec-export-stop" hidden>Parar</button><button class="tec-btn tec-btn-save" id="tec-export-start">Coletar e baixar</button></div></div>`;
+    document.body.appendChild(overlay);
+    let running=false, lastRecords=[];
+    const start=overlay.querySelector('#tec-export-start'), stop=overlay.querySelector('#tec-export-stop'), progress=overlay.querySelector('#tec-export-progress');
+    const scope=overlay.querySelector('#tec-export-scope'), order=overlay.querySelector('#tec-export-forum-order');
+    const close=()=>{if(running){batchRunning=false;return;}overlay.remove();document.getElementById('tec-btn-more')?.focus();};
+    overlay.querySelector('.tec-modal-close').addEventListener('click',close);
+    overlay.addEventListener('keydown',event=>{if(event.key==='Escape'){event.stopPropagation();close();}});
+    stop.addEventListener('click',()=>{batchRunning=false;progress.textContent='Interrompendo; os dados já coletados serão preservados…';});
+    overlay.querySelector('#tec-export-download').addEventListener('click',()=>downloadTecExport(lastRecords,context));
+    overlay.querySelector('#tec-export-json').addEventListener('click',()=>downloadTecExport(lastRecords,context,'json'));
+    start.addEventListener('click',async()=>{
+      if(running || batchBusy || isProcessing)return;
+      const targets=scope.value==='all' ? Array.from({length:context.total},(_,i)=>({number:i+1,id:loadQuestionMap(context).entries[i+1]?.id || null})) : scope.value==='selected' ? selected : [{number:context.currentNumber,id:context.currentId}];
+      running=true;start.disabled=true;scope.disabled=true;order.disabled=true;overlay.querySelector('#tec-export-resume').disabled=true;stop.hidden=false;
+      overlay.querySelector('#tec-export-download').hidden=true;overlay.querySelector('#tec-export-json').hidden=true;
+      try {
+        await runBatchOperation(async()=>{
+          const result=await collectTecSpreadsheet(context,targets,{forumOrder:order.value,resume:overlay.querySelector('#tec-export-resume').checked,shouldContinue:()=>batchRunning && getQuestionMapContext().key===context.key,onProgress:state=>{lastRecords=state.records;progress.textContent=`${state.label} · ${state.records.length}/${targets.length}`;}});
+          lastRecords=result.records;
+          const gaps=result.records.filter(q=>Object.values(q.status).some(s=>s!=='OK')).length;
+          progress.textContent=`${result.paused?'Pausada: '+result.reason:result.cancelled?'Coleta interrompida':'Coleta concluída'} · ${lastRecords.length}/${targets.length} questões${gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':''}.`;
+          if(result.completed && lastRecords.length)downloadTecExport(lastRecords,context);
+        });
+      } catch(err){progress.textContent=`Coleta interrompida: ${err.message}. Os dados parciais foram mantidos.`;}
+      finally {
+        running=false;start.disabled=false;scope.disabled=false;order.disabled=false;overlay.querySelector('#tec-export-resume').disabled=false;overlay.querySelector('#tec-export-resume').checked=true;stop.hidden=true;start.textContent='Continuar coleta';
+        overlay.querySelector('#tec-export-download').hidden=!lastRecords.length;overlay.querySelector('#tec-export-json').hidden=!lastRecords.length;
+      }
+    });
+    scope.focus();
+  }
+
   const uiSvg = body => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const UI_ICON = {
+    spreadsheet: uiSvg('<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 9v12"/>'),
     bookmark: uiSvg('<path d="M6 4h12v17l-6-4-6 4z"/>'),
     grid: uiSvg('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>'),
     more: uiSvg('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'),
@@ -5550,7 +5828,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     const state = loadQuestionMap(context);
     const marked = getMarkedQuestions(context);
     const current = state.entries[context.currentNumber];
-    for (const id of ['tec-btn-save', 'tec-btn-batch']) {
+    for (const id of ['tec-btn-save', 'tec-btn-batch', 'tec-btn-export']) {
       const button = document.getElementById(id);
       if (button) button.disabled = batchBusy || isProcessing;
     }
@@ -5658,6 +5936,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
         <div class="tec-menu-heading">Questões</div>
         <button id="tec-btn-save" title="Gerar questão atual (Shift+Enter)">${toolbarButtonContent('cards', 'Gerar questão atual')}</button>
         <button id="tec-btn-batch">${toolbarButtonContent('errors', 'Processar erros do caderno')}</button>
+        <button id="tec-btn-export">${toolbarButtonContent('spreadsheet', 'Exportar para planilha')}</button>
         <button id="tec-btn-thought">${toolbarButtonContent('thought', 'Anotar raciocínio')}</button>
         <div class="tec-menu-divider"></div>
         <button id="tec-btn-vespera">${toolbarButtonContent('target', 'Revisão de véspera')}</button>
@@ -5672,6 +5951,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
     document.getElementById('tec-btn-save').addEventListener('click', () => processCurrentQuestion());
     document.getElementById('tec-btn-batch').addEventListener('click', () => processBatchQuestions());
+    document.getElementById('tec-btn-export').addEventListener('click', () => showSpreadsheetExportPanel());
     document.getElementById('tec-btn-map').addEventListener('click', toggleQuestionMap);
     document.getElementById('tec-btn-more').addEventListener('click', () => setToolsMenuOpen(document.getElementById('tec-tools-menu').hidden));
     toolbar.querySelector('#tec-tools-menu').addEventListener('click', event => {
@@ -5914,6 +6194,171 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     simulateKey('ArrowLeft', 37);
   }
 
+  function planQuestionTargetRoute(targets, start, total) {
+    const unique = new Map();
+    for (const target of targets) {
+      if (!Number.isInteger(target.number) || target.number < 1 || target.number > total) continue;
+      const id = target.id ? String(target.id) : null;
+      unique.set(id ? `id:${id}` : `number:${target.number}`, { number: target.number, id });
+    }
+    const ordered = [...unique.values()].sort((a, b) => a.number - b.number);
+    if (!ordered.length) return ordered;
+    // Visiting the nearer end first avoids a detour outside the selected range.
+    // Together with the return to start, either sweep covers the minimum interval.
+    if (Math.abs(start - ordered[0].number) > Math.abs(start - ordered.at(-1).number)) ordered.reverse();
+    return [...ordered.filter(target => target.number === start), ...ordered.filter(target => target.number !== start)];
+  }
+
+  function resolveQuestionTargets(targets, context) {
+    const { vm } = getAngularVm();
+    const roster = vm?.questoes;
+    const ids = Array.isArray(roster) ? roster.map(item => item?.idQuestao ? String(item.idQuestao) : null) : [];
+    // Only use an ordinal roster when it is complete, unique, and agrees with
+    // the question currently shown. No guessed controller method is invoked.
+    const verifiedRoster = ids.length === context.total && ids.every(Boolean) &&
+      new Set(ids).size === ids.length && ids[context.currentNumber - 1] === context.currentId;
+    const entries = loadQuestionMap(context).entries;
+    return targets.map(target => {
+      const id = target.id ? String(target.id) : null;
+      const rosterIndex = id && verifiedRoster ? ids.indexOf(id) : -1;
+      const storedPosition = id ? Object.entries(entries).find(([number, entry]) =>
+        Number.isInteger(Number(number)) && entry?.id === id)?.[0] : null;
+      const number = rosterIndex >= 0 ? rosterIndex + 1 : storedPosition ? Number(storedPosition) : target.number;
+      return { number, id: id || (verifiedRoster ? ids[number - 1] : null) || null };
+    });
+  }
+
+  function nativeNavigationText(element) {
+    const attributes = ['title', 'aria-label', 'data-original-title', 'data-tooltip', 'uib-tooltip', 'tooltip']
+      .map(name => element.getAttribute(name) || '').join(' ');
+    const labelledBy = (element.getAttribute('aria-labelledby') || '').split(/\s+/)
+      .map(id => document.getElementById(id)?.textContent || '').join(' ');
+    return `${element.textContent || ''} ${attributes} ${labelledBy}`
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  }
+
+  function nativeNavigationVisible(element) {
+    if (element.disabled || element.closest('#tec-anki-toolbar, #tec-question-map, .tec-modal-overlay')) return false;
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (node.hidden || style.display === 'none' || style.visibility === 'hidden') return false;
+    }
+    return true;
+  }
+
+  function findNativeQuestionJumpDialog() {
+    const candidates = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], md-dialog, .modal, .bootbox, .swal2-popup, [class*="dialog"]')];
+    // Some TEC dialogs have no ARIA role. Restrict the fallback to the native
+    // wording and its immediate ancestors, rather than choosing any page input.
+    for (const label of document.querySelectorAll('h1,h2,h3,h4,h5,strong,p,label,span,div')) {
+      if (label.children.length || !/acessar questao (?:por|pelo) numero|deseja acessar qual questao/i.test(nativeNavigationText(label))) continue;
+      let node = label.parentElement;
+      for (let depth = 0; node && node !== document.body && depth < 4; depth++, node = node.parentElement) candidates.push(node);
+    }
+    for (const container of candidates) {
+      if (!/acessar questao (?:por|pelo) numero|deseja acessar qual questao|\bir para\b/i.test(nativeNavigationText(container))) continue;
+      const input = [...container.querySelectorAll('input:not([type="hidden"])')].find(element =>
+        !element.readOnly && ['text', 'number', 'tel'].includes(element.type) && nativeNavigationVisible(element));
+      const buttons = [...container.querySelectorAll('button, input[type="submit"], input[type="button"]')].filter(nativeNavigationVisible);
+      const confirm = buttons.find(element => /^\s*(?:ok|ir|acessar|confirmar)(?:\s|$)/i.test(element.value || element.textContent || ''));
+      if (input && confirm) return { container, input, confirm };
+    }
+    return null;
+  }
+
+  async function waitForQuestionPosition(number, previousId, context, shouldContinue, timeout = 10000) {
+    for (let elapsed = 0; elapsed <= timeout; elapsed += 100) {
+      if (!shouldContinue()) return false;
+      const current = getQuestionMapContext();
+      if (current.key !== context.key) return false;
+      if (current.currentNumber === number && current.currentId && current.currentId !== previousId) {
+        await settleQuestionState(current.currentId);
+        return shouldContinue() && getQuestionMapContext().currentNumber === number;
+      }
+      if (elapsed < timeout) await delay(100);
+    }
+    throw new Error(`O TEC não confirmou a navegação para a questão ${number}. As marcações foram mantidas.`);
+  }
+
+  async function tryNativeQuestionJump(number, context, shouldContinue) {
+    let dialog = findNativeQuestionJumpDialog();
+    const control = dialog ? null : [...document.querySelectorAll('button,a,[role="button"]')].find(element =>
+      nativeNavigationVisible(element) && /acessar questao (?:por|pelo) numero|\bir para\b/i.test(nativeNavigationText(element)));
+    if (!dialog && !control) return 'unavailable';
+    if (!await waitTecAction('navigate', shouldContinue)) return 'cancelled';
+    const previousId = getQuestionMapContext().currentId;
+    if (!dialog) {
+      realClick(control);
+      for (let attempt = 0; attempt < 20 && shouldContinue(); attempt++) {
+        dialog = findNativeQuestionJumpDialog();
+        if (dialog) break;
+        await delay(100);
+      }
+    }
+    if (!shouldContinue()) return 'cancelled';
+    if (!dialog) throw new Error('O diálogo de acesso por número não ficou disponível. A coleta foi interrompida e as marcações foram mantidas.');
+    const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (valueSetter) valueSetter.call(dialog.input, String(number)); else dialog.input.value = String(number);
+    dialog.input.dispatchEvent(new Event('input', { bubbles: true }));
+    dialog.input.dispatchEvent(new Event('change', { bubbles: true }));
+    if (!shouldContinue()) return 'cancelled';
+    realClick(dialog.confirm);
+    return await waitForQuestionPosition(number, previousId, context, shouldContinue) ? 'jumped' : 'cancelled';
+  }
+
+  async function navigateToQuestionNumber(number, context, shouldContinue) {
+    if (!shouldContinue()) return false;
+    let current = getQuestionMapContext();
+    if (!Number.isInteger(number) || number < 1 || number > context.total || current.key !== context.key) return false;
+    if (current.currentNumber === number) return true;
+    const nativeResult = await tryNativeQuestionJump(number, context, shouldContinue);
+    if (nativeResult !== 'unavailable') return nativeResult === 'jumped';
+    // The fallback walks only the distance to the next selected target, never
+    // the entire notebook. Every step is checked before issuing another one.
+    for (let steps = 0; steps < context.total && shouldContinue(); steps++) {
+      current = getQuestionMapContext();
+      if (current.currentNumber === number) return true;
+      if (!current.currentNumber || current.key !== context.key) return false;
+      const next = current.currentNumber + (number > current.currentNumber ? 1 : -1);
+      if (!await waitTecAction('navigate', shouldContinue)) return false;
+      if (next > current.currentNumber) navigateToNextQuestion(); else navigateToPrevQuestion();
+      if (!await waitForQuestionPosition(next, current.currentId, context, shouldContinue)) return false;
+    }
+    return shouldContinue() && getQuestionMapContext().currentNumber === number;
+  }
+
+  async function collectQuestionTargets(targets, context, { onProgress = () => {} } = {}) {
+    const route = planQuestionTargetRoute(resolveQuestionTargets(targets, context), context.currentNumber, context.total);
+    const collected = [], missing = [];
+    const active = () => batchRunning && getQuestionMapContext().key === context.key;
+    try {
+      for (const target of route) {
+        if (!await navigateToQuestionNumber(target.number, context, active)) break;
+        const current = getQuestionMapContext();
+        if (target.id && target.id !== current.currentId) { missing.push(target); continue; }
+        await settleQuestionState(current.currentId);
+        const sameQuestion = () => active() && getQuestionMapContext().currentId === current.currentId;
+        if (!sameQuestion()) break;
+        syncQuestionMap();
+        await ensureCommentExpanded(sameQuestion);
+        if (!sameQuestion()) break;
+        const data = extractQuestionData();
+        if (data.id !== current.currentId || !data.enunciado || !data.gabarito) {
+          missing.push(target);
+        } else {
+          data.selecaoManual = true;
+          const thought = getStoredThought(data.id);
+          if (thought) data.pensamentoAluno = thought;
+          collected.push(data);
+        }
+        onProgress({ collected: collected.length, total: route.length, number: current.currentNumber });
+      }
+    } finally {
+      if (active()) await navigateToQuestionNumber(context.currentNumber, context, active);
+    }
+    return { collected, missing, cancelled: !active() };
+  }
+
   /**
    * O TEC troca vm.questao.idQuestao ANTES de terminar de popular a resolu\u00e7\u00e3o
    * da nova quest\u00e3o. Sem esperar o estado assentar, a classifica\u00e7\u00e3o do batch
@@ -6069,66 +6514,22 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     if (!marked.length) { showToast('Marque pelo menos uma questão para gerar card.', 'info'); return; }
     if (!context.currentId || !context.currentNumber) { showToast('Aguarde a questão carregar antes de gerar.', 'warning'); return; }
     return runBatchOperation(async () => {
-      const collected = [];
-      const found = new Set();
       const loading = showLoadingToast('Coletando as questões marcadas…');
-      const active = () => batchRunning && getQuestionMapContext().key === context.key;
+      let result;
       try {
-        // Volta ao início para também encontrar IDs que mudaram de posição.
-        while (active() && getQuestionMapContext().currentNumber > 1) {
-          const previous = getQuestionMapContext();
-          if (!await waitTecAction('navigate', active)) break;
-          navigateToPrevQuestion();
-          if (!await waitForQuestionChange(previous.currentId)) throw new Error('O TEC não mudou de questão. As marcações foram mantidas.');
-        }
-        const visited = new Set();
-        for (let i = 0; i < (context.total || 1) && active(); i++) {
-          const current = getQuestionMapContext();
-          if (!current.currentId || visited.has(current.currentId)) break;
-          visited.add(current.currentId);
-          const selected = marked.find(entry => entry.id ? entry.id === current.currentId : entry.number === current.currentNumber);
-          if (selected && !found.has(selected)) {
-            await settleQuestionState(current.currentId);
-            const sameQuestion = () => active() && getQuestionMapContext().currentId === current.currentId;
-            if (!sameQuestion()) break;
-            syncQuestionMap();
-            await ensureCommentExpanded(sameQuestion);
-            if (!sameQuestion()) break;
-            const data = extractQuestionData();
-            if (data.id !== current.currentId || !data.enunciado || !data.gabarito) {
-              showToast(`Questão ${current.currentNumber}: dados ou gabarito indisponíveis. A marcação foi mantida.`, 'warning', 6000);
-            } else {
-              data.selecaoManual = true;
-              const thought = getStoredThought(data.id);
-              if (thought) data.pensamentoAluno = thought;
-              collected.push(data);
-              found.add(selected);
-            }
-          }
+        result = await collectQuestionTargets(marked, context, { onProgress: progress => {
           const text = loading.querySelector('span:last-child');
-          if (text) text.textContent = `Coletando marcadas: ${collected.length}/${marked.length} · questão ${current.currentNumber}`;
-          if (found.size === marked.length || current.currentNumber >= context.total) break;
-          if (!await waitTecAction('navigate', active)) break;
-          navigateToNextQuestion();
-          if (!await waitForQuestionChange(current.currentId)) throw new Error('A navegação parou antes de completar a coleta. As marcações foram mantidas.');
-        }
+          if (text) text.textContent = `Coletando marcadas: ${progress.collected}/${progress.total} · questão ${progress.number}`;
+        } });
       } finally {
         loading.remove();
-        // Só restaura na conclusão normal. "Parar" interrompe todas as ações.
-        if (active()) {
-          for (let i = 0; i < (context.total || 1); i++) {
-            const current = getQuestionMapContext();
-            if (!current.currentNumber || current.currentNumber === context.currentNumber) break;
-            if (!await waitTecAction('navigate', active)) break;
-            if (current.currentNumber > context.currentNumber) navigateToPrevQuestion(); else navigateToNextQuestion();
-            if (!await waitForQuestionChange(current.currentId)) break;
-          }
-        }
       }
-      if (!active()) { showToast('Coleta interrompida. As marcações foram mantidas.', 'info'); return; }
-      if (!collected.length) { showToast('Nenhuma questão marcada está pronta para gerar. As marcações foram mantidas.', 'warning'); return; }
-      if (collected.length < marked.length) showToast(`${marked.length - collected.length} questão(ões) não coletada(s) continuam marcadas.`, 'warning');
-      await processCollectedQuestions(collected, { manual: true, mapContext: context });
+      if (result.cancelled) { showToast('Coleta interrompida. As marcações foram mantidas.', 'info'); return; }
+      if (result.missing.length || result.collected.length !== marked.length) {
+        showToast('Não foi possível coletar todas as questões marcadas. Nenhum card foi gerado; as marcações foram mantidas.', 'warning', 6000);
+        return;
+      }
+      await processCollectedQuestions(result.collected, { manual: true, mapContext: context });
     });
   }
 

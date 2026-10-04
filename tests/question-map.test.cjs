@@ -39,17 +39,47 @@ function harness(t, options = {}) {
   });
   const controller = { caderno: { idCaderno: cadernoId, totalQuestoes: questions.length }, questoes: questions };
   let position = 1;
+  const navigation = [], nativeJumps = [], arrowMoves = [];
   function navigate(number) {
     position = Math.max(1, Math.min(questions.length, number));
+    navigation.push(position);
     controller.questao = questions[position - 1];
     window.document.getElementById('question-position').textContent = `Questão ${position} de ${questions.length}`;
     window.document.querySelector('.questao-enunciado').innerHTML = controller.questao.enunciado;
   }
   navigate(options.position || 1);
   window.document.addEventListener('keydown', event => {
-    if (event.key === 'ArrowRight') navigate(position + 1);
-    if (event.key === 'ArrowLeft') navigate(position - 1);
+    if (event.key === 'ArrowRight') { arrowMoves.push(1); navigate(position + 1); }
+    if (event.key === 'ArrowLeft') { arrowMoves.push(-1); navigate(position - 1); }
   });
+  if (options.nativeJump) {
+    const control = window.document.createElement('button');
+    control.title = 'Acessar questão pelo número';
+    window.document.body.appendChild(control);
+    if (options.nativeJump === 'labelledby') {
+      control.removeAttribute('title');
+      const label = window.document.createElement('span');
+      label.id = 'native-jump-label';
+      label.textContent = 'Acessar questão pelo número';
+      label.hidden = true;
+      window.document.body.appendChild(label);
+      control.setAttribute('aria-labelledby', label.id);
+    }
+    control.addEventListener('click', () => {
+      const dialog = window.document.createElement('div');
+      dialog.setAttribute('role', 'dialog');
+      dialog.innerHTML = `<h3>Acessar questão por número</h3><p>Deseja acessar qual questão do caderno? (número entre 1 e ${questions.length})</p><input type="text" value="${position}"><button>OK</button><button>CANCELAR</button>`;
+      window.document.body.appendChild(dialog);
+      const [confirm, cancel] = dialog.querySelectorAll('button');
+      confirm.addEventListener('click', () => {
+        const number = Number(dialog.querySelector('input').value);
+        nativeJumps.push(number);
+        if (options.nativeJump !== 'fails') navigate(number);
+        dialog.remove();
+      });
+      cancel.addEventListener('click', () => dialog.remove());
+    });
+  }
   window.unsafeWindow = window;
   window.angular = { element: () => ({ scope: () => ({ vm: controller }) }) };
   window.GM_getValue = (key, fallback) => storage.has(key) ? clone(storage.get(key)) : clone(fallback);
@@ -75,7 +105,7 @@ function harness(t, options = {}) {
   const api = window.__tecTest;
   api.override('delay', async () => {});
   api.override('updateStatusDot', async () => {});
-  return { window, document: window.document, storage, controller, questions, navigate, api,
+  return { window, document: window.document, storage, controller, questions, navigate, navigation, nativeJumps, arrowMoves, api,
     run: (name, ...args) => api.run(name, ...args),
     override: (name, value) => api.override(name, value),
   };
@@ -412,4 +442,101 @@ test('the existing errors action retains its wrong-answer filter through the sha
   assert.deepEqual(events.filter(e => e.stage === 'dual'), [{ stage: 'dual', id: '500002', errou: true }]);
   assert.deepEqual(events.filter(e => e.stage === 'anki').map(e => e.id), ['500002']);
   assert.deepEqual(clone(h.run('getMarkedQuestions')), [{ number: 1, id: '500001' }]);
+});
+
+const notebook17 = () => Array.from({ length: 17 }, (_, index) => question(500001 + index));
+
+test('native access by number jumps directly from question 5 to selected targets and restores 5', async t => {
+  const h = harness(t, { questions: notebook17(), position: 5, nativeJump: true });
+  h.override('ensureCommentExpanded', async () => {});
+  h.override('batchRunning', true);
+  const result = await h.run('collectQuestionTargets', [{ number: 8, id: null }, { number: 17, id: null }], h.run('getQuestionMapContext'));
+  assert.deepEqual(h.navigation, [5, 8, 17, 5]);
+  assert.deepEqual(h.nativeJumps, [8, 17, 5]);
+  assert.deepEqual(h.arrowMoves, []);
+  assert.deepEqual(clone(result.collected).map(q => q.id), ['500008', '500017']);
+  assert.ok(result.collected.every(q => q.errou === false));
+  assert.equal(result.cancelled, false);
+  assert.equal(result.missing.length, 0);
+});
+
+test('without native access the arrow fallback covers the minimum selected interval without visiting question 1', async t => {
+  const h = harness(t, { questions: notebook17(), position: 5 });
+  h.override('ensureCommentExpanded', async () => {});
+  h.override('batchRunning', true);
+  const result = await h.run('collectQuestionTargets', [{ number: 8, id: null }, { number: 17, id: null }], h.run('getQuestionMapContext'));
+  assert.equal(Math.min(...h.navigation), 5);
+  assert.equal(h.arrowMoves.length, 24);
+  assert.equal(h.navigation.at(-1), 5);
+  assert.deepEqual(clone(result.collected).map(q => q.id), ['500008', '500017']);
+  assert.deepEqual(h.nativeJumps, []);
+});
+
+test('native access also recognizes an icon button named by its accessible label', async t => {
+  const h = harness(t, { questions: notebook17(), position: 5, nativeJump: 'labelledby' });
+  h.override('ensureCommentExpanded', async () => {});
+  h.override('batchRunning', true);
+  const result = await h.run('collectQuestionTargets', [{ number: 8, id: null }], h.run('getQuestionMapContext'));
+  assert.deepEqual(h.nativeJumps, [8, 5]);
+  assert.deepEqual(h.arrowMoves, []);
+  assert.equal(result.collected.length, 1);
+});
+
+test('the target route starts with a selected current question and otherwise approaches the nearest extreme', t => {
+  const h = harness(t);
+  const targets = [{ number: 2, id: '500002' }, { number: 5, id: '500005' }, { number: 17, id: '500017' }];
+  assert.deepEqual(clone(h.run('planQuestionTargetRoute', targets, 5, 17)).map(q => q.number), [5, 2, 17]);
+  assert.deepEqual(clone(h.run('planQuestionTargetRoute', targets, 15, 17)).map(q => q.number), [17, 5, 2]);
+});
+
+test('a complete roster verified against the current question locates a marked ID at its reordered ordinal', async t => {
+  const h = harness(t, { questions: notebook17(), position: 5, nativeJump: true });
+  h.override('ensureCommentExpanded', async () => {});
+  h.override('batchRunning', true);
+  const result = await h.run('collectQuestionTargets', [{ number: 3, id: '500008' }], h.run('getQuestionMapContext'));
+  assert.deepEqual(h.nativeJumps, [8, 5]);
+  assert.deepEqual(clone(result.collected).map(q => q.id), ['500008']);
+});
+
+test('a native jump that fails confirmation never falls back to arrows or sends cards to AI', async t => {
+  const h = harness(t, { questions: notebook17(), position: 5, nativeJump: 'fails' });
+  const events = offlinePipeline(h);
+  h.run('syncQuestionMap');
+  h.run('setQuestionCardSelection', 8, true);
+  await h.run('processMarkedQuestions');
+  assert.deepEqual(h.nativeJumps, [8]);
+  assert.deepEqual(h.arrowMoves, []);
+  assert.equal(events.length, 0);
+  assert.deepEqual(clone(h.run('getMarkedQuestions')).map(q => q.number), [8]);
+});
+
+test('a missing marked ID prevents partial generation and retains all selections', async t => {
+  const h = harness(t, { questions: notebook17(), position: 5, nativeJump: true });
+  const events = offlinePipeline(h);
+  h.run('syncQuestionMap');
+  h.run('setQuestionCardSelection', 8, true);
+  h.run('setQuestionCardSelection', 17, true);
+  const key = `tecQuestionMap:v1:${h.run('getQuestionMapContext').key}`;
+  const state = h.storage.get(key);
+  state.entries['8'].id = '999999';
+  await h.run('processMarkedQuestions');
+  assert.deepEqual(h.navigation, [5, 8, 17, 5]);
+  assert.equal(events.length, 0);
+  assert.deepEqual(clone(h.run('getMarkedQuestions')).map(q => q.number), [8, 17]);
+});
+
+test('stopping between direct jumps generates nothing and issues no return jump', async t => {
+  const h = harness(t, { questions: notebook17(), position: 5, nativeJump: true });
+  const events = offlinePipeline(h);
+  h.run('syncQuestionMap');
+  h.run('setQuestionCardSelection', 8, true);
+  h.run('setQuestionCardSelection', 17, true);
+  h.override('delay', async ms => {
+    if (ms === 100 && h.navigation.includes(8)) h.override('batchRunning', false);
+  });
+  await h.run('processMarkedQuestions');
+  assert.deepEqual(h.navigation, [5, 8]);
+  assert.deepEqual(h.nativeJumps, [8]);
+  assert.equal(events.length, 0);
+  assert.deepEqual(clone(h.run('getMarkedQuestions')).map(q => q.number), [8, 17]);
 });
