@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.19.3
+// @version      1.19.4
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
