@@ -28,22 +28,29 @@ function harness(t, options = {}) {
   const storage = options.storage || new Map();
   const questions = options.questions || [question(500001), question(500002, false), question(500003, null)];
   const cadernoId = options.cadernoId || 104859318;
-  const dom = new JSDOM('<!doctype html><body><div ng-controller="ResolverController"><p id="question-position"></p><div class="questao-enunciado" tec-formatar-html="vm.questao.enunciado"></div></div></body>', {
+  const dom = new JSDOM('<!doctype html><body><div class="questao" ng-controller="ResolverController"><div class="questao-cabecalho"><a id="current-question-link"></a></div><p id="question-position"></p><div class="questao-enunciado" tec-formatar-html="vm.questao.enunciado"></div></div></body>', {
     url: options.url || `https://www.tecconcursos.com.br/questoes/cadernos/${cadernoId}/resolver`,
     runScripts: 'outside-only', pretendToBeVisual: true,
   });
   t.after(() => dom.window.close());
   const { window } = dom;
+  let clock = 0;
+  window.Date.now = () => clock;
   Object.defineProperty(window.HTMLElement.prototype, 'innerText', {
     configurable: true, get() { return this.textContent; }, set(value) { this.textContent = value; },
   });
-  const controller = { caderno: { idCaderno: cadernoId, totalQuestoes: questions.length }, questoes: questions };
+  const controller = { caderno: { idCaderno: cadernoId, totalQuestoes: questions.length,
+    numeroTotalQuestoes: questions.length }, questoes: questions };
   let position = 1;
   const navigation = [], nativeJumps = [], arrowMoves = [];
   function navigate(number) {
     position = Math.max(1, Math.min(questions.length, number));
     navigation.push(position);
     controller.questao = questions[position - 1];
+    controller.caderno.numeroQuestaoAtual = position;
+    const questionLink = window.document.getElementById('current-question-link');
+    questionLink.href = `/questoes/${controller.questao.idQuestao}`;
+    questionLink.textContent = `#${controller.questao.idQuestao}`;
     window.document.getElementById('question-position').textContent = `Questão ${position} de ${questions.length}`;
     window.document.querySelector('.questao-enunciado').innerHTML = controller.questao.enunciado;
   }
@@ -103,11 +110,13 @@ function harness(t, options = {}) {
   })();`;
   vm.runInContext(instrumented, dom.getInternalVMContext(), { filename: sourcePath });
   const api = window.__tecTest;
-  api.override('delay', async () => {});
+  api.override('delay', async ms => { clock += ms; });
   api.override('updateStatusDot', async () => {});
   return { window, document: window.document, storage, controller, questions, navigate, navigation, nativeJumps, arrowMoves, api,
     run: (name, ...args) => api.run(name, ...args),
-    override: (name, value) => api.override(name, value),
+    override: (name, value) => api.override(name, name === 'delay' ? async ms => { clock += ms; return value(ms); } : value),
+    advanceTime: ms => { clock += ms; },
+    now: () => clock,
   };
 }
 
@@ -145,6 +154,105 @@ test('choice made before answering is retained after the answer arrives', t => {
   h.run('syncQuestionMap');
   assert.equal(h.run('loadQuestionMap', h.run('getQuestionMapContext')).entries['3'].selected, true);
   assert.equal(h.run('extractQuestionData').errou, false);
+});
+
+test('string alternative indices retain the official answer and the student response', t => {
+  const h = harness(t);
+  Object.assign(h.controller.questao, {
+    tipoQuestao: 'MULTIPLA_ESCOLHA', alternativas: ['Primeira', 'Segunda', 'Terceira'],
+    numeroAlternativaCorreta: '3', alternativaSelecionada: '3', correcaoQuestao: true,
+  });
+  const data = h.run('extractQuestionData');
+  assert.equal(data.gabarito, 'C');
+  assert.equal(data.respostaAluno, 'C');
+  assert.equal(data.errou, false);
+  assert.deepEqual(clone(data.alternativas).map(a => [a.selecionada, a.correta]),
+    [[false, false], [false, false], [true, true]]);
+  h.controller.questao.alternativaSelecionada = '2';
+  h.controller.questao.correcaoQuestao = false;
+  assert.equal(h.run('extractQuestionData').respostaAluno, 'B');
+  assert.equal(h.run('extractQuestionData').errou, true);
+});
+
+test('missing or invalid alternative indices never invent an official answer', t => {
+  const h = harness(t);
+  for (const value of [null, undefined, true, false, '', 'invalid', '0', '9', '1.5']) {
+    h.controller.questao.numeroAlternativaCorreta = value;
+    h.controller.questao.alternativaSelecionada = value;
+    const data = h.run('extractQuestionData');
+    assert.equal(data.gabarito, '', `gabarito must stay absent for ${String(value)}`);
+    assert.equal(data.respostaAluno, '');
+    assert.equal(data.alternativas.some(a => a.correta || a.selecionada), false);
+  }
+});
+
+test('the active question header wins over unrelated question links elsewhere on the page', t => {
+  const h = harness(t, { position: 2 });
+  h.document.querySelector('.questao').className = 'questao-rg-area-coluna-1';
+  h.document.querySelector('.questao-cabecalho').className = 'questao-enunciado-concurso';
+  const unrelated = h.document.createElement('div');
+  unrelated.innerHTML = '<a href="/questoes/999990">#999990</a>' +
+    '<aside><a href="/questoes/999991">#999991</a></aside>' +
+    '<div hidden><a href="/questoes/999992">#999992</a></div>' +
+    '<div class="questao-comentario"><a href="/questoes/999993">#999993</a></div>';
+  h.document.body.prepend(unrelated);
+  h.controller.questao.numeroQuestaoAtual = 45; // this question field is unrelated to notebook position
+  assert.deepEqual(clone(h.run('getQuestionMapContext')), {
+    key: 'caderno:104859318', currentId: '500002', currentNumber: 2, total: 3,
+  });
+  h.run('syncQuestionMap');
+  assert.equal(h.run('loadQuestionMap').entries['2'].id, '500002');
+});
+
+test('a hidden old Angular question cannot supply the active extraction or result', t => {
+  const h = harness(t, { position: 2 });
+  const previous = h.document.createElement('div');
+  previous.hidden = true;
+  previous.innerHTML = '<div tec-formatar-html="vm.questao.enunciado">Previous question</div>';
+  h.document.body.prepend(previous);
+  const oldController = { questao: h.questions[0], caderno: h.controller.caderno };
+  h.window.angular.element = element => ({ scope: () => ({ vm: previous.contains(element) ? oldController : h.controller }) });
+  assert.equal(h.run('getAngularVm').vm, h.controller);
+  assert.equal(h.run('extractQuestionData').id, '500002');
+  assert.equal(h.run('extractQuestionData').errou, true);
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 2);
+  h.run('syncQuestionMap');
+  assert.equal(h.run('loadQuestionMap').entries['2'].result, 'err');
+});
+
+test('an ID arriving before the notebook counter cannot move a saved choice to the wrong ordinal', t => {
+  const h = harness(t);
+  h.controller.questoes = undefined;
+  h.run('syncQuestionMap');
+  h.run('setQuestionCardSelection', 1, true);
+  h.controller.questao = h.questions[2];
+  const link = h.document.getElementById('current-question-link');
+  link.href = '/questoes/500003';
+  link.textContent = '#500003';
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 0);
+  h.run('syncQuestionMap');
+  assert.deepEqual(clone(h.run('getMarkedQuestions')), [{ number: 1, id: '500001' }]);
+  assert.equal(h.run('loadQuestionMap').entries['id:500001'], undefined);
+  h.navigate(3);
+  h.run('syncQuestionMap');
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 3);
+  assert.deepEqual(clone(h.run('getMarkedQuestions')), [{ number: 1, id: '500001' }]);
+});
+
+test('notebook, displayed ordinal and header must agree before the context is writable', t => {
+  const h = harness(t);
+  h.controller.questoes = undefined;
+  h.run('getQuestionMapContext');
+  h.controller.caderno.numeroQuestaoAtual = 2;
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 0);
+  h.document.getElementById('question-position').textContent = 'Questão 2 de 3';
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 0);
+  h.controller.questao = h.questions[1];
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 0, 'the previous header still belongs to question 1');
+  h.navigate(2);
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 2);
+  h.controller.caderno.idCaderno = 999;
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 0, 'old Angular notebook cannot write to the new URL notebook');
 });
 
 test('a standalone question remains selectable from its URL when Angular is unavailable', t => {
@@ -317,6 +425,50 @@ test('automatic pacing is variable within each range and stops promptly after ca
   assert.deepEqual(chunks, [100]);
   assert.equal(await h.run('waitTecAction', 'navigate', () => false), false);
   assert.deepEqual(chunks, [100]);
+});
+
+test('background timer throttling does not multiply an automatic pacing interval', async t => {
+  const h = harness(t);
+  h.window.Math.random = () => 0;
+  const chunks = [];
+  h.override('delay', async ms => { chunks.push(ms); h.advanceTime(Math.max(1000 - ms, 0)); });
+  assert.equal(await h.run('waitTecAction', 'navigate'), true);
+  assert.deepEqual(chunks, [100, 100]);
+  assert.equal(h.now(), 2000, 'a 1200 ms deadline needs two throttled callbacks, not twelve');
+  chunks.length = 0;
+  const start = h.now();
+  assert.equal(await h.run('waitTecAction', 'comment'), true);
+  assert.deepEqual(chunks, [100]);
+  assert.equal(h.now() - start, 1000);
+});
+
+test('navigation confirmation expires by elapsed time when timer callbacks are throttled', async t => {
+  const h = harness(t);
+  const context = h.run('getQuestionMapContext');
+  let callbacks = 0;
+  h.override('delay', async ms => { callbacks++; h.advanceTime(Math.max(1000 - ms, 0)); });
+  await assert.rejects(h.run('waitForQuestionPosition', 2, context.currentId, context, () => true, 10000),
+    /não confirmou a navegação/);
+  assert.equal(callbacks, 10);
+  assert.equal(h.now(), 10000);
+  assert.deepEqual(h.navigation, [1]);
+});
+
+test('a missing native jump dialog expires after its elapsed deadline in a background tab', async t => {
+  const h = harness(t);
+  h.window.Math.random = () => 0;
+  const button = h.document.createElement('button');
+  button.title = 'Acessar questão pelo número';
+  h.document.body.appendChild(button);
+  let callbacks = 0, clicks = 0;
+  button.addEventListener('click', () => clicks++);
+  h.override('delay', async ms => { callbacks++; h.advanceTime(Math.max(1000 - ms, 0)); });
+  await assert.rejects(h.run('tryNativeQuestionJump', 2, h.run('getQuestionMapContext'), () => true),
+    /diálogo de acesso por número não ficou disponível/);
+  assert.equal(callbacks, 4, 'two pacing callbacks plus two dialog polling callbacks');
+  assert.equal(h.now(), 4000);
+  assert.equal(clicks, 1);
+  assert.equal(h.arrowMoves.length, 0);
 });
 
 function offlinePipeline(h, decision = 'save') {

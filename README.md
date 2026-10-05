@@ -215,6 +215,8 @@ Na v1.18.1, a barra reúne somente seleção, mapa e o menu **Mais**. Geração 
 
 Na v1.19.2, a coleta das marcadas usa **Acessar questão pelo número**, do próprio TEC, para saltar somente às escolhidas e voltar à posição inicial. Se esse controle estiver indisponível, percorre por setas somente a distância necessária entre os alvos. Exemplo: começar na 5 com 8 e 17 marcadas resulta em **5 → 8 → 17 → 5**, sem passar pela questão 1. A posição e o ID são conferidos após cada salto; uma falha ou divergência mantém as marcações e interrompe a geração. **Parar** continua interrompendo sem navegar de volta.
 
+Na **v1.19.3**, o mapa coleta as marcadas diretamente pela API do TEC, usando sua sessão, sem trocar a questão aberta. Isso evita depender de cliques e da renderização da aba em segundo plano. Se uma marcação antiga estiver na posição errada, o script procura o ID no caderno e atualiza a posição, preservando a escolha. Marcações ainda sem posição aparecem em um bloco recolhível do mapa. Uma transição incompleta entre ID e número não altera mais as escolhas; índices de alternativas recebidos como texto também são aceitos. Se algum dado faltar, o aviso informa a questão e a causa, mantém as marcações e interrompe antes da IA. O fluxo de seleção, Creator + Auditor e revisão antes de salvar continua igual.
+
 ### Exportar as questões para planilha (v1.19.2)
 
 1. Abra **Mais (⋯) → Exportar para planilha**.

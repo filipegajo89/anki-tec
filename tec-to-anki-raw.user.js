@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.19.2
+// @version      1.19.3
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.19.2';
+  const SCRIPT_VERSION = '1.19.3';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -430,12 +430,10 @@
   }
 
   async function waitTecAction(kind = 'navigate', shouldContinue = () => true) {
-    let remaining = randomTecDelay(kind);
-    while (remaining > 0) {
+    const deadline = Date.now() + randomTecDelay(kind);
+    while (Date.now() < deadline) {
       if (!shouldContinue()) return false;
-      const chunk = Math.min(100, remaining);
-      await delay(chunk);
-      remaining -= chunk;
+      await delay(Math.min(100, deadline - Date.now()));
     }
     return Boolean(shouldContinue());
   }
@@ -1000,10 +998,10 @@
   function getAngularVm() {
     const ng = unsafeWindow?.angular;
     if (!ng) return { scope: null, vm: null };
-    const anchorEl = document.querySelector('[tec-formatar-html]') ||
-                     document.querySelector('.questao-corpo') ||
-                     document.querySelector('.questao-enunciado') ||
-                     document.querySelector('[ng-controller]');
+    const selectors = ['.questao-enunciado-texto[tec-formatar-html]', '.questao-enunciado[tec-formatar-html]',
+      '.questao-enunciado-texto', '.questao-enunciado', '[tec-formatar-html]', '.questao-corpo', '[ng-controller]'];
+    const anchorEl = selectors.flatMap(selector => [...document.querySelectorAll(selector)]).find(element =>
+      nativeNavigationVisible(element) && !element.closest('aside, [hidden], [class*="comentario"], [class*="discussao"]'));
     if (!anchorEl) return { scope: null, vm: null };
     try {
       const scope = ng.element(anchorEl).scope();
@@ -1184,6 +1182,8 @@
 
       // Alternatives
       if (Array.isArray(q.alternativas)) {
+        const selectedNumber = ['number', 'string'].includes(typeof q.alternativaSelecionada) ? Number(q.alternativaSelecionada) : NaN;
+        const correctNumber = ['number', 'string'].includes(typeof q.numeroAlternativaCorreta) ? Number(q.numeroAlternativaCorreta) : NaN;
         const labels = data.tipo === 'certo_errado'
           ? ['Certo', 'Errado']
           : ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -1194,8 +1194,8 @@
           data.alternativas.push({
             letra,
             texto,
-            selecionada: q.alternativaSelecionada === numAlt,
-            correta: q.numeroAlternativaCorreta === numAlt,
+            selecionada: selectedNumber === numAlt,
+            correta: correctNumber === numAlt,
           });
         });
       }
@@ -5747,19 +5747,49 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
   let questionMapSignature = '';
   let toolsDismissBound = false;
   let batchBusy = false; // inclui os modais de seleção e revisão, além da navegação
+  const questionContextSnapshots = new Map();
 
   function getQuestionMapContext() {
+    const anchor = [...document.querySelectorAll('.questao-enunciado-texto, .questao-enunciado, [tec-formatar-html]')]
+      .find(element => nativeNavigationVisible(element) && !element.closest('[class*="comentario"], [class*="discussao"]'));
     const { vm } = getAngularVm();
-    const questionLink = [...document.querySelectorAll('a[href*="/questoes/"]')].find(link => /^#\d+$/.test(link.textContent.trim()));
+    const angularId = vm?.questao?.idQuestao ? String(vm.questao.idQuestao) : null;
+    const questionArea = anchor?.closest('.questao, .questao-rg-area-coluna-1');
+    const validLink = link => /^#\d+$/.test(link.textContent.trim()) &&
+      !link.closest('aside, [hidden], .tec-modal-overlay, #tec-anki-toolbar, #tec-question-map, [class*="comentario"], [class*="discussao"]') &&
+      nativeNavigationVisible(link);
+    const headerLinks = [...(questionArea || document).querySelectorAll('.questao-cabecalho a[href*="/questoes/"], [class*="questao-cabecalho"] a[href*="/questoes/"], .questao-header a[href*="/questoes/"], .questao-enunciado-concurso a[href*="/questoes/"]')];
+    const scopedLink = headerLinks.find(validLink) || (questionArea ? [...questionArea.querySelectorAll('a[href*="/questoes/"]')]
+      .find(link => validLink(link) && (!angularId || link.textContent.trim().slice(1) === angularId)) : null);
+    // An unrelated citation or a hidden previous question must not override the
+    // active question. Without a scoped header, only an exact Angular ID is used.
+    const questionLink = scopedLink || (angularId ? [...document.querySelectorAll('a[href*="/questoes/"]')]
+      .find(link => validLink(link) && link.textContent.trim().slice(1) === angularId) : null);
     const standaloneId = window.location.pathname.match(/^\/questoes\/(\d+)\/?$/)?.[1];
-    const currentId = vm?.questao?.idQuestao ? String(vm.questao.idQuestao)
-      : questionLink?.textContent.trim().slice(1) || standaloneId || null;
-    const transitioning = vm?.questao?.idQuestao && questionLink && questionLink.textContent.trim().slice(1) !== currentId;
+    const currentId = angularId || questionLink?.textContent.trim().slice(1) || standaloneId || null;
+    const transitioning = angularId && scopedLink && scopedLink.textContent.trim().slice(1) !== angularId;
     const position = (document.body.innerText || '').match(/Quest[ãa]o\s+(\d+)\s+de\s+(\d+)/i);
     const notebookId = window.location.pathname.match(/\/cadernos\/(\d+)(?:\/|$)/)?.[1];
     if (notebookId) {
-      return { key: `caderno:${notebookId}`, currentId, currentNumber: position && !transitioning ? Number(position[1]) : 0,
-        total: position ? Number(position[2]) : 0 };
+      const key = `caderno:${notebookId}`;
+      const modelNumber = Number(vm?.caderno?.numeroQuestaoAtual);
+      const modelTotal = Number(vm?.caderno?.numeroTotalQuestoes);
+      const number = position ? Number(position[1]) : 0;
+      const total = position ? Number(position[2]) : Number.isInteger(modelTotal) && modelTotal > 0 ? modelTotal : 0;
+      const notebookMatches = !vm?.caderno?.idCaderno || String(vm.caderno.idCaderno) === notebookId;
+      const countersMatch = (!Number.isInteger(modelNumber) || modelNumber < 1 || modelNumber === number) &&
+        (!Number.isInteger(modelTotal) || modelTotal < 1 || modelTotal === total);
+      const ids = Array.isArray(vm?.questoes) ? vm.questoes.map(item => item?.idQuestao ? String(item.idQuestao) : null) : [];
+      const completeRoster = total > 0 && ids.length === total && ids.every(Boolean) && new Set(ids).size === total;
+      const rosterMatches = !completeRoster || ids[number - 1] === currentId;
+      const previous = questionContextSnapshots.get(key);
+      // The TEC updates its notebook counter and question payload separately.
+      // A change in only one half cannot establish a new ID/ordinal pair.
+      const partialChange = previous && ((previous.id !== currentId) !== (previous.number !== number));
+      const stable = currentId && number > 0 && number <= total && !transitioning && notebookMatches &&
+        countersMatch && rosterMatches && (!partialChange || completeRoster);
+      if (stable) questionContextSnapshots.set(key, { id: currentId, number });
+      return { key, currentId, currentNumber: stable ? number : 0, total };
     }
     return { key: standaloneId ? `questao:${standaloneId}` : null, currentId,
       currentNumber: standaloneId ? 1 : 0, total: standaloneId ? 1 : 0 };
@@ -5887,6 +5917,12 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       return `<label class="tec-map-cell${entry.selected ? ' selected' : ''}${number === context.currentNumber ? ' current' : ''}" data-result="${escapeHtml(entry.result || 'pending')}" title="${escapeHtml(label)}">
         <input type="checkbox" data-number="${number}" aria-label="${escapeHtml(label)}" ${entry.selected ? 'checked' : ''} ${batchBusy || isProcessing ? 'disabled' : ''}><span>${number}</span><span class="tec-map-check">${UI_ICON.check}</span></label>`;
     }).join('');
+    const pending = panel.querySelector('#tec-map-pending');
+    const unplaced = Object.entries(state.entries).filter(([key, entry]) => entry?.selected && entry.id &&
+      (!Number.isInteger(Number(key)) || Number(key) < 1 || Number(key) > state.total));
+    pending.hidden = !unplaced.length;
+    pending.innerHTML = `<summary>${unplaced.length} seleção(ões) aguardando atualização da posição</summary>` +
+      unplaced.map(([, entry]) => `<label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" data-unplaced-id="${escapeHtml(entry.id)}" checked ${batchBusy || isProcessing ? 'disabled' : ''}>Questão #${escapeHtml(entry.id)}</label>`).join('');
     if (focusedNumber) panel.querySelector(`input[data-number="${Number(focusedNumber)}"]`)?.focus({ preventScroll: true });
     panel.querySelector('#tec-map-pager').hidden = pages <= 1;
     panel.querySelector('#tec-map-page-label').textContent = state.total ? `${start}–${end}` : '—';
@@ -5906,7 +5942,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       panel.id = 'tec-question-map';
       panel.setAttribute('aria-label', 'Mapa de questões para cards');
       panel.innerHTML = `<header><div><strong>Cards do caderno</strong><span id="tec-map-meta"></span></div><button id="tec-map-close" aria-label="Fechar mapa">${UI_ICON.close}</button></header>
-        <div id="tec-map-body"><p id="tec-map-summary" aria-live="polite" title="Selecione qualquer questão, inclusive acertos, para gerar cards depois."></p><div id="tec-map-grid"></div>
+        <div id="tec-map-body"><p id="tec-map-summary" aria-live="polite" title="Selecione qualquer questão, inclusive acertos, para gerar cards depois."></p><div id="tec-map-grid"></div><details id="tec-map-pending" hidden style="margin:12px 0;font-size:12px;color:#667085"></details>
         <div id="tec-map-legend" aria-label="Legenda"><span><i></i>Acerto</span><span><i class="tec-legend-error"></i>Erro</span><span><i class="tec-legend-current"></i>Atual</span></div>
         <div id="tec-map-pager"><button id="tec-map-prev" aria-label="Página anterior do mapa">${UI_ICON.left}</button><span id="tec-map-page-label"></span><button id="tec-map-next" aria-label="Próxima página do mapa">${UI_ICON.right}</button></div></div>
         <footer><button id="tec-map-generate">Gerar marcadas</button><button id="tec-map-stop" hidden>Parar</button></footer>`;
@@ -5918,6 +5954,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       panel.querySelector('#tec-map-stop').addEventListener('click', () => { batchRunning = false; renderQuestionMap(); });
       panel.addEventListener('change', event => {
         if (event.target.matches('input[data-number]') && !batchBusy && !isProcessing) setQuestionCardSelection(Number(event.target.dataset.number), event.target.checked);
+        if (event.target.matches('input[data-unplaced-id]') && !event.target.checked && !batchBusy && !isProcessing) clearQuestionCardSelection(event.target.dataset.unplacedId, getQuestionMapContext());
       });
       panel.addEventListener('keydown', event => {
         event.stopPropagation();
@@ -6285,7 +6322,8 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
   }
 
   async function waitForQuestionPosition(number, previousId, context, shouldContinue, timeout = 10000) {
-    for (let elapsed = 0; elapsed <= timeout; elapsed += 100) {
+    const deadline = Date.now() + timeout;
+    while (true) {
       if (!shouldContinue()) return false;
       const current = getQuestionMapContext();
       if (current.key !== context.key) return false;
@@ -6293,7 +6331,8 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
         await settleQuestionState(current.currentId);
         return shouldContinue() && getQuestionMapContext().currentNumber === number;
       }
-      if (elapsed < timeout) await delay(100);
+      if (Date.now() >= deadline) break;
+      await delay(Math.min(100, deadline - Date.now()));
     }
     throw new Error(`O TEC não confirmou a navegação para a questão ${number}. As marcações foram mantidas.`);
   }
@@ -6307,10 +6346,12 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     const previousId = getQuestionMapContext().currentId;
     if (!dialog) {
       realClick(control);
-      for (let attempt = 0; attempt < 20 && shouldContinue(); attempt++) {
+      const deadline = Date.now() + 2000;
+      while (shouldContinue()) {
         dialog = findNativeQuestionJumpDialog();
         if (dialog) break;
-        await delay(100);
+        if (Date.now() >= deadline) break;
+        await delay(Math.min(100, deadline - Date.now()));
       }
     }
     if (!shouldContinue()) return 'cancelled';
@@ -6347,7 +6388,8 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
   async function collectQuestionTargets(targets, context, { onProgress = () => {} } = {}) {
     const route = planQuestionTargetRoute(resolveQuestionTargets(targets, context), context.currentNumber, context.total);
-    const collected = [], missing = [];
+    const collected = [], missing = targets.filter(target => !route.some(item => target.id
+      ? item.id === String(target.id) : item.number === target.number)).map(target => ({ ...target, reason: 'Posição não localizada no caderno.' }));
     const active = () => batchRunning && getQuestionMapContext().key === context.key;
     try {
       for (const target of route) {
@@ -6375,6 +6417,133 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       if (active()) await navigateToQuestionNumber(context.currentNumber, context, active);
     }
     return { collected, missing, cancelled: !active() };
+  }
+
+  // Read marked questions from the same TEC endpoints used by spreadsheet
+  // export. No controller navigation, answer submission, or DOM comment toggle
+  // is needed, so collecting a batch does not depend on the active browser tab.
+  function buildMarkedQuestionData(q, commentJson, context) {
+    const labels = q.tipoQuestao === 'CERTO_ERRADO' ? ['Certo', 'Errado'] : ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    const correct = ['string', 'number'].includes(typeof q.numeroAlternativaCorreta) ? Number(q.numeroAlternativaCorreta) : NaN;
+    const selected = ['string', 'number'].includes(typeof q.alternativaSelecionada) ? Number(q.alternativaSelecionada) : NaN;
+    const alternativas = (Array.isArray(q.alternativas) ? q.alternativas : []).map((alt, index) => ({
+      letra: labels[index] || String(index + 1),
+      texto: stripHtml(typeof alt === 'string' ? alt : alt?.texto || alt?.descricao || ''),
+      correta: correct === index + 1, selecionada: selected === index + 1,
+    }));
+    let vezesErradoTec = null;
+    for (const [key, value] of Object.entries(q)) {
+      if (!/resolu|histor|tentativ|desempenho|respost/i.test(key) || !Array.isArray(value) || !value.length) continue;
+      const results = value.map(classifyResolucao);
+      if (results.every(Boolean)) { vezesErradoTec = results.filter(result => result === 'err').length; break; }
+    }
+    return {
+      id: String(q.idQuestao || ''), banca: q.bancaSigla || '', ano: String(q.concursoAno || ''),
+      cargo: q.cargoSigla || '', concurso: '', materia: q.nomeMateria || '', assunto: q.nomeAssunto || '',
+      enunciado: stripHtml(q.enunciado || ''),
+      tipo: q.tipoQuestao === 'CERTO_ERRADO' ? 'certo_errado' : q.tipoQuestao === 'MULTIPLA_ESCOLHA' ? 'multipla_escolha' : '',
+      alternativas, gabarito: alternativas.find(alt => alt.correta)?.letra || '',
+      respostaAluno: alternativas.find(alt => alt.selecionada)?.letra || '',
+      errou: q.correcaoQuestao === false && selected > 0,
+      comentario: extractCommentFromJson(commentJson), vezesErradoTec, selecaoManual: true,
+      url: `https://www.tecconcursos.com.br/questoes/${q.idQuestao}`,
+    };
+  }
+
+  function reconcileQuestionMapPositions(observed, context) {
+    const state = loadQuestionMap(context);
+    const selectedIds = new Set(Object.values(state.entries).filter(entry => entry?.selected && entry.id).map(entry => String(entry.id)));
+    const pendingNumbers = new Set(Object.entries(state.entries).filter(([, entry]) => entry?.selected && !entry.id).map(([number]) => Number(number)));
+    for (const [number, q] of observed) {
+      const id = String(q.idQuestao);
+      const previous = state.entries[number];
+      if (previous?.selected && previous.id && String(previous.id) !== id) {
+        state.entries[`id:${previous.id}`] = { ...previous, number };
+      }
+      const known = Object.values(state.entries).find(entry => String(entry?.id) === id);
+      state.entries[number] = { ...known, id, selected: selectedIds.has(id) || pendingNumbers.has(number),
+        result: q.alternativaSelecionada > 0 && typeof q.correcaoQuestao === 'boolean' ? q.correcaoQuestao ? 'ok' : 'err' : 'pending' };
+      for (const key of Object.keys(state.entries)) {
+        if (key !== String(number) && String(state.entries[key]?.id) === id) delete state.entries[key];
+      }
+    }
+    GM_setValue(QUESTION_MAP_PREFIX + context.key, state);
+    questionMapSignature = '';
+    renderQuestionMap();
+  }
+
+  async function collectMarkedQuestionsViaApi(targets, context, { onProgress = () => {},
+    shouldContinue = () => batchRunning && getQuestionMapContext().key === context.key } = {}) {
+    const cadernoId = context.key?.match(/^caderno:(\d+)$/)?.[1];
+    if (!cadernoId) throw new Error('Abra o caderno para coletar suas questões marcadas.');
+    const observed = new Map(), byId = new Map(), collected = [], missing = [];
+    let stoppedReason = '';
+    const request = async path => {
+      if (!await waitTecAction('comment', shouldContinue)) return { ok: false, cancelled: true };
+      let response = await fetchTecExportJson(path, shouldContinue);
+      if (!response.ok && !response.cancelled && (response.status === 0 || response.status >= 500) && shouldContinue()) {
+        if (await waitTecExportAction(4000, 7000, shouldContinue)) response = await fetchTecExportJson(path, shouldContinue);
+      }
+      return response;
+    };
+    const readPosition = async number => {
+      if (observed.has(number)) return observed.get(number);
+      const response = await request(`/api/cadernos/${cadernoId}/questoes/${number}?atualizarCronometro=false`);
+      if (response.cancelled || !shouldContinue()) return null;
+      const q = response.ok ? response.json?.questao : null;
+      const responseNotebook = response.json?.caderno?.idCaderno;
+      if (!q?.idQuestao || (responseNotebook != null && String(responseNotebook) !== cadernoId)) {
+        stoppedReason = response.ok ? 'O TEC devolveu uma questão sem identidade confirmada.' : tecExportFailure(response);
+        return null;
+      }
+      observed.set(number, q);
+      byId.set(String(q.idQuestao), { number, q });
+      onProgress({ collected: 0, total: targets.length, number, label: `Conferindo marcações · questão ${number}` });
+      return q;
+    };
+    try {
+      // First consult only the saved positions. A stale position is never used
+      // as a replacement for a selected ID; locate that ID before proceeding.
+      for (const target of targets) {
+        if (!shouldContinue() || stoppedReason) break;
+        if (Number.isInteger(target.number) && target.number >= 1 && target.number <= context.total) await readPosition(target.number);
+      }
+      const unresolved = () => targets.some(target => target.id && !byId.has(String(target.id)));
+      for (let number = 1; number <= context.total && unresolved() && shouldContinue() && !stoppedReason; number++) {
+        if (!observed.has(number)) await readPosition(number);
+      }
+      const usedIds = new Set();
+      for (const target of targets) {
+        if (!shouldContinue()) break;
+        const found = target.id ? byId.get(String(target.id)) : observed.has(target.number) ? { number: target.number, q: observed.get(target.number) } : null;
+        if (!found) { missing.push({ ...target, reason: stoppedReason || 'O ID selecionado não foi localizado neste caderno.' }); continue; }
+        const { q, number } = found, id = String(q.idQuestao);
+        if (usedIds.has(id)) continue;
+        usedIds.add(id);
+        const data = buildMarkedQuestionData(q, null, context);
+        if (!data.enunciado || !data.gabarito) {
+          missing.push({ ...target, number, reason: !data.enunciado ? 'Enunciado indisponível no TEC.' : 'Gabarito oficial indisponível no TEC; abra a resolução antes de gerar.' });
+          continue;
+        }
+        if (stoppedReason) { missing.push({ ...target, number, reason: stoppedReason }); continue; }
+        const comment = await request(`/api/questoes/${id}/comentario?tokenPreVisualizacao=`);
+        if (comment.cancelled || !shouldContinue()) break;
+        if (!comment.ok) {
+          stoppedReason = tecExportFailure(comment);
+          missing.push({ ...target, number, reason: `Comentário do professor: ${stoppedReason}` });
+          continue;
+        }
+        data.comentario = extractCommentFromJson(comment.json);
+        const thought = getStoredThought(id);
+        if (thought) data.pensamentoAluno = thought;
+        collected.push(data);
+        onProgress({ collected: collected.length, total: targets.length, number, label: `Coletando marcadas: ${collected.length}/${targets.length}` });
+      }
+    } finally {
+      // Preserve all selections, including those whose old position was wrong.
+      if (observed.size) reconcileQuestionMapPositions(observed, context);
+    }
+    return { collected, missing, cancelled: !shouldContinue() };
   }
 
   /**
@@ -6535,18 +6704,23 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       const loading = showLoadingToast('Coletando as questões marcadas…');
       let result;
       try {
-        result = await collectQuestionTargets(marked, context, { onProgress: progress => {
+        const collector = /^caderno:/.test(context.key) && typeof fetch === 'function'
+          ? collectMarkedQuestionsViaApi : collectQuestionTargets;
+        result = await collector(marked, context, { onProgress: progress => {
           const text = loading.querySelector('span:last-child');
-          if (text) text.textContent = `Coletando marcadas: ${progress.collected}/${progress.total} · questão ${progress.number}`;
+          if (text) text.textContent = progress.label || `Coletando marcadas: ${progress.collected}/${progress.total} · questão ${progress.number}`;
         } });
       } finally {
         loading.remove();
       }
       if (result.cancelled) { showToast('Coleta interrompida. As marcações foram mantidas.', 'info'); return; }
-      if (result.missing.length || result.collected.length !== marked.length) {
-        showToast('Não foi possível coletar todas as questões marcadas. Nenhum card foi gerado; as marcações foram mantidas.', 'warning', 6000);
+      if (result.missing.length) {
+        console.warn('TEC: questões marcadas não coletadas:', result.missing);
+        const details = result.missing.map(target => `Questão ${target.number}${target.id ? ` (#${target.id})` : ''}: ${target.reason || 'Dados ou gabarito indisponíveis.'}`);
+        showToast(`Não foi possível coletar ${result.missing.length} questão(ões).<br>${details.slice(0, 3).map(escapeHtml).join('<br>')}<br>Nenhum card foi gerado. As marcações foram mantidas.`, 'warning', 15000);
         return;
       }
+      if (!result.collected.length) { showToast('Nenhuma questão foi coletada. As marcações foram mantidas.', 'warning', 8000); return; }
       await processCollectedQuestions(result.collected, { manual: true, mapContext: context });
     });
   }
