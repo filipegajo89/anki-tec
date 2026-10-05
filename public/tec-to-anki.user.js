@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.17.0
+// @version      1.19.5
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.17.0';
+  const SCRIPT_VERSION = '1.19.3';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -89,31 +89,86 @@
   GM_addStyle(`
     /* \u2500\u2500 Floating Toolbar \u2500\u2500 */
     #tec-anki-toolbar {
-      position: fixed; bottom: 24px; right: 24px; z-index: 99999;
-      display: flex; align-items: center; gap: 6px;
-      background: #1a1a2e; border-radius: 14px; padding: 6px 10px;
-      box-shadow: 0 4px 20px rgba(0,0,0,.35); font-family: system-ui, sans-serif;
-      transition: opacity .2s; user-select: none;
+      position: fixed; bottom: 16px; right: 16px; z-index: 99999;
+      display: flex; align-items: center; gap: 4px; padding: 5px;
+      color: #344054; background: #fff; border: 1px solid #e4e7ec; border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(16,24,40,.12), 0 1px 3px rgba(16,24,40,.04);
+      font: 500 12px/1.4 system-ui, -apple-system, sans-serif; user-select: none;
     }
-    #tec-anki-toolbar button {
-      border: none; border-radius: 10px; padding: 8px 14px; cursor: pointer;
-      font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 5px;
-      transition: background .15s, transform .1s;
+    #tec-anki-toolbar *, #tec-question-map * { box-sizing: border-box; }
+    #tec-anki-toolbar svg, #tec-question-map svg { width: 16px; height: 16px; flex: none; display: block; }
+    #tec-anki-toolbar button, #tec-mark-label {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      min-height: 34px; margin: 0; padding: 7px 10px; border: 0; border-radius: 7px;
+      background: transparent; color: #475467; font: inherit; cursor: pointer;
+      transition: background .15s, color .15s;
     }
-    #tec-anki-toolbar button:active { transform: scale(.96); }
-    .tec-btn-primary { background: #4361ee; color: #fff; }
-    .tec-btn-primary:hover { background: #3a56d4; }
-    .tec-btn-batch { background: #f72585; color: #fff; }
-    .tec-btn-batch:hover { background: #d61f6f; }
-    .tec-btn-icon { background: transparent !important; color: #aaa; font-size: 18px !important; padding: 8px !important; }
-    .tec-btn-icon:hover { color: #fff; }
-    .tec-status-dot {
-      width: 10px; height: 10px; border-radius: 50%; margin-left: 4px;
-      background: #888; transition: background .3s;
+    #tec-anki-toolbar button:hover, #tec-mark-label:hover { background: #f2f4f7; color: #182230; }
+    #tec-anki-toolbar button:focus-visible, #tec-question-map button:focus-visible,
+    #tec-mark-label:focus-within, .tec-map-cell:focus-within { outline: 2px solid #6172f3; outline-offset: 2px; }
+    #tec-anki-toolbar button:disabled { opacity: .5; cursor: default; }
+    #tec-mark-label { position: relative; min-width: 124px; justify-content: flex-start; }
+    #tec-mark-label.marked { background: #eef2ff; color: #3538cd; }
+    #tec-mark-label.marked svg { fill: #e0e7ff; }
+    #tec-mark-label.disabled { opacity: .5; cursor: default; }
+    #tec-mark-current, .tec-map-cell input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+    #tec-btn-map[aria-expanded="true"], #tec-btn-more[aria-expanded="true"] { background: #f2f4f7; color: #182230; }
+    #tec-map-count { min-width: 18px; padding: 1px 5px; border-radius: 5px; background: #eef2ff; color: #3538cd; font-size: 10px; font-weight: 650; }
+    .tec-toolbar-divider { width: 1px; height: 18px; margin: 0 3px; background: #e4e7ec; }
+    #tec-anki-toolbar #tec-btn-more { width: 34px; padding: 7px; }
+    #tec-tools-menu {
+      position: absolute; bottom: calc(100% + 9px); right: 0; width: 248px;
+      max-width: calc(100vw - 24px); padding: 5px; border: 1px solid #e4e7ec;
+      border-radius: 12px; background: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.14);
     }
-    .tec-status-dot.green { background: #06d6a0; }
-    .tec-status-dot.yellow { background: #ffd166; }
-    .tec-status-dot.red { background: #ef476f; }
+    #tec-tools-menu[hidden], #tec-question-map[hidden], #tec-map-pager[hidden], #tec-map-count[hidden], #tec-map-stop[hidden] { display: none !important; }
+    #tec-tools-menu .tec-menu-heading { padding: 7px 9px 5px; color: #98a2b3; font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    #tec-anki-toolbar #tec-tools-menu button { width: 100%; min-height: 35px; justify-content: flex-start; padding: 8px 9px; gap: 10px; text-align: left; }
+    #tec-tools-menu .tec-menu-divider { height: 1px; margin: 5px 8px; background: #eaecf0; }
+    .tec-menu-status { display: flex; gap: 7px; align-items: center; margin: 4px 8px 3px; padding-top: 8px; border-top: 1px solid #eaecf0; color: #667085; font-size: 10px; }
+    .tec-status-dot { width: 6px; height: 6px; border-radius: 50%; background: #98a2b3; flex: none; }
+    .tec-status-dot.green { background: #12b76a; }
+    .tec-status-dot.yellow { background: #f79009; }
+    .tec-status-dot.red { background: #f04438; }
+    #tec-question-map {
+      position: fixed; bottom: 72px; right: 16px; z-index: 99999; display: flex; flex-direction: column;
+      width: min(310px, calc(100vw - 24px)); max-height: calc(100vh - 100px); overflow: hidden;
+      background: #fff; color: #344054; border: 1px solid #e4e7ec; border-radius: 12px;
+      box-shadow: 0 8px 30px rgba(16,24,40,.14); font: 12px/1.5 system-ui, -apple-system, sans-serif;
+    }
+    #tec-question-map header { display: flex; align-items: flex-start; gap: 8px; padding: 12px 14px 10px; border-bottom: 1px solid #f2f4f7; }
+    #tec-question-map header > div { flex: 1; }
+    #tec-question-map header strong { display: block; color: #182230; font-size: 13px; font-weight: 650; }
+    #tec-map-meta { display: block; margin-top: 2px; color: #98a2b3; font-size: 10px; }
+    #tec-question-map button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; border: 0; background: #f9fafb; color: #667085; border-radius: 7px; padding: 7px 10px; font: inherit; }
+    #tec-question-map button:hover { background: #f2f4f7; color: #182230; }
+    #tec-question-map button:disabled { cursor: default; opacity: .4; }
+    #tec-question-map #tec-map-close { background: transparent; width: 26px; height: 26px; padding: 5px; }
+    #tec-map-body { padding: 10px 12px 12px; overflow-y: auto; }
+    #tec-map-summary { margin: 0 0 9px; color: #667085; font-size: 11px; }
+    #tec-map-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 2px; max-height: 34vh; overflow-y: auto; }
+    .tec-map-cell { position: relative; display: flex; align-items: center; justify-content: center; height: 33px; border: 1px solid #eaecf0; border-radius: 6px; background: #fff; color: #667085; cursor: pointer; font-size: 12px; font-weight: 550; }
+    .tec-map-cell:hover { background: #f9fafb; border-color: #d0d5dd; }
+    .tec-map-cell.selected { background: #eef2ff; border-color: #a4bcfd; color: #3538cd; }
+    .tec-map-cell.current { outline: 1px solid #475467; outline-offset: 1px; }
+    .tec-map-cell[data-result="ok"]::after, .tec-map-cell[data-result="err"]::after { content: ''; position: absolute; bottom: 3px; right: 4px; width: 4px; height: 4px; border-radius: 50%; }
+    .tec-map-cell[data-result="ok"]::after { background: #12b76a; }
+    .tec-map-cell[data-result="err"]::after { background: #f04438; }
+    .tec-map-check { display: none; position: absolute; top: 2px; right: 2px; color: #6172f3; }
+    .tec-map-cell.selected .tec-map-check { display: block; }
+    #tec-question-map .tec-map-check svg { width: 9px; height: 9px; }
+    #tec-map-legend { display: flex; align-items: center; gap: 12px; margin-top: 10px; color: #98a2b3; font-size: 9px; }
+    #tec-map-legend span { display: inline-flex; align-items: center; gap: 4px; }
+    #tec-map-legend i { width: 4px; height: 4px; border-radius: 50%; background: #12b76a; }
+    #tec-map-legend .tec-legend-error { background: #f04438; }
+    #tec-map-legend .tec-legend-current { width: 7px; height: 7px; border: 1px solid #475467; border-radius: 2px; background: transparent; }
+    #tec-map-pager { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 10px; color: #98a2b3; }
+    #tec-map-pager button { padding: 5px; }
+    #tec-question-map footer { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid #f2f4f7; }
+    #tec-question-map #tec-map-generate { min-height: 33px; background: #4f46e5; color: #fff; flex: 1; font-size: 11px; font-weight: 550; }
+    #tec-question-map #tec-map-generate:hover { background: #4338ca; }
+    #tec-question-map #tec-map-stop { color: #b42318; }
+    @media (max-width: 480px) { #tec-anki-toolbar { right: 12px; bottom: 12px; } #tec-question-map { right: 12px; bottom: 66px; } }
 
     /* \u2500\u2500 Toast \u2500\u2500 */
     #tec-toast-container {
@@ -168,6 +223,19 @@
     .tec-btn-save:hover { background: #3a56d4; }
     .tec-btn-cancel { background: #e9ecef; color: #495057; }
     .tec-btn-cancel:hover { background: #dee2e6; }
+    #tec-export-overlay { z-index: 2147483647; padding: 16px; box-sizing: border-box; }
+    .tec-export-modal { width: 540px; font-size: 13px; display: flex; flex-direction: column; max-height: calc(100dvh - 32px); overflow: hidden; }
+    #tec-export-overlay .tec-modal-header { flex-shrink: 0; padding: 16px 20px; }
+    #tec-export-overlay .tec-modal-body { min-height: 0; overflow-y: auto; padding: 16px 20px; }
+    #tec-export-overlay label { display: block; margin: 14px 0 5px; font-weight: 600; }
+    #tec-export-overlay select { width: 100%; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font: inherit; }
+    #tec-export-overlay .tec-export-note { color: #667085; font-size: 12px; line-height: 1.5; margin: 16px 0; }
+    #tec-export-progress { margin-bottom: 0; color: #344054; line-height: 1.5; }
+    #tec-export-overlay .tec-modal-footer { flex-shrink: 0; flex-wrap: wrap; padding: 12px 20px; }
+    #tec-export-overlay .tec-btn { padding: 9px 12px; font-size: 12px; }
+    #tec-export-overlay [hidden] { display: none !important; }
+    #tec-export-overlay label.tec-export-resume { display: flex; align-items: center; gap: 7px; font-weight: 400; }
+    #tec-export-resume { margin: 0; }
 
     /* \u2500\u2500 Modal Content \u2500\u2500 */
     .tec-meta-grid {
@@ -354,6 +422,22 @@
     return new Promise(r => setTimeout(r, ms));
   }
 
+  // Variable pacing for automatic TEC actions; manual controls stay immediate.
+  function randomTecDelay(kind = 'navigate') {
+    const [min, max] = kind === 'comment' ? [650, 1400] : [1200, 2800];
+    const random = Math.min(1, Math.max(0, Math.random()));
+    return Math.round(min + (max - min) * random);
+  }
+
+  async function waitTecAction(kind = 'navigate', shouldContinue = () => true) {
+    const deadline = Date.now() + randomTecDelay(kind);
+    while (Date.now() < deadline) {
+      if (!shouldContinue()) return false;
+      await delay(Math.min(100, deadline - Date.now()));
+    }
+    return Boolean(shouldContinue());
+  }
+
   function waitForElement(selector, timeout = 5000, context = document) {
     return new Promise((resolve, reject) => {
       const el = context.querySelector(selector);
@@ -369,7 +453,7 @@
 
   /**
    * Simulates a keyboard key press on the page.
-   * Dispatches on multiple targets to ensure TEC's AngularJS handlers catch it.
+   * Uses one target and one keydown/keyup pair to avoid repeated navigation.
    */
   function simulateKey(key, keyCode) {
     const code = key.length === 1 ? `Key${key.toUpperCase()}` : key;
@@ -381,34 +465,18 @@
     // Blur any focused element so TEC's key handler recognizes the event
     try { document.activeElement?.blur(); } catch (_) { /* skip */ }
 
-    // Dispatch on multiple targets \u2014 TEC's Angular may listen on any of these
-    for (const target of [document, document.body, document.documentElement]) {
-      try {
-        target.dispatchEvent(new KeyboardEvent('keydown', opts));
-        target.dispatchEvent(new KeyboardEvent('keypress', opts));
-        target.dispatchEvent(new KeyboardEvent('keyup', opts));
-      } catch (_) { /* skip */ }
-    }
-
-    // Also try via jQuery if available (TEC/AngularJS usually loads jQuery)
     try {
-      const jq = unsafeWindow?.jQuery || unsafeWindow?.$ || window.jQuery || window.$;
-      if (jq) {
-        jq(document).trigger(jq.Event('keydown', { which: keyCode, keyCode, key }));
-        jq(document).trigger(jq.Event('keypress', { which: keyCode, keyCode, key }));
-        jq(document).trigger(jq.Event('keyup', { which: keyCode, keyCode, key }));
-      }
-    } catch (_) { /* jQuery not available */ }
+      document.dispatchEvent(new KeyboardEvent('keydown', opts));
+      document.dispatchEvent(new KeyboardEvent('keyup', opts));
+      return true;
+    } catch (_) { return false; }
   }
 
   /**
-   * Performs a realistic click on an element:
-   * 1. Native MouseEvent dispatch (mousedown \u2192 mouseup \u2192 click)
-   * 2. AngularJS triggerHandler if available
-   * 3. Standard .click() fallback
+   * Dispatches one mouse sequence without invoking the click handler again.
    */
   function realClick(el) {
-    if (!el) return;
+    if (!el) return false;
     try { el.scrollIntoView({ behavior: 'instant', block: 'nearest' }); } catch (_) { /* skip */ }
 
     // Dispatch proper mouse event sequence
@@ -419,26 +487,9 @@
       bubbles: true, cancelable: true, composed: true,
       clientX: cx, clientY: cy, button: 0,
     };
-    el.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
-    el.dispatchEvent(new MouseEvent('mouseup', mouseOpts));
-    el.dispatchEvent(new MouseEvent('click', mouseOpts));
-
-    // Try Angular's triggerHandler
-    try {
-      const ng = unsafeWindow?.angular || window.angular;
-      if (ng) {
-        const ngEl = ng.element(el);
-        ngEl.triggerHandler('click');
-        // Also trigger Angular digest cycle
-        const scope = ngEl.scope();
-        if (scope && scope.$apply) {
-          scope.$apply();
-        }
-      }
-    } catch (_) { /* Angular not available or scope error */ }
-
-    // Standard click as final fallback
-    try { el.click(); } catch (_) { /* skip */ }
+    el.dispatchEvent(new MouseEvent('mousedown', { ...mouseOpts, buttons: 1 }));
+    el.dispatchEvent(new MouseEvent('mouseup', { ...mouseOpts, buttons: 0 }));
+    return el.dispatchEvent(new MouseEvent('click', { ...mouseOpts, buttons: 0 }));
   }
 
   // Module-level variable to store the captured comment text
@@ -501,7 +552,7 @@
    *  4. Direct TEC API call with question ID
    *  5. DOM fallback: look for tec-formatar-html with comment attr
    */
-  async function ensureCommentExpanded() {
+  async function ensureCommentExpanded(shouldContinue = () => true) {
     _capturedComment = '';
 
     const { scope, vm } = getAngularVm();
@@ -589,6 +640,7 @@
       for (const name of methodNames) {
         if (typeof vm[name] === 'function') {
               try {
+            if (!await waitTecAction('comment', shouldContinue)) return false;
             const result = vm[name]();
             if (result && typeof result.then === 'function') {
               await result;
@@ -619,6 +671,7 @@
       for (const name of methodNames) {
         if (scope && typeof scope[name] === 'function' && typeof vm[name] !== 'function') {
               try {
+            if (!await waitTecAction('comment', shouldContinue)) return false;
             scope[name]();
             try { scope.$apply(); } catch (_) {}
             await delay(2000);
@@ -679,19 +732,25 @@
         '[ng-click*="toggleComentario"]',
         '[ng-click*="abrirComentario"]',
       ];
+      let commentButton = null;
       for (const sel of commentSelectors) {
         const el = document.querySelector(sel);
-        if (el) { realClick(el); break; }
+        if (el) { commentButton = el; break; }
       }
 
       const resolucaoLinks = [...document.querySelectorAll('a, button, span, div')].filter(el => {
         const txt = el.textContent.trim();
         return /ver resolu[\u00E7c]|resolu\u00E7\u00E3o comentada|coment\.rio do professor|exibir coment\.rio/i.test(txt) && txt.length < 60;
       });
-      for (const link of resolucaoLinks) { realClick(link); }
-      try { document.activeElement?.blur(); } catch (_) {}
-      document.body.focus();
-      simulateKey('o', 79);
+      commentButton = commentButton || resolucaoLinks[0];
+      if (!await waitTecAction('comment', shouldContinue)) return false;
+      if (commentButton) {
+        realClick(commentButton);
+      } else {
+        try { document.activeElement?.blur(); } catch (_) {}
+        document.body.focus();
+        simulateKey('o', 79);
+      }
 
       await delay(3500);
     } finally {
@@ -746,6 +805,7 @@
 
       for (const url of apiUrls) {
         try {
+              if (!await waitTecAction('comment', shouldContinue)) return false;
               const resp = await gmFetch(url, {
             method: 'GET',
             headers: {
@@ -938,10 +998,10 @@
   function getAngularVm() {
     const ng = unsafeWindow?.angular;
     if (!ng) return { scope: null, vm: null };
-    const anchorEl = document.querySelector('[tec-formatar-html]') ||
-                     document.querySelector('.questao-corpo') ||
-                     document.querySelector('.questao-enunciado') ||
-                     document.querySelector('[ng-controller]');
+    const selectors = ['.questao-enunciado-texto[tec-formatar-html]', '.questao-enunciado[tec-formatar-html]',
+      '.questao-enunciado-texto', '.questao-enunciado', '[tec-formatar-html]', '.questao-corpo', '[ng-controller]'];
+    const anchorEl = selectors.flatMap(selector => [...document.querySelectorAll(selector)]).find(element =>
+      nativeNavigationVisible(element) && !element.closest('aside, [hidden], [class*="comentario"], [class*="discussao"]'));
     if (!anchorEl) return { scope: null, vm: null };
     try {
       const scope = ng.element(anchorEl).scope();
@@ -1122,6 +1182,8 @@
 
       // Alternatives
       if (Array.isArray(q.alternativas)) {
+        const selectedNumber = ['number', 'string'].includes(typeof q.alternativaSelecionada) ? Number(q.alternativaSelecionada) : NaN;
+        const correctNumber = ['number', 'string'].includes(typeof q.numeroAlternativaCorreta) ? Number(q.numeroAlternativaCorreta) : NaN;
         const labels = data.tipo === 'certo_errado'
           ? ['Certo', 'Errado']
           : ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -1132,8 +1194,8 @@
           data.alternativas.push({
             letra,
             texto,
-            selecionada: q.alternativaSelecionada === numAlt,
-            correta: q.numeroAlternativaCorreta === numAlt,
+            selecionada: selectedNumber === numAlt,
+            correta: correctNumber === numAlt,
           });
         });
       }
@@ -1261,7 +1323,7 @@
   // \u2551                   6. GEMINI API                              \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SYSTEM_PROMPT = `Você é um especialista em concursos públicos e criação de flashcards para Anki. A partir da questão, do comentário do professor e do "Erro Identificado", crie no máximo 2 flashcards focados exclusivamente na lacuna de conhecimento que causou o erro. Ignore conceitos da questão que o aluno já domina.
+  const SYSTEM_PROMPT = `Você é um especialista em concursos públicos e criação de flashcards para Anki. A partir da questão, do comentário do professor e do alvo de estudo do aluno, crie no máximo 2 flashcards. Em questões erradas, foque na lacuna de conhecimento que causou o erro. Em questões acertadas escolhidas pelo aluno, foque na dúvida, pegadinha ou nuance que ele deseja revisar, sem inventar um erro do aluno. Ignore conceitos da questão que o aluno já domina.
 
 ## Autoridade do conteúdo (REGRA SOBERANA)
 
@@ -1630,6 +1692,7 @@ ${b.perfil}
 **Mat\u00E9ria:** ${q.materia || 'N/A'}
 **Assunto:** ${q.assunto || 'N/A'}
 **Tipo:** ${q.tipo === 'certo_errado' ? 'Certo/Errado' : 'M\u00FAltipla Escolha'}
+${q.selecaoManual ? '**Seleção manual:** o aluno pediu um card desta questão, independentemente de ter errado. Preserve o resultado real; não atribua um erro a um acerto.\n' : ''}
 ${getBancaProfile(q.banca)}
 ### Enunciado
 ${q.enunciado || 'N\u00E3o dispon\u00EDvel'}
@@ -1645,10 +1708,10 @@ ${altsText || 'N\u00E3o dispon\u00EDveis'}
 ### Coment\u00E1rio do Professor
 ${q.comentario || 'N\u00E3o dispon\u00EDvel'}
 ${q.cardsExistentes && q.cardsExistentes.length ? `
-### \u26A0\uFE0F Cards que J\u00C1 EXISTEM para esta quest\u00E3o \u2014 e o aluno errou DE NOVO apesar deles
+### \u26A0\uFE0F Cards que J\u00C1 EXISTEM para esta quest\u00E3o${q.errou ? ' — e o aluno errou de novo apesar deles' : ' — evite repetir conteúdo'}
 ${q.cardsExistentes.map(f => `- ${f}`).join('\n')}
 
-Estes cards N\u00C3O evitaram o novo erro: o encoding deles falhou. \u00C9 PROIBIDO repeti-los ou reformul\u00E1-los superficialmente. Gere um \u00E2ngulo NOVO: outro formato (se era Cloze, use Julgue ou Q&A de discrimina\u00E7\u00E3o), o sentido INVERSO do mapeamento (se o card antigo pergunta X\u2192Y, pergunte Y\u2192X), ou a exce\u00E7\u00E3o/nuance que o card antigo n\u00E3o cobre.
+${q.errou ? 'Estes cards não evitaram o novo erro.' : 'O aluno pediu reforço apesar do acerto.'} É PROIBIDO repeti-los ou reformulá-los superficialmente. Gere um ângulo NOVO: outro formato, o sentido INVERSO do mapeamento, ou a exceção/nuance que o card antigo não cobre.
 ` : ''}${q.pensamentoAluno ? `
 ### \uD83D\uDCAD Alvo pedag\u00F3gico do aluno (use S\u00D3 para mirar o card)
 O aluno descreveu o pr\u00F3prio racioc\u00EDnio ao responder esta quest\u00E3o:
@@ -4459,7 +4522,7 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
    * @param {Array<{questionData: object, existingCards: number}>} items
    * @returns {Promise<object[]|null>} selected questionData array, or null on cancel
    */
-  function showBatchSelectionModal(items) {
+  function showBatchSelectionModal(items, options = {}) {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
       overlay.className = 'tec-modal-overlay';
@@ -4470,11 +4533,11 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
         const isDup = item.existingCards > 0;
         // Rede de segurança visível: se um ACERTO escapar da coleta, ele chega
         // aqui marcado e já desmarcado — nunca mais vira card sem você ver.
-        const isAcerto = !q.errou;
-        const offByDefault = isDup || isAcerto;
+        const isAcerto = !q.errou && !!q.respostaAluno;
+        const offByDefault = options.manual ? false : isDup || !q.errou;
         const resultBadge = isAcerto
           ? '<span style="margin-left:6px;padding:2px 8px;font-size:11px;border-radius:10px;background:#f59e0b;color:#111;font-weight:700;">✅ ACERTOU — confira</span>'
-          : '<span style="margin-left:6px;padding:2px 8px;font-size:11px;border-radius:10px;background:#ef476f;color:#fff;font-weight:700;">❌ ERROU</span>';
+          : q.errou ? '<span style="margin-left:6px;padding:2px 8px;font-size:11px;border-radius:10px;background:#ef476f;color:#fff;font-weight:700;">❌ ERROU</span>' : '<span>Não respondida</span>';
         const snippet = (q.enunciado || '').substring(0, 160);
         return `
           <div class="tec-batch-select-item ${offByDefault ? 'deselected' : 'selected'}" data-idx="${idx}">
@@ -4499,14 +4562,14 @@ _Gerado em ${todayISO()} via TEC\u2192Anki+Obsidian_
       overlay.innerHTML = `
         <div class="tec-modal" style="width:760px;max-width:96vw;">
           <div class="tec-modal-header">
-            <h2>🗂️ ${items.length} erradas encontradas — quais viram cards?</h2>
+            <h2>🗂️ ${items.length} ${options.manual ? 'questões marcadas' : 'erradas encontradas'} — quais viram cards?</h2>
             <button class="tec-modal-close" data-action="cancel">×</button>
           </div>
           <div class="tec-modal-body" style="max-height:65vh;overflow-y:auto;">
             <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
               <button class="tec-btn tec-btn-cancel" data-action="all" style="padding:6px 14px;font-size:12px;">✅ Marcar todas</button>
               <button class="tec-btn tec-btn-cancel" data-action="none" style="padding:6px 14px;font-size:12px;">⬜ Desmarcar todas</button>
-              <span style="font-size:12px;color:#888;">Desmarque o que você errou por besteira — não vira card.</span>
+              <span style="font-size:12px;color:#888;">${options.manual ? 'Acertos também podem virar cards. Confira as duplicatas e anote o que quer revisar.' : 'Desmarque o que você errou por besteira — não vira card.'}</span>
             </div>
             ${itemsHTML}
           </div>
@@ -5375,29 +5438,596 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
   let statusDot = null;
 
+  // A seleção é independente do resultado: acertar não impede pedir um card.
+  // Só lê o estado já carregado. Abrir/marcar o mapa não navega nem chama IA.
+  // Exportação independente: consultas de leitura na sessão TEC, sem IA ou salvamento externo.
+  const TEC_SPREADSHEET_PREFIX = 'tecSpreadsheet:v1:';
+
+  function exportHtmlText(html) {
+    const source = String(html ?? '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_, text) => escapeHtml(text));
+    const doc = new DOMParser().parseFromString(source, 'text/html');
+    doc.querySelectorAll('script,style').forEach(el => el.remove());
+    doc.querySelectorAll('img').forEach(el => {
+      const src = el.getAttribute('src') || el.getAttribute('data-src') || '';
+      el.replaceWith(doc.createTextNode(` [Imagem${el.alt ? ': ' + el.alt : ''}${src ? ' · ' + src : ''}] `));
+    });
+    doc.querySelectorAll('br').forEach(el => el.replaceWith(doc.createTextNode('\n')));
+    doc.querySelectorAll('p,div,li,tr,h1,h2,h3,h4,blockquote').forEach(el => el.appendChild(doc.createTextNode('\n')));
+    return (doc.body.textContent || '').replace(/\u00a0/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  function tecExportDate(value) {
+    return value && typeof value === 'object' ? String(value.$ ?? JSON.stringify(value)) : String(value ?? '');
+  }
+
+  function tecExportFailure(response) {
+    const json = response?.json;
+    const message = response?.error || json?.error || json?.mensagem || json?.message;
+    return `HTTP ${response?.status ?? 0}${message ? ' · ' + (typeof message === 'string' ? message : JSON.stringify(message)).slice(0, 500) : ''}`;
+  }
+
+  function buildTecExportRecord(q, target, context, sections = {}, forumOrder = 'votos') {
+    const id = q?.idQuestao != null ? String(q.idQuestao) : '';
+    const valid = !!id && (!target.id || String(target.id) === id);
+    const record = {
+      numero: target.number, idQuestao: valid ? id : String(target.id || ''), caderno: context.key,
+      link: id && valid ? `https://www.tecconcursos.com.br/questoes/${id}` : '',
+      capturadoEm: new Date().toISOString(), forumOrdem: forumOrder, forumOrdemEfetiva: forumOrder,
+      status: {questao: 'OK', comentario: 'Não coletado', desempenho: 'Não coletado', forum: 'Não coletado'},
+      diagnosticos: [], rawQuestao: valid ? q : null,
+      comentarioProfessor: null, desempenho: null, forum: [], forumTotalPosts: null,
+    };
+    if (!valid) {
+      record.status.questao = q ? `Erro: ID diverge da marcação (${target.id || '?'} → ${id || '?'})` : 'Erro: questão não recebida';
+      record.diagnosticos.push(record.status.questao);
+      return record;
+    }
+    const labels = q.tipoQuestao === 'CERTO_ERRADO' ? ['Certo', 'Errado'] : 'ABCDEFGHIJ'.split('');
+    const rawAlternatives = Array.isArray(q.alternativas) ? q.alternativas : [];
+    const alternatives = rawAlternatives.map((a, index) => {
+      const html = typeof a === 'string' ? a : a?.texto ?? a?.descricao ?? '';
+      return {letra: labels[index] || String(index + 1), texto: exportHtmlText(html), html: String(html)};
+    });
+    const correctIndex = Number(q.numeroAlternativaCorreta);
+    const selectedIndex = Number(q.alternativaSelecionada);
+    Object.assign(record, {
+      banca: q.bancaSigla || '', orgao: q.orgaoNome || '', cargo: q.cargoSigla || '', ano: q.concursoAno ?? '',
+      concursoUrl: q.urlConcurso ? `https://www.tecconcursos.com.br/concursos/${q.urlConcurso}` : '',
+      materia: q.nomeMateria || '', assunto: q.nomeAssunto || '', tipo: q.tipoQuestao || '',
+      enunciado: exportHtmlText(q.enunciado), enunciadoHtml: String(q.enunciado ?? ''), alternativas: alternatives,
+      gabarito: Number.isInteger(correctIndex) && correctIndex > 0 ? alternatives[correctIndex - 1]?.letra || '' : '',
+      respostaAluno: Number.isInteger(selectedIndex) && selectedIndex > 0 ? alternatives[selectedIndex - 1]?.letra || '' : '',
+      resultado: q.correcaoQuestao === true ? 'Acerto' : q.correcaoQuestao === false ? 'Erro' : 'Não respondida',
+    });
+    if (!record.gabarito) record.diagnosticos.push('Gabarito não informado pelo TEC.');
+    if (!record.enunciado && !record.enunciadoHtml) { record.status.questao = 'Erro: enunciado ausente'; record.diagnosticos.push(record.status.questao); }
+    for (const [key, response] of Object.entries(sections)) {
+      const statusKey = {comment: 'comentario', performance: 'desempenho', forum: 'forum'}[key];
+      if (!statusKey) continue;
+      if (!response?.ok) {
+        record.status[statusKey] = 'Erro: ' + tecExportFailure(response);
+        record.diagnosticos.push(`${statusKey}: ${record.status[statusKey]}`);
+        continue;
+      }
+      if (key === 'comment') {
+        const c = response.json?.comentario;
+        if (c && typeof c.textoComentario === 'string' && c.textoComentario.trim()) {
+          record.comentarioProfessor = {professor: c.nomeProfessor || '', data: tecExportDate(c.dataFormatadaParaHtml5 ?? c.dataPublicacaoComentario), texto: exportHtmlText(c.textoComentario), html: c.textoComentario};
+          record.status.comentario = 'OK';
+        } else { record.status.comentario = 'Não verificado'; record.diagnosticos.push('Professor: o TEC não retornou conteúdo; ausência de comentário não confirmada.'); }
+      }
+      if (key === 'performance') {
+        const d = response.json?.desempenho;
+        if (d && typeof d === 'object') { record.desempenho = d; record.status.desempenho = 'OK'; }
+        else { record.status.desempenho = 'Indisponível'; record.diagnosticos.push('Desempenho não informado pelo TEC.'); }
+      }
+      if (key === 'forum') {
+        const page = response.json?.comentarios?.pageComentarios;
+        if (page && Array.isArray(page.list)) {
+          record.forumOrdemEfetiva = response.effectiveForumOrder || forumOrder;
+          let posts = page.list.filter(c => !c.silenciado && (c.quantidadeVoto == null || Number(c.quantidadeVoto) >= -2));
+          if (record.forumOrdemEfetiva === 'votos') posts = [...posts].sort((a,b) => Number(b.quantidadeVoto ?? 0) - Number(a.quantidadeVoto ?? 0));
+          record.forum = posts.slice(0, 2).map(c => ({usuario: c.apelidoUsuario || '', data: tecExportDate(c.dataPublicacao), votos: c.quantidadeVoto ?? '', texto: exportHtmlText(c.comentario), html: String(c.comentario ?? '')}));
+          record.forumTotalPosts = page.resultCount ?? page.list.length;
+          record.status.forum = 'OK';
+          if (forumOrder === 'votos' && record.forumOrdemEfetiva === 'data') record.diagnosticos.push('Ordenação por votos indisponível no TEC; coletados os dois primeiros por data.');
+        } else { record.status.forum = 'Indisponível'; record.diagnosticos.push('Fórum: formato de resposta não reconhecido.'); }
+      }
+    }
+    return record;
+  }
+
+  function buildTecSpreadsheetCsv(records) {
+    const columns = [
+      ['Número', q => q.numero], ['ID TEC', q => q.idQuestao], ['Caderno', q => q.caderno], ['Link', q => q.link],
+      ['Banca', q => q.banca], ['Órgão', q => q.orgao], ['Cargo', q => q.cargo], ['Ano', q => q.ano], ['Concurso', q => q.concursoUrl],
+      ['Matéria', q => q.materia], ['Assunto', q => q.assunto], ['Tipo', q => q.tipo], ['Enunciado', q => q.enunciado],
+      ['Alternativas', q => q.alternativas?.map(a => `${a.letra}: ${a.texto}`).join('\n')], ['Gabarito', q => q.gabarito],
+      ['Minha resposta', q => q.respostaAluno], ['Resultado', q => q.resultado],
+      ['Professor', q => q.comentarioProfessor?.professor], ['Data do comentário', q => q.comentarioProfessor?.data], ['Comentário do professor', q => q.comentarioProfessor?.texto],
+      ['Acertos gerais', q => q.desempenho?.desempenhoGeral?.acertos], ['Erros gerais', q => q.desempenho?.desempenhoGeral?.erros],
+      ['Acertos (%)', q => {const g=q.desempenho?.desempenhoGeral;const total=Number(g?.acertos)+Number(g?.erros);return total > 0 ? (Number(g.acertos)/total*100).toFixed(2) : ''; }],
+      ['Dificuldade', q => q.desempenho?.dificuldade], ['Tempo médio (s)', q => q.desempenho?.desempenhoGeral?.tempoMedio],
+      ['Meus acertos', q => q.desempenho?.desempenhoAluno?.quantidadeAcertos], ['Meus erros', q => q.desempenho?.desempenhoAluno?.quantidadeErros],
+      ['Meu histórico completo', q => q.desempenho?.desempenhoAluno ? JSON.stringify(q.desempenho.desempenhoAluno) : ''],
+      ['Total no fórum', q => q.forumTotalPosts], ['Ordem do fórum', q => (q.forumOrdemEfetiva || q.forumOrdem) === 'votos' ? 'Mais votados' : 'Ordem por data'],
+    ];
+    for (let i=0; i<2; i++) {
+      for (const [title, field] of [['Autor','usuario'], ['Data','data'], ['Votos','votos'], ['Comentário','texto']]) columns.push([`Fórum ${i+1} · ${title}`, q => q.forum?.[i]?.[field]]);
+    }
+    columns.push(['Status questão',q=>q.status.questao], ['Status professor',q=>q.status.comentario], ['Status desempenho',q=>q.status.desempenho], ['Status fórum',q=>q.status.forum], ['Observações',q=>q.diagnosticos.join('\n')], ['Capturado em',q=>q.capturadoEm], ['Enunciado HTML',q=>q.enunciadoHtml], ['Alternativas HTML',q=>q.alternativas?.map(a=>`${a.letra}: ${a.html}`).join('\n')], ['Professor HTML',q=>q.comentarioProfessor?.html], ['Fórum 1 HTML',q=>q.forum?.[0]?.html], ['Fórum 2 HTML',q=>q.forum?.[1]?.html], ['Desempenho completo JSON',q=>q.desempenho ? JSON.stringify(q.desempenho) : '']);
+    const cell = value => {
+      let text = String(value ?? '');
+      if (/^[\s\uFEFF]*[=+\-@]/.test(text)) text = "'" + text;
+      return '"' + text.replace(/"/g, '""') + '"';
+    };
+    return '\uFEFF' + [columns.map(c=>cell(c[0])).join(';'), ...records.map(q=>columns.map(c=>cell(c[1](q))).join(';'))].join('\r\n');
+  }
+
+  function downloadTecExport(records, context, format = 'csv') {
+    const suffix = context.key.replace(':', '_');
+    const data = format === 'csv' ? buildTecSpreadsheetCsv(records) : JSON.stringify({caderno: context.key, capturadoEm: new Date().toISOString(), questoes: records}, null, 2);
+    const blob = new Blob([data], {type: format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = `tec_${suffix}_questoes.${format}`;
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  async function waitTecExportAction(min = 600, max = 1200, shouldContinue = () => true) {
+    const end = Date.now() + min + Math.random() * (max - min);
+    while (Date.now() < end) {
+      if (!shouldContinue()) return false;
+      await delay(Math.min(100, end - Date.now()));
+    }
+    return shouldContinue();
+  }
+
+  async function fetchTecExportJson(path, shouldContinue = () => true) {
+    if (!shouldContinue()) return {ok:false,status:0,cancelled:true,error:'Coleta interrompida'};
+    const url = new URL(path, window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) return {ok:false,status:400,error:'Consulta fora da API do TEC recusada'};
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const cancelled = setInterval(() => {if (!shouldContinue()) controller.abort();}, 100);
+    try {
+      const response = await fetch(url.href, {credentials:'include',signal:controller.signal,headers:{Accept:'application/json'}});
+      const text = await response.text();
+      let json;
+      try {json=JSON.parse(text);} catch (_) {return {ok:false,status:response.status,sessionExpired:response.status===200,error:response.status===200 ? 'Resposta não JSON; confira sua sessão no TEC.' : 'O TEC retornou uma resposta não JSON.'};}
+      const message = json?.error || json?.mensagem || json?.message;
+      const expired = response.redirected && /login|entrar/i.test(response.url);
+      return {ok:response.ok && !message && !expired, status:response.status, json, error:expired ? 'Sessão expirada' : undefined};
+    } catch (err) {return {ok:false,status:0,cancelled:!shouldContinue(),error:shouldContinue() ? 'Falha de conexão ou tempo esgotado' : 'Coleta interrompida'};}
+    finally {clearTimeout(timeout);clearInterval(cancelled);}
+  }
+
+  async function collectTecSpreadsheet(context, targets, {forumOrder = 'votos', resume = true, onProgress = () => {}, shouldContinue = () => true} = {}) {
+    const signature = JSON.stringify(targets.map(t=>[t.number,t.id || null]));
+    const key = TEC_SPREADSHEET_PREFIX + context.key + ':' + forumOrder;
+    const saved = GM_getValue(key, null);
+    const records = resume && saved?.signature === signature && Array.isArray(saved.records) ? [...saved.records] : [];
+    const circuit = {};
+    let forumQueryOrder = forumOrder;
+    let paused = false, reason = '';
+    const checkpoint = () => GM_setValue(key, {signature, records, capturadoEm:new Date().toISOString()});
+    const keep = record => {const at=records.findIndex(q=>q.numero===record.numero);if(at<0)records.push(record);else records[at]=record;records.sort((a,b)=>a.numero-b.numero);checkpoint();};
+    const request = async (path, label, fallbackPath = null) => {
+      onProgress({label, records:[...records]});
+      if (!await waitTecExportAction(600,1200,shouldContinue)) return {ok:false,status:0,cancelled:true};
+      let r = await fetchTecExportJson(path,shouldContinue);
+      if (!r.ok && !r.cancelled && r.status===500 && fallbackPath && shouldContinue()) {
+        const recovered = await request(fallbackPath, `Questão: fórum por data (ordenação por votos indisponível)`);
+        if (recovered.ok) recovered.effectiveForumOrder = 'data';
+        return recovered;
+      }
+      if (!r.ok && !r.cancelled && (r.status===0 || r.status===408 || r.status===425 || r.status>=500) && shouldContinue()) {
+        onProgress({label:'Aguardando para tentar novamente…',records:[...records]});
+        if (await waitTecExportAction(4000,7000,shouldContinue)) r=await fetchTecExportJson(path,shouldContinue);
+      }
+      if (!r.ok && !r.cancelled && (r.status===0 || r.status===401 || r.status===402 || r.status===429 || r.status===408 || r.status===425 || r.status>=500 || r.sessionExpired || /sessão expirada/i.test(r.error || ''))) {paused=true;reason=tecExportFailure(r);}
+      return r;
+    };
+    for (const target of targets) {
+      if (!shouldContinue() || paused) break;
+      const previous=records.find(q=>q.numero===target.number && (!target.id || q.idQuestao===String(target.id)));
+      if (previous && Object.values(previous.status).every(s=>s==='OK')) continue;
+      const cadernoId = context.key.match(/^caderno:(\d+)$/)?.[1];
+      let q, base;
+      if (previous?.rawQuestao && previous.status.questao === 'OK') {
+        q=previous.rawQuestao;base={ok:true,status:200};
+      } else if (cadernoId) {
+        base=await request(`/api/cadernos/${cadernoId}/questoes/${target.number}?atualizarCronometro=false`,`Questão ${target.number}: enunciado e alternativas`);
+        q=base.ok ? base.json?.questao : null;
+      } else {q=getAngularVm().vm?.questao;base={ok:!!q,status:200};}
+      if (!shouldContinue() || base.cancelled) break;
+      if (!q || (target.id && String(q.idQuestao)!==String(target.id))) {
+        const record=buildTecExportRecord(q,target,context,{},forumOrder);
+        if (!base.ok) {record.status.questao='Erro: '+tecExportFailure(base);record.diagnosticos=[record.status.questao];}
+        if (!q && !paused && (base.status===200 || base.status===403)) {paused=true;reason='O TEC não disponibilizou a questão. Confira sua sessão e o acesso ao caderno. '+tecExportFailure(base);}
+        keep(record); continue;
+      }
+      const sections = {};
+      if (previous?.status.comentario==='OK') sections.comment={ok:true,status:200,json:{comentario:{nomeProfessor:previous.comentarioProfessor.professor,textoComentario:previous.comentarioProfessor.html,dataPublicacaoComentario:previous.comentarioProfessor.data}}};
+      if (previous?.status.desempenho==='OK') sections.performance={ok:true,status:200,json:{desempenho:previous.desempenho}};
+      if (previous?.status.forum==='OK') sections.forum={ok:true,status:200,effectiveForumOrder:previous.forumOrdemEfetiva || previous.forumOrdem,json:{comentarios:{pageComentarios:{resultCount:previous.forumTotalPosts,list:previous.forum.map(p=>({apelidoUsuario:p.usuario,dataPublicacao:p.data,quantidadeVoto:p.votos,comentario:p.html}))}}}};
+      const endpoints = [
+        ['comment',`/api/questoes/${q.idQuestao}/comentario?tokenPreVisualizacao=`,'comentário do professor'],
+        ['performance',`/api/questoes/${q.idQuestao}/desempenho`,'desempenho'],
+        ['forum',`/api/discussoes/${q.idQuestao}/comentarios-alunos?ordenarPor=${forumQueryOrder==='votos'?'pontos':'data'}&pagina=1`,'fórum'],
+      ];
+      for (const [type,path,label] of endpoints) {
+        if (!shouldContinue() || paused) break;
+        const fallbackPath = type==='forum' && forumQueryOrder==='votos' ? `/api/discussoes/${q.idQuestao}/comentarios-alunos?ordenarPor=data&pagina=1` : null;
+        const r=sections[type] || circuit[type] || await request(path,`Questão ${target.number}: ${label}`,fallbackPath);
+        if (type==='forum' && r.ok) {
+          r.effectiveForumOrder = r.effectiveForumOrder || forumQueryOrder;
+          if (r.effectiveForumOrder==='data') forumQueryOrder='data';
+        }
+        sections[type]=r;
+        if (!r.ok && /limite|cota|quota/i.test(tecExportFailure(r))) circuit[type]=r;
+        keep(buildTecExportRecord(q,target,context,sections,forumOrder));
+      }
+      keep(buildTecExportRecord(q,target,context,sections,forumOrder));
+      if (!shouldContinue() || paused) break;
+      const remaining=targets.some(t=>t.number>target.number);
+      if (remaining && !await waitTecExportAction(2500,4500,shouldContinue)) break;
+      if (remaining && (targets.indexOf(target)+1)%40===0) {
+        onProgress({label:'Pausa entre lotes; a coleta será retomada…',records:[...records]});
+        if (!await waitTecExportAction(45000,75000,shouldContinue)) break;
+      }
+    }
+    checkpoint();
+    return {records,completed:!paused && shouldContinue(),cancelled:!shouldContinue(),paused,reason};
+  }
+
+  function showSpreadsheetExportPanel() {
+    if (batchBusy || isProcessing) {showToast('Aguarde a operação atual terminar.', 'warning');return;}
+    syncQuestionMap();
+    const context=getQuestionMapContext();
+    if (!context.key || !context.currentId || !context.currentNumber) {showToast('Abra uma questão e aguarde carregar.', 'warning');return;}
+    document.getElementById('tec-export-overlay')?.remove();
+    const selected=getMarkedQuestions(context);
+    const overlay=document.createElement('div'); overlay.id='tec-export-overlay';overlay.className='tec-modal-overlay';
+    overlay.innerHTML=`<div class="tec-modal tec-export-modal" role="dialog" aria-modal="true" aria-labelledby="tec-export-title"><div class="tec-modal-header"><h2 id="tec-export-title">Exportar para planilha</h2><button class="tec-modal-close" aria-label="Fechar exportação">×</button></div><div class="tec-modal-body"><p>Questão completa, comentário do professor, desempenho e dois comentários do fórum.</p><label for="tec-export-scope">Quais questões?</label><select id="tec-export-scope"><option value="current">Questão atual (${context.currentNumber})</option><option value="selected" ${!selected.length?'disabled':''} ${selected.length?'selected':''}>Marcadas (${selected.length})</option><option value="all" ${context.total<=1?'disabled':''}>Caderno inteiro (${context.total})</option></select><label for="tec-export-forum-order">Comentários do fórum</label><select id="tec-export-forum-order"><option value="votos">Dois mais votados</option><option value="data">Dois primeiros na ordem por data</option></select><label class="tec-export-resume"><input type="checkbox" id="tec-export-resume"> Continuar a coleta salva, sem refazer os dados prontos</label><p class="tec-export-note">A planilha CSV abre no Excel. Textos, links de imagens e dados completos ficam preservados. A coleta usa sua sessão do TEC e não movimenta a questão aberta.</p><p id="tec-export-progress" role="status" aria-live="polite">Pronto para coletar.</p></div><div class="tec-modal-footer"><button class="tec-btn tec-btn-cancel" id="tec-export-json" hidden>Dados completos (JSON)</button><button class="tec-btn tec-btn-cancel" id="tec-export-download" hidden>Baixar planilha</button><button class="tec-btn tec-btn-cancel" id="tec-export-stop" hidden>Parar</button><button class="tec-btn tec-btn-save" id="tec-export-start">Coletar e baixar</button></div></div>`;
+    document.body.appendChild(overlay);
+    let running=false, lastRecords=[];
+    const start=overlay.querySelector('#tec-export-start'), stop=overlay.querySelector('#tec-export-stop'), progress=overlay.querySelector('#tec-export-progress');
+    const scope=overlay.querySelector('#tec-export-scope'), order=overlay.querySelector('#tec-export-forum-order');
+    const close=()=>{if(running){batchRunning=false;return;}overlay.remove();document.getElementById('tec-btn-more')?.focus();};
+    overlay.querySelector('.tec-modal-close').addEventListener('click',close);
+    overlay.addEventListener('keydown',event=>{if(event.key==='Escape'){event.stopPropagation();close();}});
+    stop.addEventListener('click',()=>{batchRunning=false;progress.textContent='Interrompendo; os dados já coletados serão preservados…';});
+    overlay.querySelector('#tec-export-download').addEventListener('click',()=>downloadTecExport(lastRecords,context));
+    overlay.querySelector('#tec-export-json').addEventListener('click',()=>downloadTecExport(lastRecords,context,'json'));
+    start.addEventListener('click',async()=>{
+      if(running || batchBusy || isProcessing)return;
+      const targets=scope.value==='all' ? Array.from({length:context.total},(_,i)=>({number:i+1,id:loadQuestionMap(context).entries[i+1]?.id || null})) : scope.value==='selected' ? selected : [{number:context.currentNumber,id:context.currentId}];
+      running=true;start.disabled=true;scope.disabled=true;order.disabled=true;overlay.querySelector('#tec-export-resume').disabled=true;stop.hidden=false;
+      overlay.querySelector('#tec-export-download').hidden=true;overlay.querySelector('#tec-export-json').hidden=true;
+      try {
+        await runBatchOperation(async()=>{
+          const result=await collectTecSpreadsheet(context,targets,{forumOrder:order.value,resume:overlay.querySelector('#tec-export-resume').checked,shouldContinue:()=>batchRunning && getQuestionMapContext().key===context.key,onProgress:state=>{lastRecords=state.records;progress.textContent=`${state.label} · ${state.records.length}/${targets.length}`;}});
+          lastRecords=result.records;
+          const gaps=result.records.filter(q=>Object.values(q.status).some(s=>s!=='OK')).length;
+          const forumFallbacks=result.records.filter(q=>q.forumOrdem==='votos' && q.forumOrdemEfetiva==='data' && q.status.forum==='OK').length;
+          progress.textContent=`${result.paused?'Pausada: '+result.reason:result.cancelled?'Coleta interrompida':'Coleta concluída'} · ${lastRecords.length}/${targets.length} questões${gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':''}${forumFallbacks?' · '+forumFallbacks+' com fórum por data; votos indisponíveis (veja Observações)':''}.`;
+          if(result.completed && lastRecords.length)downloadTecExport(lastRecords,context);
+        });
+      } catch(err){progress.textContent=`Coleta interrompida: ${err.message}. Os dados parciais foram mantidos.`;}
+      finally {
+        running=false;start.disabled=false;scope.disabled=false;order.disabled=false;overlay.querySelector('#tec-export-resume').disabled=false;overlay.querySelector('#tec-export-resume').checked=true;stop.hidden=true;start.textContent='Continuar coleta';
+        overlay.querySelector('#tec-export-download').hidden=!lastRecords.length;overlay.querySelector('#tec-export-json').hidden=!lastRecords.length;
+      }
+    });
+    scope.focus();
+  }
+
+  const uiSvg = body => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const UI_ICON = {
+    spreadsheet: uiSvg('<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 9v12"/>'),
+    bookmark: uiSvg('<path d="M6 4h12v17l-6-4-6 4z"/>'),
+    grid: uiSvg('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>'),
+    more: uiSvg('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'),
+    cards: uiSvg('<rect x="7" y="7" width="13" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h2"/>'),
+    errors: uiSvg('<circle cx="12" cy="12" r="8"/><path d="M12 8v5m0 3h.01"/>'),
+    thought: uiSvg('<path d="M20 11a7 7 0 0 1-7 7H8l-5 3 1-6a7 7 0 0 1-1-4 8 8 0 0 1 17 0z"/><path d="M7 10h9m-9 4h5"/>'),
+    target: uiSvg('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="m12 12 8-8"/>'),
+    repair: uiSvg('<path d="M20 7a6 6 0 0 1-7 7l-7 7-3-3 7-7a6 6 0 0 1 7-7l-4 4 3 3z"/>'),
+    settings: uiSvg('<path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>'),
+    check: uiSvg('<path d="m5 12 4 4L19 6"/>'),
+    close: uiSvg('<path d="m6 6 12 12M6 18 18 6"/>'),
+    left: uiSvg('<path d="m14 6-6 6 6 6"/>'),
+    right: uiSvg('<path d="m10 6 6 6-6 6"/>'),
+  };
+  function toolbarButtonContent(icon, label) { return `${UI_ICON[icon]}<span>${label}</span>`; }
+
+  const QUESTION_MAP_PREFIX = 'tecQuestionMap:v1:';
+  let questionMapOpen = false;
+  let questionMapPage = 0;
+  let questionMapSignature = '';
+  let toolsDismissBound = false;
+  let batchBusy = false; // inclui os modais de seleção e revisão, além da navegação
+  const questionContextSnapshots = new Map();
+
+  function getQuestionMapContext() {
+    const anchor = [...document.querySelectorAll('.questao-enunciado-texto, .questao-enunciado, [tec-formatar-html]')]
+      .find(element => nativeNavigationVisible(element) && !element.closest('[class*="comentario"], [class*="discussao"]'));
+    const { vm } = getAngularVm();
+    const angularId = vm?.questao?.idQuestao ? String(vm.questao.idQuestao) : null;
+    const questionArea = anchor?.closest('.questao, .questao-rg-area-coluna-1');
+    const validLink = link => /^#\d+$/.test(link.textContent.trim()) &&
+      !link.closest('aside, [hidden], .tec-modal-overlay, #tec-anki-toolbar, #tec-question-map, [class*="comentario"], [class*="discussao"]') &&
+      nativeNavigationVisible(link);
+    const headerLinks = [...(questionArea || document).querySelectorAll('.questao-cabecalho a[href*="/questoes/"], [class*="questao-cabecalho"] a[href*="/questoes/"], .questao-header a[href*="/questoes/"], .questao-enunciado-concurso a[href*="/questoes/"]')];
+    const scopedLink = headerLinks.find(validLink) || (questionArea ? [...questionArea.querySelectorAll('a[href*="/questoes/"]')]
+      .find(link => validLink(link) && (!angularId || link.textContent.trim().slice(1) === angularId)) : null);
+    // An unrelated citation or a hidden previous question must not override the
+    // active question. Without a scoped header, only an exact Angular ID is used.
+    const questionLink = scopedLink || (angularId ? [...document.querySelectorAll('a[href*="/questoes/"]')]
+      .find(link => validLink(link) && link.textContent.trim().slice(1) === angularId) : null);
+    const standaloneId = window.location.pathname.match(/^\/questoes\/(\d+)\/?$/)?.[1];
+    const currentId = angularId || questionLink?.textContent.trim().slice(1) || standaloneId || null;
+    const transitioning = angularId && scopedLink && scopedLink.textContent.trim().slice(1) !== angularId;
+    const position = (document.body.innerText || '').match(/Quest[ãa]o\s+(\d+)\s+de\s+(\d+)/i);
+    const notebookId = window.location.pathname.match(/\/cadernos\/(\d+)(?:\/|$)/)?.[1];
+    if (notebookId) {
+      const key = `caderno:${notebookId}`;
+      const modelNumber = Number(vm?.caderno?.numeroQuestaoAtual);
+      const modelTotal = Number(vm?.caderno?.numeroTotalQuestoes);
+      const number = position ? Number(position[1]) : 0;
+      const total = position ? Number(position[2]) : Number.isInteger(modelTotal) && modelTotal > 0 ? modelTotal : 0;
+      const notebookMatches = !vm?.caderno?.idCaderno || String(vm.caderno.idCaderno) === notebookId;
+      const countersMatch = (!Number.isInteger(modelNumber) || modelNumber < 1 || modelNumber === number) &&
+        (!Number.isInteger(modelTotal) || modelTotal < 1 || modelTotal === total);
+      const ids = Array.isArray(vm?.questoes) ? vm.questoes.map(item => item?.idQuestao ? String(item.idQuestao) : null) : [];
+      const completeRoster = total > 0 && ids.length === total && ids.every(Boolean) && new Set(ids).size === total;
+      const rosterMatches = !completeRoster || ids[number - 1] === currentId;
+      const previous = questionContextSnapshots.get(key);
+      // The TEC updates its notebook counter and question payload separately.
+      // A change in only one half cannot establish a new ID/ordinal pair.
+      const partialChange = previous && ((previous.id !== currentId) !== (previous.number !== number));
+      const stable = currentId && number > 0 && number <= total && !transitioning && notebookMatches &&
+        countersMatch && rosterMatches && (!partialChange || completeRoster);
+      if (stable) questionContextSnapshots.set(key, { id: currentId, number });
+      return { key, currentId, currentNumber: stable ? number : 0, total };
+    }
+    return { key: standaloneId ? `questao:${standaloneId}` : null, currentId,
+      currentNumber: standaloneId ? 1 : 0, total: standaloneId ? 1 : 0 };
+  }
+
+  function loadQuestionMap(context = getQuestionMapContext()) {
+    if (!context.key) return { entries: {}, total: 0 };
+    const stored = GM_getValue(QUESTION_MAP_PREFIX + context.key, null);
+    return { entries: stored?.entries && typeof stored.entries === 'object' ? { ...stored.entries } : {},
+      total: context.total || stored?.total || 0 };
+  }
+
+  function getMarkedQuestions(context = getQuestionMapContext()) {
+    const selected = new Map();
+    for (const [key, entry] of Object.entries(loadQuestionMap(context).entries)) {
+      if (!entry?.selected) continue;
+      const number = Number.isInteger(Number(key)) ? Number(key) : entry.number;
+      if (!Number.isInteger(number) || number < 1) continue;
+      selected.set(entry.id ? `id:${entry.id}` : `number:${number}`, { number, id: entry.id || null });
+    }
+    return [...selected.values()].sort((a, b) => a.number - b.number);
+  }
+
+  function setQuestionCardSelection(number, selected, context = getQuestionMapContext()) {
+    const state = loadQuestionMap(context);
+    if (!context.key || !Number.isInteger(number) || number < 1 || number > state.total) return state;
+    state.entries[number] = { ...state.entries[number], selected: !!selected };
+    if (number === context.currentNumber && context.currentId) state.entries[number].id = context.currentId;
+    const id = state.entries[number].id;
+    if (id) for (const key of Object.keys(state.entries)) {
+      if (key !== String(number) && state.entries[key]?.id === id) delete state.entries[key];
+    }
+    GM_setValue(QUESTION_MAP_PREFIX + context.key, state);
+    questionMapSignature = '';
+    renderQuestionMap();
+    return state;
+  }
+
+  function clearQuestionCardSelection(id, context) {
+    const state = loadQuestionMap(context);
+    for (const entry of Object.values(state.entries)) if (entry?.id === String(id)) entry.selected = false;
+    GM_setValue(QUESTION_MAP_PREFIX + context.key, state);
+    questionMapSignature = '';
+    renderQuestionMap();
+  }
+
+  function syncQuestionMap() {
+    const context = getQuestionMapContext();
+    if (context.key && context.currentId && context.currentNumber > 0) {
+      const state = loadQuestionMap(context);
+      const old = state.entries[context.currentNumber] || {};
+      const q = getAngularVm().vm?.questao;
+      const result = q?.alternativaSelecionada > 0 && typeof q.correcaoQuestao === 'boolean'
+        ? (q.correcaoQuestao ? 'ok' : 'err') : 'pending';
+      // Uma posição pode mudar se o TEC reordenar o caderno. A marca acompanha
+      // o ID conhecido, sem transferir a escolha silenciosamente à nova questão.
+      const previous = Object.values(state.entries).find(entry => entry?.id === context.currentId);
+      if (old.id && old.id !== context.currentId) {
+        if (old.selected) {
+          state.entries[`id:${old.id}`] = { ...old, number: context.currentNumber };
+        }
+        state.entries[context.currentNumber] = { id: context.currentId, result, selected: !!previous?.selected };
+      } else {
+        state.entries[context.currentNumber] = { ...old, id: context.currentId, result };
+      }
+      let removedDuplicate = false;
+      for (const key of Object.keys(state.entries)) {
+        if (key !== String(context.currentNumber) && state.entries[key]?.id === context.currentId) {
+          state.entries[context.currentNumber].selected ||= !!state.entries[key].selected;
+          delete state.entries[key];
+          removedDuplicate = true;
+        }
+      }
+      if (JSON.stringify(old) !== JSON.stringify(state.entries[context.currentNumber]) ||
+          removedDuplicate || GM_getValue(QUESTION_MAP_PREFIX + context.key, null)?.total !== state.total) {
+        GM_setValue(QUESTION_MAP_PREFIX + context.key, state);
+      }
+    }
+    renderQuestionMap();
+  }
+
+  function renderQuestionMap() {
+    const context = getQuestionMapContext();
+    const state = loadQuestionMap(context);
+    const marked = getMarkedQuestions(context);
+    const current = state.entries[context.currentNumber];
+    for (const id of ['tec-btn-save', 'tec-btn-batch', 'tec-btn-export']) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = batchBusy || isProcessing;
+    }
+    const mark = document.getElementById('tec-mark-current');
+    if (mark) { mark.checked = !!current?.selected; mark.disabled = !context.key || !context.currentId || !context.currentNumber || batchBusy || isProcessing; }
+    const markLabel = document.getElementById('tec-mark-label');
+    markLabel?.classList.toggle('marked', !!mark?.checked);
+    markLabel?.classList.toggle('disabled', !!mark?.disabled);
+    const markText = document.getElementById('tec-mark-text');
+    if (markText) markText.textContent = mark?.checked ? 'Marcada' : 'Marcar card';
+    const mapButton = document.getElementById('tec-btn-map');
+    if (mapButton) {
+      mapButton.setAttribute('aria-expanded', String(questionMapOpen));
+      const count = mapButton.querySelector('#tec-map-count');
+      if (count) { count.textContent = marked.length; count.hidden = !marked.length; }
+    }
+    const panel = document.getElementById('tec-question-map');
+    if (!panel) return;
+    panel.hidden = !questionMapOpen;
+    if (!questionMapOpen) return;
+    const pages = Math.max(1, Math.ceil(state.total / 100));
+    questionMapPage = Math.max(0, Math.min(questionMapPage, pages - 1));
+    const signature = JSON.stringify([context, state, questionMapPage, batchBusy, isProcessing]);
+    if (signature === questionMapSignature) return;
+    questionMapSignature = signature;
+    panel.querySelector('#tec-map-summary').textContent = context.key
+      ? marked.length ? `${marked.length} selecionada${marked.length === 1 ? '' : 's'}` : 'Selecione as questões para revisar'
+      : 'Abra um caderno para selecionar questões';
+    panel.querySelector('#tec-map-meta').textContent = `${state.total || '?'} questões · atual ${context.currentNumber || '?'}`;
+    const start = questionMapPage * 100 + 1;
+    const end = Math.min(state.total, start + 99);
+    const focusedNumber = panel.contains(document.activeElement) ? document.activeElement?.dataset.number : null;
+    panel.querySelector('#tec-map-grid').innerHTML = Array.from({ length: Math.max(0, end - start + 1) }, (_, i) => {
+      const number = start + i;
+      const entry = state.entries[number] || {};
+      const result = entry.result === 'ok' ? ', acerto' : entry.result === 'err' ? ', erro' : '';
+      const label = `Questão ${number}${entry.id ? `, #${entry.id}` : ''}${result}: ${entry.selected ? 'marcada para card' : 'marcar para card'}`;
+      return `<label class="tec-map-cell${entry.selected ? ' selected' : ''}${number === context.currentNumber ? ' current' : ''}" data-result="${escapeHtml(entry.result || 'pending')}" title="${escapeHtml(label)}">
+        <input type="checkbox" data-number="${number}" aria-label="${escapeHtml(label)}" ${entry.selected ? 'checked' : ''} ${batchBusy || isProcessing ? 'disabled' : ''}><span>${number}</span><span class="tec-map-check">${UI_ICON.check}</span></label>`;
+    }).join('');
+    const pending = panel.querySelector('#tec-map-pending');
+    const unplaced = Object.entries(state.entries).filter(([key, entry]) => entry?.selected && entry.id &&
+      (!Number.isInteger(Number(key)) || Number(key) < 1 || Number(key) > state.total));
+    pending.hidden = !unplaced.length;
+    pending.innerHTML = `<summary>${unplaced.length} seleção(ões) aguardando atualização da posição</summary>` +
+      unplaced.map(([, entry]) => `<label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" data-unplaced-id="${escapeHtml(entry.id)}" checked ${batchBusy || isProcessing ? 'disabled' : ''}>Questão #${escapeHtml(entry.id)}</label>`).join('');
+    if (focusedNumber) panel.querySelector(`input[data-number="${Number(focusedNumber)}"]`)?.focus({ preventScroll: true });
+    panel.querySelector('#tec-map-pager').hidden = pages <= 1;
+    panel.querySelector('#tec-map-page-label').textContent = state.total ? `${start}–${end}` : '—';
+    panel.querySelector('#tec-map-prev').disabled = questionMapPage === 0;
+    panel.querySelector('#tec-map-next').disabled = questionMapPage >= pages - 1;
+    const generate = panel.querySelector('#tec-map-generate');
+    generate.innerHTML = batchBusy ? '<span class="tec-spinner"></span><span>Processando…</span>' : toolbarButtonContent('cards', 'Gerar cards');
+    generate.disabled = !marked.length || batchBusy || isProcessing;
+    panel.querySelector('#tec-map-stop').hidden = !batchRunning;
+  }
+
+  function toggleQuestionMap() {
+    setToolsMenuOpen(false);
+    let panel = document.getElementById('tec-question-map');
+    if (!panel) {
+      panel = document.createElement('section');
+      panel.id = 'tec-question-map';
+      panel.setAttribute('aria-label', 'Mapa de questões para cards');
+      panel.innerHTML = `<header><div><strong>Cards do caderno</strong><span id="tec-map-meta"></span></div><button id="tec-map-close" aria-label="Fechar mapa">${UI_ICON.close}</button></header>
+        <div id="tec-map-body"><p id="tec-map-summary" aria-live="polite" title="Selecione qualquer questão, inclusive acertos, para gerar cards depois."></p><div id="tec-map-grid"></div><details id="tec-map-pending" hidden style="margin:12px 0;font-size:12px;color:#667085"></details>
+        <div id="tec-map-legend" aria-label="Legenda"><span><i></i>Acerto</span><span><i class="tec-legend-error"></i>Erro</span><span><i class="tec-legend-current"></i>Atual</span></div>
+        <div id="tec-map-pager"><button id="tec-map-prev" aria-label="Página anterior do mapa">${UI_ICON.left}</button><span id="tec-map-page-label"></span><button id="tec-map-next" aria-label="Próxima página do mapa">${UI_ICON.right}</button></div></div>
+        <footer><button id="tec-map-generate">Gerar marcadas</button><button id="tec-map-stop" hidden>Parar</button></footer>`;
+      document.body.appendChild(panel);
+      panel.querySelector('#tec-map-close').addEventListener('click', () => { questionMapOpen = false; renderQuestionMap(); document.getElementById('tec-btn-map')?.focus(); });
+      panel.querySelector('#tec-map-prev').addEventListener('click', () => { questionMapPage--; renderQuestionMap(); });
+      panel.querySelector('#tec-map-next').addEventListener('click', () => { questionMapPage++; renderQuestionMap(); });
+      panel.querySelector('#tec-map-generate').addEventListener('click', processMarkedQuestions);
+      panel.querySelector('#tec-map-stop').addEventListener('click', () => { batchRunning = false; renderQuestionMap(); });
+      panel.addEventListener('change', event => {
+        if (event.target.matches('input[data-number]') && !batchBusy && !isProcessing) setQuestionCardSelection(Number(event.target.dataset.number), event.target.checked);
+        if (event.target.matches('input[data-unplaced-id]') && !event.target.checked && !batchBusy && !isProcessing) clearQuestionCardSelection(event.target.dataset.unplacedId, getQuestionMapContext());
+      });
+      panel.addEventListener('keydown', event => {
+        event.stopPropagation();
+        if (event.key === 'Escape') { event.preventDefault(); panel.querySelector('#tec-map-close').click(); }
+      });
+    }
+    questionMapOpen = !questionMapOpen;
+    if (questionMapOpen) questionMapPage = Math.floor(Math.max(0, getQuestionMapContext().currentNumber - 1) / 100);
+    questionMapSignature = '';
+    syncQuestionMap();
+  }
+
+  function setToolsMenuOpen(open, returnFocus = false) {
+    const menu = document.getElementById('tec-tools-menu');
+    const button = document.getElementById('tec-btn-more');
+    if (!menu || !button) return;
+    menu.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    if (open) { questionMapOpen = false; renderQuestionMap(); }
+    if (returnFocus) button.focus();
+  }
+
   function injectToolbar() {
     if (document.getElementById('tec-anki-toolbar')) return;
 
     const toolbar = document.createElement('div');
     toolbar.id = 'tec-anki-toolbar';
     toolbar.innerHTML = `
-      <button class="tec-btn-primary" id="tec-btn-save" title="Salvar quest\u00E3o atual (Shift+Enter)">
-        \uD83D\uDCCB Salvar
-      </button>
-      <button class="tec-btn-batch" id="tec-btn-batch" title="Processar todos os erros do caderno">
-        \uD83D\uDCCB Erros
-      </button>
-      <button class="tec-btn-icon" id="tec-btn-thought" title="Anotar/editar meu racioc\u00EDnio nesta quest\u00E3o">\uD83D\uDCAD</button>
-      <button class="tec-btn-icon" id="tec-btn-vespera" title="Modo v\u00E9spera \u2014 drill dos cards mais errados">\uD83C\uDFAF</button>
-      <button class="tec-btn-icon" id="tec-btn-leech" title="Cards problem\u00E1ticos (leeches) \u2014 reformular com IA">\uD83E\uDE78</button>
-      <button class="tec-btn-icon" id="tec-btn-settings" title="Configura\u00E7\u00F5es">\u2699\uFE0F</button>
-      <div class="tec-status-dot" id="tec-status-dot" title="Status das conex\u00F5es"></div>
+      <label id="tec-mark-label" title="Marcar esta questão para gerar card depois, mesmo se acertou"><input type="checkbox" id="tec-mark-current" aria-label="Marcar questão atual para card">${UI_ICON.bookmark}<span id="tec-mark-text">Marcar card</span></label>
+      <button id="tec-btn-map" aria-controls="tec-question-map" aria-expanded="false" title="Mapa de questões para cards">${UI_ICON.grid}<span>Mapa</span><span id="tec-map-count" hidden></span></button>
+      <span class="tec-toolbar-divider" aria-hidden="true"></span>
+      <button id="tec-btn-more" aria-controls="tec-tools-menu" aria-expanded="false" aria-label="Mais ferramentas" title="Mais ferramentas">${UI_ICON.more}</button>
+      <div id="tec-tools-menu" aria-label="Ferramentas de estudo" hidden>
+        <div class="tec-menu-heading">Questões</div>
+        <button id="tec-btn-save" title="Gerar questão atual (Shift+Enter)">${toolbarButtonContent('cards', 'Gerar questão atual')}</button>
+        <button id="tec-btn-batch">${toolbarButtonContent('errors', 'Processar erros do caderno')}</button>
+        <button id="tec-btn-export">${toolbarButtonContent('spreadsheet', 'Exportar para planilha')}</button>
+        <button id="tec-btn-thought">${toolbarButtonContent('thought', 'Anotar raciocínio')}</button>
+        <div class="tec-menu-divider"></div>
+        <button id="tec-btn-vespera">${toolbarButtonContent('target', 'Revisão de véspera')}</button>
+        <button id="tec-btn-leech">${toolbarButtonContent('repair', 'Reformular cards difíceis')}</button>
+        <div class="tec-menu-divider"></div>
+        <button id="tec-btn-settings">${toolbarButtonContent('settings', 'Configurações')}</button>
+        <div class="tec-menu-status"><span class="tec-status-dot" id="tec-status-dot"></span><span id="tec-connection-label">Verificando conexões…</span></div>
+      </div>
     `;
 
     document.body.appendChild(toolbar);
 
     document.getElementById('tec-btn-save').addEventListener('click', () => processCurrentQuestion());
     document.getElementById('tec-btn-batch').addEventListener('click', () => processBatchQuestions());
+    document.getElementById('tec-btn-export').addEventListener('click', () => showSpreadsheetExportPanel());
+    document.getElementById('tec-btn-map').addEventListener('click', toggleQuestionMap);
+    document.getElementById('tec-btn-more').addEventListener('click', () => setToolsMenuOpen(document.getElementById('tec-tools-menu').hidden));
+    toolbar.querySelector('#tec-tools-menu').addEventListener('click', event => {
+      if (event.target.closest('button')) setToolsMenuOpen(false);
+    });
+    if (!toolsDismissBound) {
+      document.addEventListener('pointerdown', event => {
+        if (!document.getElementById('tec-anki-toolbar')?.contains(event.target)) setToolsMenuOpen(false);
+      });
+      toolsDismissBound = true;
+    }
+    toolbar.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !toolbar.querySelector('#tec-tools-menu').hidden) {
+        event.preventDefault(); event.stopPropagation(); setToolsMenuOpen(false, true);
+      }
+    });
+    document.getElementById('tec-mark-current').addEventListener('change', event => {
+      if (batchBusy || isProcessing) return;
+      const context = getQuestionMapContext();
+      setQuestionCardSelection(context.currentNumber, event.target.checked, context);
+    });
     document.getElementById('tec-btn-thought').addEventListener('click', () => openThoughtForCurrentQuestion());
     document.getElementById('tec-btn-vespera').addEventListener('click', () => showVesperaModal());
     document.getElementById('tec-btn-leech').addEventListener('click', () => showLeechPanel());
@@ -5418,7 +6048,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       document.removeEventListener('mouseup', onDragEnd);
     }
     toolbar.addEventListener('mousedown', (e) => {
-      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+      if (e.target.closest('button, label, input, #tec-tools-menu')) return;
       startX = e.clientX; startY = e.clientY;
       const rect = toolbar.getBoundingClientRect();
       origX = rect.left; origY = rect.top;
@@ -5439,8 +6069,12 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       if (anki && obs) { statusDot.classList.add('green'); statusDot.title = 'Anki \u2705 | Obsidian \u2705'; }
       else if (anki || obs) { statusDot.classList.add('yellow'); statusDot.title = `Anki ${anki ? '\u2705' : '\u274C'} | Obsidian ${obs ? '\u2705' : '\u274C'}`; }
       else { statusDot.classList.add('red'); statusDot.title = 'Anki \u274C | Obsidian \u274C'; }
+      const label = document.getElementById('tec-connection-label');
+      if (label) label.textContent = anki && obs ? 'Anki e Obsidian conectados' : anki ? 'Anki conectado · Obsidian offline' : obs ? 'Obsidian conectado · Anki offline' : 'Anki e Obsidian offline';
     } catch {
       statusDot.className = 'tec-status-dot red';
+      const label = document.getElementById('tec-connection-label');
+      if (label) label.textContent = 'Conexões indisponíveis';
     }
   }
 
@@ -5451,8 +6085,9 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
   let isProcessing = false;
 
   async function processCurrentQuestion() {
-    if (isProcessing) { showToast('J\u00E1 processando uma quest\u00E3o...', 'warning'); return; }
+    if (isProcessing || batchBusy) { showToast('Já há uma geração em andamento.', 'warning'); return; }
     isProcessing = true;
+    renderQuestionMap();
 
     const saveBtn = document.getElementById('tec-btn-save');
     if (saveBtn) saveBtn.innerHTML = '<span class="tec-spinner"></span> Salvando...';
@@ -5586,8 +6221,9 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       showToast(`Erro: ${err.message}`, 'error', 8000);
     } finally {
       if (loadingToast) loadingToast.remove();
-      if (saveBtn) saveBtn.innerHTML = '\uD83D\uDCCB Salvar';
+      if (saveBtn) saveBtn.innerHTML = toolbarButtonContent('cards', 'Gerar questão atual');
       isProcessing = false;
+      renderQuestionMap();
     }
   }
 
@@ -5611,6 +6247,354 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
    */
   function navigateToPrevQuestion() {
     simulateKey('ArrowLeft', 37);
+  }
+
+  function planQuestionTargetRoute(targets, start, total) {
+    const unique = new Map();
+    for (const target of targets) {
+      if (!Number.isInteger(target.number) || target.number < 1 || target.number > total) continue;
+      const id = target.id ? String(target.id) : null;
+      unique.set(id ? `id:${id}` : `number:${target.number}`, { number: target.number, id });
+    }
+    const ordered = [...unique.values()].sort((a, b) => a.number - b.number);
+    if (!ordered.length) return ordered;
+    // Visiting the nearer end first avoids a detour outside the selected range.
+    // Together with the return to start, either sweep covers the minimum interval.
+    if (Math.abs(start - ordered[0].number) > Math.abs(start - ordered.at(-1).number)) ordered.reverse();
+    return [...ordered.filter(target => target.number === start), ...ordered.filter(target => target.number !== start)];
+  }
+
+  function resolveQuestionTargets(targets, context) {
+    const { vm } = getAngularVm();
+    const roster = vm?.questoes;
+    const ids = Array.isArray(roster) ? roster.map(item => item?.idQuestao ? String(item.idQuestao) : null) : [];
+    // Only use an ordinal roster when it is complete, unique, and agrees with
+    // the question currently shown. No guessed controller method is invoked.
+    const verifiedRoster = ids.length === context.total && ids.every(Boolean) &&
+      new Set(ids).size === ids.length && ids[context.currentNumber - 1] === context.currentId;
+    const entries = loadQuestionMap(context).entries;
+    return targets.map(target => {
+      const id = target.id ? String(target.id) : null;
+      const rosterIndex = id && verifiedRoster ? ids.indexOf(id) : -1;
+      const storedPosition = id ? Object.entries(entries).find(([number, entry]) =>
+        Number.isInteger(Number(number)) && entry?.id === id)?.[0] : null;
+      const number = rosterIndex >= 0 ? rosterIndex + 1 : storedPosition ? Number(storedPosition) : target.number;
+      return { number, id: id || (verifiedRoster ? ids[number - 1] : null) || null };
+    });
+  }
+
+  function nativeNavigationText(element) {
+    const attributes = ['title', 'aria-label', 'data-original-title', 'data-tooltip', 'uib-tooltip', 'tooltip']
+      .map(name => element.getAttribute(name) || '').join(' ');
+    const labelledBy = (element.getAttribute('aria-labelledby') || '').split(/\s+/)
+      .map(id => document.getElementById(id)?.textContent || '').join(' ');
+    return `${element.textContent || ''} ${attributes} ${labelledBy}`
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  }
+
+  function nativeNavigationVisible(element) {
+    if (element.disabled || element.closest('#tec-anki-toolbar, #tec-question-map, .tec-modal-overlay')) return false;
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (node.hidden || style.display === 'none' || style.visibility === 'hidden') return false;
+    }
+    return true;
+  }
+
+  function findNativeQuestionJumpDialog() {
+    const candidates = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], md-dialog, .modal, .bootbox, .swal2-popup, [class*="dialog"]')];
+    // Some TEC dialogs have no ARIA role. Restrict the fallback to the native
+    // wording and its immediate ancestors, rather than choosing any page input.
+    for (const label of document.querySelectorAll('h1,h2,h3,h4,h5,strong,p,label,span,div')) {
+      if (label.children.length || !/acessar questao (?:por|pelo) numero|deseja acessar qual questao/i.test(nativeNavigationText(label))) continue;
+      let node = label.parentElement;
+      for (let depth = 0; node && node !== document.body && depth < 4; depth++, node = node.parentElement) candidates.push(node);
+    }
+    for (const container of candidates) {
+      if (!/acessar questao (?:por|pelo) numero|deseja acessar qual questao|\bir para\b/i.test(nativeNavigationText(container))) continue;
+      const input = [...container.querySelectorAll('input:not([type="hidden"])')].find(element =>
+        !element.readOnly && ['text', 'number', 'tel'].includes(element.type) && nativeNavigationVisible(element));
+      const buttons = [...container.querySelectorAll('button, input[type="submit"], input[type="button"]')].filter(nativeNavigationVisible);
+      const confirm = buttons.find(element => /^\s*(?:ok|ir|acessar|confirmar)(?:\s|$)/i.test(element.value || element.textContent || ''));
+      if (input && confirm) return { container, input, confirm };
+    }
+    return null;
+  }
+
+  async function waitForQuestionPosition(number, previousId, context, shouldContinue, timeout = 10000) {
+    const deadline = Date.now() + timeout;
+    while (true) {
+      if (!shouldContinue()) return false;
+      const current = getQuestionMapContext();
+      if (current.key !== context.key) return false;
+      if (current.currentNumber === number && current.currentId && current.currentId !== previousId) {
+        await settleQuestionState(current.currentId);
+        return shouldContinue() && getQuestionMapContext().currentNumber === number;
+      }
+      if (Date.now() >= deadline) break;
+      await delay(Math.min(100, deadline - Date.now()));
+    }
+    throw new Error(`O TEC não confirmou a navegação para a questão ${number}. As marcações foram mantidas.`);
+  }
+
+  async function tryNativeQuestionJump(number, context, shouldContinue) {
+    let dialog = findNativeQuestionJumpDialog();
+    const control = dialog ? null : [...document.querySelectorAll('button,a,[role="button"]')].find(element =>
+      nativeNavigationVisible(element) && /acessar questao (?:por|pelo) numero|\bir para\b/i.test(nativeNavigationText(element)));
+    if (!dialog && !control) return 'unavailable';
+    if (!await waitTecAction('navigate', shouldContinue)) return 'cancelled';
+    const previousId = getQuestionMapContext().currentId;
+    if (!dialog) {
+      realClick(control);
+      const deadline = Date.now() + 2000;
+      while (shouldContinue()) {
+        dialog = findNativeQuestionJumpDialog();
+        if (dialog) break;
+        if (Date.now() >= deadline) break;
+        await delay(Math.min(100, deadline - Date.now()));
+      }
+    }
+    if (!shouldContinue()) return 'cancelled';
+    if (!dialog) throw new Error('O diálogo de acesso por número não ficou disponível. A coleta foi interrompida e as marcações foram mantidas.');
+    const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (valueSetter) valueSetter.call(dialog.input, String(number)); else dialog.input.value = String(number);
+    dialog.input.dispatchEvent(new Event('input', { bubbles: true }));
+    dialog.input.dispatchEvent(new Event('change', { bubbles: true }));
+    if (!shouldContinue()) return 'cancelled';
+    realClick(dialog.confirm);
+    return await waitForQuestionPosition(number, previousId, context, shouldContinue) ? 'jumped' : 'cancelled';
+  }
+
+  async function navigateToQuestionNumber(number, context, shouldContinue) {
+    if (!shouldContinue()) return false;
+    let current = getQuestionMapContext();
+    if (!Number.isInteger(number) || number < 1 || number > context.total || current.key !== context.key) return false;
+    if (current.currentNumber === number) return true;
+    const nativeResult = await tryNativeQuestionJump(number, context, shouldContinue);
+    if (nativeResult !== 'unavailable') return nativeResult === 'jumped';
+    // The fallback walks only the distance to the next selected target, never
+    // the entire notebook. Every step is checked before issuing another one.
+    for (let steps = 0; steps < context.total && shouldContinue(); steps++) {
+      current = getQuestionMapContext();
+      if (current.currentNumber === number) return true;
+      if (!current.currentNumber || current.key !== context.key) return false;
+      const next = current.currentNumber + (number > current.currentNumber ? 1 : -1);
+      if (!await waitTecAction('navigate', shouldContinue)) return false;
+      if (next > current.currentNumber) navigateToNextQuestion(); else navigateToPrevQuestion();
+      if (!await waitForQuestionPosition(next, current.currentId, context, shouldContinue)) return false;
+    }
+    return shouldContinue() && getQuestionMapContext().currentNumber === number;
+  }
+
+  async function collectQuestionTargets(targets, context, { onProgress = () => {} } = {}) {
+    const route = planQuestionTargetRoute(resolveQuestionTargets(targets, context), context.currentNumber, context.total);
+    const collected = [], missing = targets.filter(target => !route.some(item => target.id
+      ? item.id === String(target.id) : item.number === target.number)).map(target => ({ ...target, reason: 'Posição não localizada no caderno.' }));
+    const active = () => batchRunning && getQuestionMapContext().key === context.key;
+    try {
+      for (const target of route) {
+        if (!await navigateToQuestionNumber(target.number, context, active)) break;
+        const current = getQuestionMapContext();
+        if (target.id && target.id !== current.currentId) { missing.push(target); continue; }
+        await settleQuestionState(current.currentId);
+        const sameQuestion = () => active() && getQuestionMapContext().currentId === current.currentId;
+        if (!sameQuestion()) break;
+        syncQuestionMap();
+        await ensureCommentExpanded(sameQuestion);
+        if (!sameQuestion()) break;
+        const data = extractQuestionData();
+        if (data.id !== current.currentId || !data.enunciado || !data.gabarito) {
+          missing.push(target);
+        } else {
+          data.selecaoManual = true;
+          const thought = getStoredThought(data.id);
+          if (thought) data.pensamentoAluno = thought;
+          collected.push(data);
+        }
+        onProgress({ collected: collected.length, total: route.length, number: current.currentNumber });
+      }
+    } finally {
+      if (active()) await navigateToQuestionNumber(context.currentNumber, context, active);
+    }
+    return { collected, missing, cancelled: !active() };
+  }
+
+  // Read marked questions from the same TEC endpoints used by spreadsheet
+  // export. No controller navigation, answer submission, or DOM comment toggle
+  // is needed, so collecting a batch does not depend on the active browser tab.
+  function buildMarkedQuestionData(q, commentJson, context) {
+    const labels = q.tipoQuestao === 'CERTO_ERRADO' ? ['Certo', 'Errado'] : ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    const correct = ['string', 'number'].includes(typeof q.numeroAlternativaCorreta) ? Number(q.numeroAlternativaCorreta) : NaN;
+    const selected = ['string', 'number'].includes(typeof q.alternativaSelecionada) ? Number(q.alternativaSelecionada) : NaN;
+    const alternativas = (Array.isArray(q.alternativas) ? q.alternativas : []).map((alt, index) => ({
+      letra: labels[index] || String(index + 1),
+      texto: stripHtml(typeof alt === 'string' ? alt : alt?.texto || alt?.descricao || ''),
+      correta: correct === index + 1, selecionada: selected === index + 1,
+    }));
+    let vezesErradoTec = null;
+    for (const [key, value] of Object.entries(q)) {
+      if (!/resolu|histor|tentativ|desempenho|respost/i.test(key) || !Array.isArray(value) || !value.length) continue;
+      const results = value.map(classifyResolucao);
+      if (results.every(Boolean)) { vezesErradoTec = results.filter(result => result === 'err').length; break; }
+    }
+    return {
+      id: String(q.idQuestao || ''), banca: q.bancaSigla || '', ano: String(q.concursoAno || ''),
+      cargo: q.cargoSigla || '', concurso: '', materia: q.nomeMateria || '', assunto: q.nomeAssunto || '',
+      enunciado: stripHtml(q.enunciado || ''),
+      tipo: q.tipoQuestao === 'CERTO_ERRADO' ? 'certo_errado' : q.tipoQuestao === 'MULTIPLA_ESCOLHA' ? 'multipla_escolha' : '',
+      alternativas, gabarito: alternativas.find(alt => alt.correta)?.letra || '',
+      respostaAluno: alternativas.find(alt => alt.selecionada)?.letra || '',
+      errou: q.correcaoQuestao === false && selected > 0,
+      comentario: extractCommentFromJson(commentJson), vezesErradoTec, selecaoManual: true,
+      url: `https://www.tecconcursos.com.br/questoes/${q.idQuestao}`,
+    };
+  }
+
+  function reconcileQuestionMapPositions(observed, context) {
+    const state = loadQuestionMap(context);
+    const selectedIds = new Set(Object.values(state.entries).filter(entry => entry?.selected && entry.id).map(entry => String(entry.id)));
+    const pendingNumbers = new Set(Object.entries(state.entries).filter(([, entry]) => entry?.selected && !entry.id).map(([number]) => Number(number)));
+    for (const [number, q] of observed) {
+      const id = String(q.idQuestao);
+      const previous = state.entries[number];
+      if (previous?.selected && previous.id && String(previous.id) !== id) {
+        state.entries[`id:${previous.id}`] = { ...previous, number };
+      }
+      const known = Object.values(state.entries).find(entry => String(entry?.id) === id);
+      state.entries[number] = { ...known, id, selected: selectedIds.has(id) || pendingNumbers.has(number),
+        result: q.alternativaSelecionada > 0 && typeof q.correcaoQuestao === 'boolean' ? q.correcaoQuestao ? 'ok' : 'err' : 'pending' };
+      for (const key of Object.keys(state.entries)) {
+        if (key !== String(number) && String(state.entries[key]?.id) === id) delete state.entries[key];
+      }
+    }
+    GM_setValue(QUESTION_MAP_PREFIX + context.key, state);
+    questionMapSignature = '';
+    renderQuestionMap();
+  }
+
+  async function restoreMarkedQuestionPosition(context) {
+    // The notebook GET also changes TEC's resume position. Restore the question
+    // currently open, including when collection was cancelled, without clicking.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const current = getQuestionMapContext();
+      if (current.key !== context.key) return { ok: false, cancelled: true };
+      if (!current.currentId || !Number.isInteger(current.currentNumber) || current.currentNumber < 1
+        || current.currentNumber > current.total) return { ok: false, reason: 'A questão aberta ainda está carregando; a posição de retomada não foi confirmada.' };
+      const samePosition = () => {
+        const now = getQuestionMapContext();
+        return now.key === current.key && now.currentNumber === current.currentNumber && now.currentId === current.currentId;
+      };
+      const cadernoId = current.key.match(/^caderno:(\d+)$/)?.[1];
+      const response = await fetchTecExportJson(`/api/cadernos/${cadernoId}/questoes/${current.currentNumber}?atualizarCronometro=false`, samePosition);
+      if (response.cancelled || !samePosition()) {
+        if (getQuestionMapContext().key !== context.key) return { ok: false, cancelled: true };
+        continue;
+      }
+      if (!response.ok) return { ok: false, reason: `Posição de retomada: ${tecExportFailure(response)}` };
+      if (String(response.json?.questao?.idQuestao) !== current.currentId
+        || (response.json?.caderno?.idCaderno != null && String(response.json.caderno.idCaderno) !== cadernoId)) {
+        return { ok: false, reason: 'O TEC não confirmou o ID da questão aberta ao restaurar a posição de retomada.' };
+      }
+      return { ok: true };
+    }
+    return { ok: false, reason: 'A questão aberta mudou durante a coleta; confira a posição de retomada antes de continuar.' };
+  }
+
+  async function collectMarkedQuestionsViaApi(targets, context, { onProgress = () => {},
+    shouldContinue = () => batchRunning && getQuestionMapContext().key === context.key } = {}) {
+    const cadernoId = context.key?.match(/^caderno:(\d+)$/)?.[1];
+    if (!cadernoId) throw new Error('Abra o caderno para coletar suas questões marcadas.');
+    const observed = new Map(), byId = new Map(), collected = [], missing = [];
+    let stoppedReason = '', baseRequested = false, apiAccessStopped = false;
+    const accessRefused = response => !response.ok && !response.cancelled && (response.sessionExpired
+      || [401, 402, 403, 429].includes(response.status) || /sessão expirada|limite|cota|quota/i.test(tecExportFailure(response)));
+    const request = async path => {
+      if (!await waitTecAction('comment', shouldContinue)) return { ok: false, cancelled: true };
+      if (path.startsWith(`/api/cadernos/${cadernoId}/questoes/`)) baseRequested = true;
+      let response = await fetchTecExportJson(path, shouldContinue);
+      if (accessRefused(response)) apiAccessStopped = true;
+      if (!apiAccessStopped && !response.ok && !response.cancelled && (response.status === 0 || response.status >= 500) && shouldContinue()) {
+        if (await waitTecExportAction(4000, 7000, shouldContinue)) response = await fetchTecExportJson(path, shouldContinue);
+      }
+      if (accessRefused(response)) apiAccessStopped = true;
+      return response;
+    };
+    const readPosition = async number => {
+      if (observed.has(number)) return observed.get(number);
+      const response = await request(`/api/cadernos/${cadernoId}/questoes/${number}?atualizarCronometro=false`);
+      if (response.cancelled || !shouldContinue()) return null;
+      const q = response.ok ? response.json?.questao : null;
+      const responseNotebook = response.json?.caderno?.idCaderno;
+      if (!q?.idQuestao || (responseNotebook != null && String(responseNotebook) !== cadernoId)) {
+        stoppedReason = response.ok ? 'O TEC devolveu uma questão sem identidade confirmada.' : tecExportFailure(response);
+        return null;
+      }
+      observed.set(number, q);
+      byId.set(String(q.idQuestao), { number, q });
+      onProgress({ collected: 0, total: targets.length, number, label: `Conferindo marcações · questão ${number}` });
+      return q;
+    };
+    try {
+      // First consult only the saved positions. A stale position is never used
+      // as a replacement for a selected ID; locate that ID before proceeding.
+      for (const target of targets) {
+        if (!shouldContinue() || stoppedReason) break;
+        if (Number.isInteger(target.number) && target.number >= 1 && target.number <= context.total) await readPosition(target.number);
+      }
+      const unresolved = () => targets.some(target => target.id && !byId.has(String(target.id)));
+      for (let number = 1; number <= context.total && unresolved() && shouldContinue() && !stoppedReason; number++) {
+        if (!observed.has(number)) await readPosition(number);
+      }
+      const usedIds = new Set();
+      for (const target of targets) {
+        if (!shouldContinue()) break;
+        const found = target.id ? byId.get(String(target.id)) : observed.has(target.number) ? { number: target.number, q: observed.get(target.number) } : null;
+        if (!found) { missing.push({ ...target, reason: stoppedReason || 'O ID selecionado não foi localizado neste caderno.' }); continue; }
+        const { q, number } = found, id = String(q.idQuestao);
+        if (usedIds.has(id)) continue;
+        usedIds.add(id);
+        const data = buildMarkedQuestionData(q, null, context);
+        if (!data.enunciado || !data.gabarito) {
+          missing.push({ ...target, number, reason: !data.enunciado ? 'Enunciado indisponível no TEC.' : 'Gabarito oficial indisponível no TEC; abra a resolução antes de gerar.' });
+          continue;
+        }
+        if (stoppedReason) { missing.push({ ...target, number, reason: stoppedReason }); continue; }
+        const comment = await request(`/api/questoes/${id}/comentario?tokenPreVisualizacao=`);
+        if (comment.cancelled || !shouldContinue()) break;
+        if (!comment.ok) {
+          stoppedReason = tecExportFailure(comment);
+          missing.push({ ...target, number, reason: `Comentário do professor: ${stoppedReason}` });
+          continue;
+        }
+        data.comentario = extractCommentFromJson(comment.json);
+        if (data.vezesErradoTec === null) {
+          // Personal history is separate from the question response on TEC.
+          // Read it by verified ID; never reuse the open question's DOM history.
+          const performance = await request(`/api/questoes/${id}/desempenho`);
+          if (performance.cancelled || !shouldContinue()) break;
+          if (accessRefused(performance)) {
+            stoppedReason = tecExportFailure(performance);
+            missing.push({ ...target, number, reason: `Desempenho pessoal: ${stoppedReason}` });
+            continue;
+          }
+          const count = performance.ok ? performance.json?.desempenho?.desempenhoAluno?.quantidadeErros : null;
+          if (['string', 'number'].includes(typeof count) && String(count).trim() !== ''
+            && Number.isInteger(Number(count)) && Number(count) >= 0) data.vezesErradoTec = Number(count);
+        }
+        const thought = getStoredThought(id);
+        if (thought) data.pensamentoAluno = thought;
+        collected.push(data);
+        onProgress({ collected: collected.length, total: targets.length, number, label: `Coletando marcadas: ${collected.length}/${targets.length}` });
+      }
+    } finally {
+      if (baseRequested && !apiAccessStopped) {
+        const restored = await restoreMarkedQuestionPosition(context);
+        if (!restored.ok && !restored.cancelled) missing.push({ number: context.currentNumber, id: context.currentId, reason: restored.reason });
+      }
+      // Preserve all selections, including those whose old position was wrong.
+      if (observed.size) reconcileQuestionMapPositions(observed, context);
+    }
+    return { collected, missing, cancelled: !shouldContinue() };
   }
 
   /**
@@ -5741,8 +6725,58 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     return { totalErros, totalQuestoes, currentQ, method };
   }
 
+  async function runBatchOperation(operation) {
+    if (batchBusy || isProcessing) { showToast('Já há uma geração em andamento.', 'warning'); return; }
+    batchBusy = true;
+    batchRunning = true;
+    renderQuestionMap();
+    try { await operation(); }
+    catch (err) { console.error('TEC: geração em lote:', err); showToast(escapeHtml(err.message), 'error', 8000); }
+    finally {
+      batchBusy = false;
+      batchRunning = false;
+      const button = document.getElementById('tec-btn-batch');
+      if (button) button.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
+      syncQuestionMap();
+    }
+  }
+
   async function processBatchQuestions() {
-    if (batchRunning) { showToast('Batch j\u00E1 em andamento...', 'warning'); return; }
+    return runBatchOperation(processErrorQuestions);
+  }
+
+  async function processMarkedQuestions() {
+    syncQuestionMap();
+    const context = getQuestionMapContext();
+    const marked = getMarkedQuestions(context);
+    if (!marked.length) { showToast('Marque pelo menos uma questão para gerar card.', 'info'); return; }
+    if (!context.currentId || !context.currentNumber) { showToast('Aguarde a questão carregar antes de gerar.', 'warning'); return; }
+    return runBatchOperation(async () => {
+      const loading = showLoadingToast('Coletando as questões marcadas…');
+      let result;
+      try {
+        const collector = /^caderno:/.test(context.key) && typeof fetch === 'function'
+          ? collectMarkedQuestionsViaApi : collectQuestionTargets;
+        result = await collector(marked, context, { onProgress: progress => {
+          const text = loading.querySelector('span:last-child');
+          if (text) text.textContent = progress.label || `Coletando marcadas: ${progress.collected}/${progress.total} · questão ${progress.number}`;
+        } });
+      } finally {
+        loading.remove();
+      }
+      if (result.cancelled) { showToast('Coleta interrompida. As marcações foram mantidas.', 'info'); return; }
+      if (result.missing.length) {
+        console.warn('TEC: questões marcadas não coletadas:', result.missing);
+        const details = result.missing.map(target => `Questão ${target.number}${target.id ? ` (#${target.id})` : ''}: ${target.reason || 'Dados ou gabarito indisponíveis.'}`);
+        showToast(`Não foi possível coletar ${result.missing.length} questão(ões).<br>${details.slice(0, 3).map(escapeHtml).join('<br>')}<br>Nenhum card foi gerado. As marcações foram mantidas.`, 'warning', 15000);
+        return;
+      }
+      if (!result.collected.length) { showToast('Nenhuma questão foi coletada. As marcações foram mantidas.', 'warning', 8000); return; }
+      await processCollectedQuestions(result.collected, { manual: true, mapContext: context });
+    });
+  }
+
+  async function processErrorQuestions() {
 
     // \u2500\u2500 Detect error count (multi-strategy) \u2500\u2500
     const cadernoInfo = detectCadernoErrors();
@@ -5839,10 +6873,10 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
           try {
             // Expand comment before extracting (the AI prompt needs it later)
-            await ensureCommentExpanded();
+            await ensureCommentExpanded(() => batchRunning);
             await delay(500);
 
-            const qData = extractQuestionData();
+              const qData = extractQuestionData();
 
             // Revalida\u00E7\u00E3o p\u00F3s-extra\u00E7\u00E3o: a checagem acima roda antes de o SPA
             // terminar de trocar o bloco de resolu\u00E7\u00E3o, ent\u00E3o pode refletir a
@@ -5851,7 +6885,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
               console.log(`\u23ED\uFE0F Batch: Q${qData.id || currentId} descartada na revalida\u00E7\u00E3o (acerto).`);
               collectedIds.delete(currentId);
               bumpSkipped();
-            } else {
+          } else {
               const savedThought = getStoredThought(qData.id);
               if (savedThought) qData.pensamentoAluno = savedThought;
               if (qData.enunciado || qData.id) {
@@ -5881,6 +6915,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
         }
 
         // Navigate to next question using keyboard shortcut \u2192
+        if (!await waitTecAction('navigate', () => batchRunning)) break;
         navigateToNextQuestion();
 
         // Wait for the page to transition to the next question
@@ -5895,13 +6930,20 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       progressToast.remove();
     }
 
+    if (!batchRunning) { showToast('Coleta interrompida.', 'info'); return; }
     if (collected.length === 0) {
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      if (batchBtn) batchBtn.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       showToast('Nenhuma quest\u00E3o errada encontrada a partir da quest\u00E3o atual.', 'warning', 5000);
       return;
     }
 
+    await processCollectedQuestions(collected, { skipped });
+  }
+
+  async function processCollectedQuestions(collected, options = {}) {
+    const skipped = options.skipped || 0;
+    const batchBtn = document.getElementById('tec-btn-batch');
     // \u2500\u2500 Phase 2: user picks which errors deserve cards \u2500\u2500
     if (batchBtn) batchBtn.innerHTML = '<span class="tec-spinner"></span> Sele\u00E7\u00E3o...';
     const itemsWithDups = await Promise.all(collected.map(async (qData) => ({
@@ -5909,10 +6951,10 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       existingCards: await countExistingAnkiCards(qData.id),
     })));
 
-    const selected = await showBatchSelectionModal(itemsWithDups);
+    const selected = await showBatchSelectionModal(itemsWithDups, options);
     if (!selected || selected.length === 0) {
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      if (batchBtn) batchBtn.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       showToast(selected ? 'Nenhuma quest\u00E3o selecionada \u2014 batch encerrado.' : 'Batch cancelado.', 'info', 4000);
       return;
     }
@@ -5992,7 +7034,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
     if (decision !== 'save' || batchResults.length === 0) {
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      if (batchBtn) batchBtn.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       showToast(`Batch cancelado \u2014 nada foi salvo no Anki/Obsidian${generated ? ` (${generated} quest\u00E3o(\u00F5es) geradas foram descartadas)` : ''}.`, 'info', 6000);
       return;
     }
@@ -6008,12 +7050,15 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
         if (getSetting('enableObsidian')) ops.push(saveToObsidian(r.questionData, r.aiResult));
         const rs = await Promise.allSettled(ops);
         const failed = rs.filter(x => x.status === 'rejected');
-        if (failed.length) {
+        const ankiSave = getSetting('enableAnki') && r.aiResult?.cards?.length ? rs[0] : null;
+        const incompleteAnki = ankiSave?.status === 'fulfilled' && ankiSave.value?.added < ankiSave.value?.total;
+        if (failed.length || !ops.length || !r.aiResult?.cards?.length || incompleteAnki) {
           saveFail++;
           failed.forEach(f => console.error(`\u274C Batch save Q${r.questionData.id}:`, f.reason));
         } else {
           savedOk++;
-          cardsSaved += (r.aiResult?.cards?.length || 0);
+          cardsSaved += ankiSave?.value?.added || r.aiResult.cards.length;
+          if (options.manual && options.mapContext) clearQuestionCardSelection(r.questionData.id, options.mapContext);
         }
         const msgEl = saveToast.querySelector('span:last-child');
         if (msgEl) msgEl.textContent = `\uD83D\uDCBE Salvando ${savedOk + saveFail}/${batchResults.length}...`;
@@ -6021,7 +7066,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     } finally {
       saveToast.remove();
       batchRunning = false;
-      if (batchBtn) batchBtn.innerHTML = '\uD83D\uDCCB Erros';
+      if (batchBtn) batchBtn.innerHTML = toolbarButtonContent('errors', 'Processar erros do caderno');
       // Persistent toast \u2014 stays until user clicks \u2715
       const type = savedOk > 0 ? 'success' : 'warning';
       const icons = { success: '\u2705', warning: '\u26A0\uFE0F' };
@@ -6242,6 +7287,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
   GM_registerMenuCommand('\uD83D\uDCCB Salvar Quest\u00E3o Atual', processCurrentQuestion);
   GM_registerMenuCommand('🎯 Modo Véspera', showVesperaModal);
   GM_registerMenuCommand('🩸 Cards problemáticos (leeches)', showLeechPanel);
+  GM_registerMenuCommand('Mapa de questões para cards', toggleQuestionMap);
 
   /**
    * Compara a vers\u00E3o instalada com a publicada no GitHub (1x/dia) e avisa se
@@ -6279,12 +7325,10 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
     // Always inject the toolbar (it's small and non-intrusive)
     injectToolbar();
+    syncQuestionMap();
 
     // Log init
     console.log(`\uD83D\uDE80 TEC\u2192Anki+Obsidian v${SCRIPT_VERSION} carregado em:`, window.location.href);
-
-    // Show confirmation toast on load
-    showToast(`TEC\u2192Anki+Obsidian <b>v${SCRIPT_VERSION}</b> carregado! Use <b>Shift+Enter</b> ou o bot\u00E3o \uD83D\uDCCB`, 'success', 4000);
 
     // Warn when the installed copy lags the published one (daily check)
     checkScriptFreshness();
@@ -6299,7 +7343,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     setInterval(updateStatusDot, 120000);
 
     // Watch for wrong answers → surface the quick-thought box on the spot
-    setInterval(checkForWrongAnswer, 1500);
+    setInterval(() => { checkForWrongAnswer(); syncQuestionMap(); }, 1500);
 
     // Re-inject toolbar on SPA navigation (AngularJS) — debounced
     let _reinjectTimer = null;
