@@ -42,7 +42,8 @@ function harness(t, { questions = [question(1), question(2), question(3)], stora
   Object.defineProperty(window.HTMLElement.prototype, 'innerText', {
     configurable: true, get() { return this.textContent; }, set(value) { this.textContent = value; },
   });
-  const controller = { caderno: { idCaderno: 111, totalQuestoes: questions.length }, questao: questions[currentNumber - 1], questoes: questions };
+  const controller = { caderno: { idCaderno: 111, totalQuestoes: questions.length,
+    numeroQuestaoAtual: currentNumber, numeroTotalQuestoes: questions.length }, questao: questions[currentNumber - 1], questoes: questions };
   window.unsafeWindow = window;
   window.angular = { element: () => ({ scope: () => ({ vm: controller }) }) };
   window.GM_getValue = (key, fallback) => storage.has(key) ? clone(storage.get(key)) : clone(fallback);
@@ -71,6 +72,16 @@ function harness(t, { questions = [question(1), question(2), question(3)], stora
   }
   return {
     window, controller, storage, context, questions,
+    navigate: number => {
+      assert.ok(questions[number - 1], 'the simulated current question must exist');
+      controller.questao = questions[number - 1];
+      controller.caderno.numeroQuestaoAtual = number;
+      const link = window.document.querySelector('.questao-cabecalho a');
+      link.href = `/questoes/${controller.questao.idQuestao}`;
+      link.textContent = `#${controller.questao.idQuestao}`;
+      window.document.querySelector('p').textContent = `Questão ${number} de ${questions.length}`;
+      window.document.querySelector('.questao-enunciado').innerHTML = controller.questao.enunciado;
+    },
     run: (name, ...args) => api.run(name, ...args),
     override: (name, value) => api.override(name, value),
   };
@@ -81,9 +92,12 @@ function seed(h, entries) {
 }
 
 function stubTec(h, transform = null) {
-  const paths = [], ordinals = [], professorIds = [], performanceIds = [];
+  const paths = [], ordinals = [], professorIds = [], performanceIds = [], guards = [];
   let active = 0, maximumActive = 0;
-  h.override('fetchTecExportJson', async path => {
+  let serverPosition = h.context.currentNumber;
+  h.override('fetchTecExportJson', async (path, shouldContinue = () => true) => {
+    guards.push(shouldContinue());
+    assert.equal(guards.at(-1), true, 'no request may start after its supplied continuation guard rejects it');
     paths.push(path);
     active++;
     maximumActive = Math.max(maximumActive, active);
@@ -99,10 +113,13 @@ function stubTec(h, transform = null) {
       if (professorId) professorIds.push(professorId);
       if (performanceId) performanceIds.push(performanceId);
       assert.ok(response, `unexpected endpoint ${path}`);
-      return transform ? transform({ path, ordinal: Number(ordinal) || null, professorId, performanceId, response, paths }) : response;
+      const result = transform ? await transform({ path, ordinal: Number(ordinal) || null, professorId, performanceId, response, paths }) : response;
+      if (ordinal && result.ok) serverPosition = Number(ordinal);
+      return result;
     } finally { active--; }
   });
-  return { paths, ordinals, professorIds, performanceIds, maximumActive: () => maximumActive };
+  return { paths, ordinals, professorIds, performanceIds, guards, maximumActive: () => maximumActive,
+    serverPosition: () => serverPosition, setServerPosition: number => { serverPosition = number; } };
 }
 
 test('API collection recovers twelve retained choices including hidden orphan IDs without navigating the DOM', async t => {
@@ -120,8 +137,10 @@ test('API collection recovers twelve retained choices including hidden orphan ID
   assert.equal(result.missing.length, 0);
   assert.equal(result.collected.length, 12);
   assert.deepEqual(clone(result.collected).map(q => String(q.id)).sort(), h.questions.map(q => String(q.idQuestao)).sort());
-  assert.equal(new Set(calls.ordinals).size, 12);
-  assert.equal(calls.ordinals.length, 12, 'each ordinal must be fetched once during reconciliation');
+  assert.equal(new Set(calls.ordinals.slice(0, -1)).size, 12);
+  assert.equal(calls.ordinals.length, 13, 'each ordinal is fetched once for reconciliation plus one final restoration');
+  assert.equal(calls.ordinals.at(-1), 5);
+  assert.equal(calls.serverPosition(), 5, 'the server resume marker must still point at the displayed question');
   assert.equal(calls.professorIds.length, 12);
   assert.equal(calls.maximumActive(), 1, 'TEC requests must remain sequential');
   assert.equal(h.window.document.body.innerHTML, before, 'collection must not replace the question shown');
@@ -137,7 +156,9 @@ test('verified ordinary positions collect only selected ordinals and retain ever
   seed(h, { 2: { id: '700002', selected: true }, 7: { id: '700007', selected: true } });
   const calls = stubTec(h);
   const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }, { number: 7, id: '700007' }], h.context, { shouldContinue: () => true });
-  assert.deepEqual(calls.ordinals.slice().sort((a, b) => a - b), [2, 7]);
+  assert.deepEqual(calls.ordinals.slice(0, -1).sort((a, b) => a - b), [2, 7]);
+  assert.equal(calls.ordinals.at(-1), 1);
+  assert.equal(calls.serverPosition(), 1);
   assert.equal(result.missing.length, 0);
   assert.equal(result.collected.length, 2);
   assert.equal(h.run('getMarkedQuestions', h.context).length, 2);
@@ -153,20 +174,113 @@ test('a foreign ID is never treated as the selected question or sent to the prof
   assert.equal(String(result.missing[0].id), '999999');
   assert.ok(result.missing[0].reason, 'unresolved choices need a concrete diagnostic');
   assert.deepEqual(calls.professorIds, [], 'nonselected questions discovered during scans need no professor request');
-  assert.equal(new Set(calls.ordinals).size, calls.ordinals.length);
+  assert.equal(new Set(calls.ordinals.slice(0, -1)).size, calls.ordinals.length - 1);
   assert.equal(h.run('getMarkedQuestions', h.context).length, 1);
 });
 
-test('cancellation after a base response stops further requests and preserves unresolved choices', async t => {
+test('cancellation after a successful base response still restores the server marker and preserves choices', async t => {
   const h = harness(t);
-  seed(h, { 1: { id: '700001', selected: true }, 2: { id: '700002', selected: true } });
+  seed(h, { 2: { id: '700002', selected: true }, 3: { id: '700003', selected: true } });
   let active = true;
   const calls = stubTec(h, ({ response }) => { active = false; return response; });
-  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 1, id: '700001' }, { number: 2, id: '700002' }], h.context, { shouldContinue: () => active });
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }, { number: 3, id: '700003' }], h.context, { shouldContinue: () => active });
   assert.equal(result.cancelled, true);
-  assert.equal(calls.paths.length, 1);
+  assert.equal(result.collected.length, 0, 'the base response cancelled before it entered the observed map');
+  assert.deepEqual(calls.ordinals, [2, 1], 'only the independent cleanup request may follow cancellation');
+  assert.deepEqual(calls.guards, [true, true], 'the final restore must not use the stopped batch continuation guard');
+  assert.equal(calls.serverPosition(), 1);
   assert.equal(calls.professorIds.length, 0);
   assert.equal(h.run('getMarkedQuestions', h.context).length, 2);
+});
+
+test('cancellation after the server changed position but before a successful response still restores it', async t => {
+  const h = harness(t);
+  seed(h, { 2: { id: '700002', selected: true } });
+  let active = true;
+  const calls = stubTec(h, ({ ordinal, response }) => {
+    if (ordinal === 2) {
+      calls.setServerPosition(2); // the server already processed the GET when its response was aborted
+      active = false;
+      return { ok: false, status: 0, cancelled: true, error: 'Coleta interrompida' };
+    }
+    return response;
+  });
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }], h.context, { shouldContinue: () => active });
+  assert.equal(result.cancelled, true);
+  assert.equal(result.collected.length, 0);
+  assert.deepEqual(calls.ordinals, [2, 1]);
+  assert.equal(calls.serverPosition(), 1);
+  assert.deepEqual(calls.professorIds, []);
+  assert.equal(h.run('getMarkedQuestions', h.context).length, 1);
+});
+
+test('cancelling before any base request requires no server restoration request', async t => {
+  const h = harness(t);
+  seed(h, { 2: { id: '700002', selected: true } });
+  const calls = stubTec(h);
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }], h.context, { shouldContinue: () => false });
+  assert.equal(result.cancelled, true);
+  assert.deepEqual(calls.paths, []);
+  assert.equal(calls.serverPosition(), 1);
+});
+
+test('restoration uses the newly opened question when the user moves within the same notebook', async t => {
+  const h = harness(t);
+  seed(h, { 2: { id: '700002', selected: true } });
+  const calls = stubTec(h, ({ performanceId, response }) => {
+    if (performanceId) h.navigate(3);
+    return response;
+  });
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }], h.context, { shouldContinue: () => true });
+  assert.equal(result.missing.length, 0);
+  assert.equal(result.collected.length, 1);
+  assert.deepEqual(calls.ordinals, [2, 3], 'cleanup must respect the user current question instead of resetting the initial position');
+  assert.equal(calls.serverPosition(), 3);
+  assert.equal(h.run('getQuestionMapContext').currentId, '700003');
+  assert.equal(h.run('getQuestionMapContext').currentNumber, 3);
+});
+
+test('one additional restore follows a question change while the first restore is in flight', async t => {
+  const h = harness(t);
+  seed(h, { 2: { id: '700002', selected: true } });
+  const calls = stubTec(h, ({ ordinal, response, paths }) => {
+    if (ordinal === 1 && paths.length > 1) h.navigate(3);
+    return response;
+  });
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }], h.context, { shouldContinue: () => true });
+  assert.equal(result.missing.length, 0);
+  assert.deepEqual(calls.ordinals, [2, 1, 3]);
+  assert.equal(calls.serverPosition(), 3);
+});
+
+test('changing notebooks during collection skips restoration in the notebook the user left', async t => {
+  const h = harness(t);
+  seed(h, { 2: { id: '700002', selected: true } });
+  const calls = stubTec(h, ({ performanceId, response }) => {
+    if (performanceId) h.window.history.replaceState({}, '', '/questoes/cadernos/222/resolver');
+    return response;
+  });
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }], h.context, {
+    shouldContinue: () => h.run('getQuestionMapContext').key === h.context.key,
+  });
+  assert.equal(result.cancelled, true);
+  assert.deepEqual(calls.ordinals, [2], 'cleanup must not query the notebook after the user has left it');
+  assert.equal(calls.paths.at(-1), '/api/questoes/700002/desempenho');
+  assert.equal(h.run('getMarkedQuestions', h.context).length, 1);
+});
+
+test('a restore response must confirm the displayed question ID without discarding collected data', async t => {
+  const h = harness(t);
+  seed(h, { 2: { id: '700002', selected: true } });
+  const calls = stubTec(h, ({ ordinal, response, paths }) => ordinal === 1 && paths.length > 1
+    ? ok({ questao: { ...h.questions[0], idQuestao: 999999 } }) : response);
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }], h.context, { shouldContinue: () => true });
+  assert.equal(result.collected.length, 1);
+  assert.equal(result.collected[0].id, '700002');
+  assert.equal(result.missing.length, 1);
+  assert.match(result.missing[0].reason, /ID.*restaurar/i);
+  assert.deepEqual(calls.ordinals, [2, 1]);
+  assert.equal(h.run('getMarkedQuestions', h.context).length, 1);
 });
 
 test('session failure stops scanning immediately instead of converting foreign or missing data into cards', async t => {
@@ -174,10 +288,10 @@ test('session failure stops scanning immediately instead of converting foreign o
   seed(h, { 1: { id: '700001', selected: true }, 2: { id: '700002', selected: true } });
   const calls = stubTec(h, () => ({ ok: false, status: 401, json: null, sessionExpired: true, error: 'Sessão expirada' }));
   const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 1, id: '700001' }, { number: 2, id: '700002' }], h.context, { shouldContinue: () => true });
-  assert.equal(calls.paths.length, 1);
+  assert.equal(calls.paths.length, 1, 'a session refusal must never trigger an additional restore request');
   assert.equal(calls.professorIds.length, 0);
   assert.equal(result.collected.length, 0);
-  assert.equal(result.missing.length, 2);
+  assert.ok(result.missing.length >= 2);
   assert.ok(result.missing.every(item => item.reason));
   assert.equal(h.run('getMarkedQuestions', h.context).length, 2);
 });
@@ -187,11 +301,28 @@ test('a returned notebook mismatch stops collection before any professor request
   seed(h, { 1: { id: '700001', selected: true }, 2: { id: '700002', selected: true } });
   const calls = stubTec(h, ({ response }) => ({ ...response, json: { ...response.json, caderno: { idCaderno: 222 } } }));
   const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 1, id: '700001' }, { number: 2, id: '700002' }], h.context, { shouldContinue: () => true });
-  assert.equal(calls.paths.length, 1);
+  assert.equal(calls.paths.length, 2, 'the rejected notebook identity may be followed only by a guarded restore');
   assert.deepEqual(calls.professorIds, []);
   assert.equal(result.collected.length, 0);
-  assert.equal(result.missing.length, 2);
+  assert.ok(result.missing.length >= 2);
   assert.equal(h.run('getMarkedQuestions', h.context).length, 2);
+});
+
+test('a session or quota refusal after an earlier successful base request prevents restoration requests', async t => {
+  for (const status of [401, 429]) {
+    const h = harness(t);
+    seed(h, { 2: { id: '700002', selected: true }, 3: { id: '700003', selected: true } });
+    const calls = stubTec(h, ({ ordinal, response }) => ordinal === 3
+      ? { ok: false, status, json: null, error: status === 401 ? 'Sessão expirada' : 'Limite de consultas' } : response);
+    const result = await h.run('collectMarkedQuestionsViaApi', h.run('getMarkedQuestions', h.context), h.context, { shouldContinue: () => true });
+    assert.deepEqual(calls.ordinals, [2, 3]);
+    assert.equal(calls.serverPosition(), 2, 'the server changed before refusal, but the refusal forbids another request');
+    assert.equal(calls.paths.length, 2);
+    assert.equal(result.collected.length, 0);
+    assert.equal(result.missing.length, 2);
+    assert.deepEqual(calls.professorIds, []);
+    assert.equal(h.run('getMarkedQuestions', h.context).length, 2);
+  }
 });
 
 test('an absent answer key does not invent A or fetch a comment for an unusable question', async t => {
@@ -331,6 +462,9 @@ test('performance session and quota failures stop the batch and preserve every m
     { ok: false, status: 400, json: null, error: 'Sessão expirada' },
     { ok: false, status: 400, json: null, error: 'Quota exceeded' },
     { ok: false, status: 200, json: { mensagem: 'Limite de cota diária' } },
+    { ok: false, status: 500, json: { mensagem: 'Cota diária de consultas atingida' } },
+    { ok: false, status: 500, json: null, sessionExpired: true, error: 'Resposta não JSON' },
+    { ok: false, status: 0, json: null, error: 'quota exceeded' },
   ];
   for (const failure of failures) {
     const h = harness(t);
@@ -424,7 +558,7 @@ test('an unknown ordinal and a retained known ID resolving to the same question 
   assert.equal(generationInputs[0].length, 1);
   assert.equal(generationInputs[0][0].id, '700001');
   assert.deepEqual(calls.professorIds, ['700001']);
-  assert.deepEqual(calls.ordinals, [1, 2]);
+  assert.deepEqual(calls.ordinals, [1, 2, 1]);
   assert.ok(!messages.some(message => /Não foi possível|Nenhuma questão foi coletada/i.test(message)));
   assert.deepEqual(clone(h.run('getMarkedQuestions', h.context)), [{ number: 1, id: '700001' }]);
 });

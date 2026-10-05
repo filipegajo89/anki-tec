@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.19.4
+// @version      1.19.5
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -6472,18 +6472,51 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     renderQuestionMap();
   }
 
+  async function restoreMarkedQuestionPosition(context) {
+    // The notebook GET also changes TEC's resume position. Restore the question
+    // currently open, including when collection was cancelled, without clicking.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const current = getQuestionMapContext();
+      if (current.key !== context.key) return { ok: false, cancelled: true };
+      if (!current.currentId || !Number.isInteger(current.currentNumber) || current.currentNumber < 1
+        || current.currentNumber > current.total) return { ok: false, reason: 'A questão aberta ainda está carregando; a posição de retomada não foi confirmada.' };
+      const samePosition = () => {
+        const now = getQuestionMapContext();
+        return now.key === current.key && now.currentNumber === current.currentNumber && now.currentId === current.currentId;
+      };
+      const cadernoId = current.key.match(/^caderno:(\d+)$/)?.[1];
+      const response = await fetchTecExportJson(`/api/cadernos/${cadernoId}/questoes/${current.currentNumber}?atualizarCronometro=false`, samePosition);
+      if (response.cancelled || !samePosition()) {
+        if (getQuestionMapContext().key !== context.key) return { ok: false, cancelled: true };
+        continue;
+      }
+      if (!response.ok) return { ok: false, reason: `Posição de retomada: ${tecExportFailure(response)}` };
+      if (String(response.json?.questao?.idQuestao) !== current.currentId
+        || (response.json?.caderno?.idCaderno != null && String(response.json.caderno.idCaderno) !== cadernoId)) {
+        return { ok: false, reason: 'O TEC não confirmou o ID da questão aberta ao restaurar a posição de retomada.' };
+      }
+      return { ok: true };
+    }
+    return { ok: false, reason: 'A questão aberta mudou durante a coleta; confira a posição de retomada antes de continuar.' };
+  }
+
   async function collectMarkedQuestionsViaApi(targets, context, { onProgress = () => {},
     shouldContinue = () => batchRunning && getQuestionMapContext().key === context.key } = {}) {
     const cadernoId = context.key?.match(/^caderno:(\d+)$/)?.[1];
     if (!cadernoId) throw new Error('Abra o caderno para coletar suas questões marcadas.');
     const observed = new Map(), byId = new Map(), collected = [], missing = [];
-    let stoppedReason = '';
+    let stoppedReason = '', baseRequested = false, apiAccessStopped = false;
+    const accessRefused = response => !response.ok && !response.cancelled && (response.sessionExpired
+      || [401, 402, 403, 429].includes(response.status) || /sessão expirada|limite|cota|quota/i.test(tecExportFailure(response)));
     const request = async path => {
       if (!await waitTecAction('comment', shouldContinue)) return { ok: false, cancelled: true };
+      if (path.startsWith(`/api/cadernos/${cadernoId}/questoes/`)) baseRequested = true;
       let response = await fetchTecExportJson(path, shouldContinue);
-      if (!response.ok && !response.cancelled && (response.status === 0 || response.status >= 500) && shouldContinue()) {
+      if (accessRefused(response)) apiAccessStopped = true;
+      if (!apiAccessStopped && !response.ok && !response.cancelled && (response.status === 0 || response.status >= 500) && shouldContinue()) {
         if (await waitTecExportAction(4000, 7000, shouldContinue)) response = await fetchTecExportJson(path, shouldContinue);
       }
+      if (accessRefused(response)) apiAccessStopped = true;
       return response;
     };
     const readPosition = async number => {
@@ -6539,8 +6572,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
           // Read it by verified ID; never reuse the open question's DOM history.
           const performance = await request(`/api/questoes/${id}/desempenho`);
           if (performance.cancelled || !shouldContinue()) break;
-          if (!performance.ok && (performance.sessionExpired || [401, 402, 403, 429].includes(performance.status)
-            || /sessão expirada|limite|cota|quota/i.test(tecExportFailure(performance)))) {
+          if (accessRefused(performance)) {
             stoppedReason = tecExportFailure(performance);
             missing.push({ ...target, number, reason: `Desempenho pessoal: ${stoppedReason}` });
             continue;
@@ -6555,6 +6587,10 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
         onProgress({ collected: collected.length, total: targets.length, number, label: `Coletando marcadas: ${collected.length}/${targets.length}` });
       }
     } finally {
+      if (baseRequested && !apiAccessStopped) {
+        const restored = await restoreMarkedQuestionPosition(context);
+        if (!restored.ok && !restored.cancelled) missing.push({ number: context.currentNumber, id: context.currentId, reason: restored.reason });
+      }
       // Preserve all selections, including those whose old position was wrong.
       if (observed.size) reconcileQuestionMapPositions(observed, context);
     }
