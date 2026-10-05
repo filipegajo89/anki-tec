@@ -81,7 +81,7 @@ function seed(h, entries) {
 }
 
 function stubTec(h, transform = null) {
-  const paths = [], ordinals = [], professorIds = [];
+  const paths = [], ordinals = [], professorIds = [], performanceIds = [];
   let active = 0, maximumActive = 0;
   h.override('fetchTecExportJson', async path => {
     paths.push(path);
@@ -91,15 +91,18 @@ function stubTec(h, transform = null) {
     try {
       const ordinal = path.match(/^\/api\/cadernos\/111\/questoes\/(\d+)\?atualizarCronometro=false$/)?.[1];
       const professorId = path.match(/^\/api\/questoes\/(\d+)\/comentario(?:\?|$)/)?.[1];
+      const performanceId = path.match(/^\/api\/questoes\/(\d+)\/desempenho$/)?.[1];
       const response = ordinal ? ok({ questao: h.questions[Number(ordinal) - 1] })
-        : professorId ? ok(comment(professorId)) : null;
+        : professorId ? ok(comment(professorId))
+          : performanceId ? ok({ desempenho: { desempenhoAluno: { quantidadeErros: 0 } } }) : null;
       if (ordinal) ordinals.push(Number(ordinal));
       if (professorId) professorIds.push(professorId);
+      if (performanceId) performanceIds.push(performanceId);
       assert.ok(response, `unexpected endpoint ${path}`);
-      return transform ? transform({ path, ordinal: Number(ordinal) || null, professorId, response, paths }) : response;
+      return transform ? transform({ path, ordinal: Number(ordinal) || null, professorId, performanceId, response, paths }) : response;
     } finally { active--; }
   });
-  return { paths, ordinals, professorIds, maximumActive: () => maximumActive };
+  return { paths, ordinals, professorIds, performanceIds, maximumActive: () => maximumActive };
 }
 
 test('API collection recovers twelve retained choices including hidden orphan IDs without navigating the DOM', async t => {
@@ -238,6 +241,113 @@ test('the adapter accepts string answer numbers and keeps comment, result and qu
   assert.ok(data.enunciado.includes('questão 2'));
   assert.equal(data.url, 'https://www.tecconcursos.com.br/questoes/700002');
   assert.equal(data.selecaoManual, true);
+});
+
+test('personal error history remains three when the same marked error is saved again', async t => {
+  const h = harness(t);
+  seed(h, { 2: { id: '700002', selected: true } });
+  const calls = stubTec(h, ({ performanceId, response }) => performanceId
+    ? ok({ desempenho: { desempenhoGeral: { erros: 99 }, desempenhoAluno: { quantidadeErros: '3' } } }) : response);
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 2, id: '700002' }], h.context, { shouldContinue: () => true });
+  assert.equal(result.missing.length, 0);
+  assert.equal(result.collected.length, 1);
+  const data = result.collected[0];
+  assert.equal(data.errou, true);
+  assert.equal(data.vezesErradoTec, 3);
+  assert.deepEqual(calls.performanceIds, ['700002'], 'personal history must be fetched by the selected ID, not the open question');
+
+  const settings = { obsidianMethod: 'rest', obsidianBasePath: 'TEC', obsidianPort: 27123, obsidianToken: 'offline-only' };
+  h.override('getSetting', key => settings[key]);
+  let note = '---\nvezes_errado: 3\n---\n';
+  const writes = [];
+  h.override('gmFetch', async (url, options) => {
+    assert.equal(url, `http://127.0.0.1:27123/vault/${encodeURIComponent('TEC/Direito Tributário/Assunto 2/Q700002')}.md`);
+    if (options.method === 'GET') return { ok: true, status: 200, text: async () => note };
+    assert.equal(options.method, 'PUT');
+    note = options.body;
+    writes.push(note);
+    return { ok: true, status: 204 };
+  });
+  await h.run('saveToObsidian', data, { cards: [], erro_identificado: '' });
+  await h.run('saveToObsidian', data, { cards: [], erro_identificado: '' });
+  assert.equal(writes.length, 2);
+  assert.ok(writes.every(body => /^vezes_errado: 3$/m.test(body)), 'reprocessing must not inflate the existing personal error count');
+});
+
+test('only a nonnegative integer personal count is accepted from the performance endpoint', async t => {
+  const h = harness(t);
+  seed(h, { 1: { id: '700001', selected: true } });
+  const targets = [{ number: 1, id: '700001' }];
+  for (const count of [0, '0', 3, '3']) {
+    stubTec(h, ({ performanceId, response }) => performanceId
+      ? ok({ desempenho: { desempenhoAluno: { quantidadeErros: count } } }) : response);
+    const result = await h.run('collectMarkedQuestionsViaApi', targets, h.context, { shouldContinue: () => true });
+    assert.equal(result.collected[0].vezesErradoTec, Number(count));
+    assert.equal(result.missing.length, 0);
+  }
+  for (const count of [undefined, null, '', '   ', 'foo', true, false, -1, '-1', 1.5, '1.5', {}, [], Infinity, NaN]) {
+    stubTec(h, ({ performanceId, response }) => performanceId
+      ? ok({ quantidadeErros: 77, desempenho: { quantidadeErros: 88,
+        desempenhoGeral: { erros: 99 }, desempenhoAluno: { quantidadeErros: count } } }) : response);
+    const result = await h.run('collectMarkedQuestionsViaApi', targets, h.context, { shouldContinue: () => true });
+    assert.equal(result.collected[0].vezesErradoTec, null, `invalid personal count ${String(count)} must not borrow the global count`);
+    assert.equal(result.missing.length, 0, 'an unavailable count must not make a usable question incomplete');
+  }
+});
+
+test('a question with a verified embedded history needs no separate performance request', async t => {
+  const q = question(1);
+  q.resolucoes = Array.from({ length: 3 }, () => ({ data: '05/10/2026', correcao: false }));
+  const h = harness(t, { questions: [q] });
+  seed(h, { 1: { id: '700001', selected: true } });
+  const calls = stubTec(h);
+  const result = await h.run('collectMarkedQuestionsViaApi', [{ number: 1, id: '700001' }], h.context, { shouldContinue: () => true });
+  assert.equal(result.collected[0].vezesErradoTec, 3);
+  assert.deepEqual(calls.performanceIds, []);
+});
+
+test('ordinary performance unavailability preserves null without blocking marked collection', async t => {
+  for (const status of [404, 500]) {
+    const h = harness(t);
+    seed(h, { 1: { id: '700001', selected: true }, 2: { id: '700002', selected: true } });
+    const calls = stubTec(h, ({ performanceId, response }) => performanceId
+      ? { ok: false, status, json: null, error: 'Desempenho indisponível' } : response);
+    const result = await h.run('collectMarkedQuestionsViaApi', h.run('getMarkedQuestions', h.context), h.context, { shouldContinue: () => true });
+    assert.equal(result.cancelled, false);
+    assert.equal(result.missing.length, 0);
+    assert.equal(result.collected.length, 2);
+    assert.ok(result.collected.every(q => q.vezesErradoTec === null));
+    assert.deepEqual(calls.professorIds, ['700001', '700002']);
+    assert.equal(calls.performanceIds.length, status === 500 ? 4 : 2, 'a transient failure retries once and then keeps the question usable');
+    assert.equal(h.run('getMarkedQuestions', h.context).length, 2);
+  }
+});
+
+test('performance session and quota failures stop the batch and preserve every mark', async t => {
+  const failures = [
+    ...[401, 402, 403, 429].map(status => ({ ok: false, status, json: null, error: 'Consulta recusada' })),
+    { ok: false, status: 200, json: null, sessionExpired: true, error: 'Resposta não JSON' },
+    { ok: false, status: 400, json: null, error: 'Limite diário alcançado' },
+    { ok: false, status: 400, json: null, error: 'Sessão expirada' },
+    { ok: false, status: 400, json: null, error: 'Quota exceeded' },
+    { ok: false, status: 200, json: { mensagem: 'Limite de cota diária' } },
+  ];
+  for (const failure of failures) {
+    const h = harness(t);
+    seed(h, { 1: { id: '700001', selected: true }, 2: { id: '700002', selected: true } });
+    const calls = stubTec(h, ({ performanceId, response }) => performanceId ? failure : response);
+    let generationFlows = 0;
+    h.override('getQuestionMapContext', () => h.context);
+    h.override('syncQuestionMap', () => {});
+    h.override('showToast', () => {});
+    h.override('processCollectedQuestions', () => { generationFlows++; });
+    await h.run('processMarkedQuestions');
+    assert.equal(generationFlows, 0, `fatal performance ${failure.status}/${failure.error} must block partial generation`);
+    assert.deepEqual(calls.performanceIds, ['700001']);
+    assert.deepEqual(calls.professorIds, ['700001']);
+    assert.equal(calls.paths.at(-1), '/api/questoes/700001/desempenho', 'no further TEC request may follow a session or quota failure');
+    assert.equal(h.run('getMarkedQuestions', h.context).length, 2);
+  }
 });
 
 test('position reconciliation moves IDs atomically and does not transfer or delete orphan selections', t => {

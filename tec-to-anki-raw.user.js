@@ -6534,6 +6534,21 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
           continue;
         }
         data.comentario = extractCommentFromJson(comment.json);
+        if (data.vezesErradoTec === null) {
+          // Personal history is separate from the question response on TEC.
+          // Read it by verified ID; never reuse the open question's DOM history.
+          const performance = await request(`/api/questoes/${id}/desempenho`);
+          if (performance.cancelled || !shouldContinue()) break;
+          if (!performance.ok && (performance.sessionExpired || [401, 402, 403, 429].includes(performance.status)
+            || /sessão expirada|limite|cota|quota/i.test(tecExportFailure(performance)))) {
+            stoppedReason = tecExportFailure(performance);
+            missing.push({ ...target, number, reason: `Desempenho pessoal: ${stoppedReason}` });
+            continue;
+          }
+          const count = performance.ok ? performance.json?.desempenho?.desempenhoAluno?.quantidadeErros : null;
+          if (['string', 'number'].includes(typeof count) && String(count).trim() !== ''
+            && Number.isInteger(Number(count)) && Number(count) >= 0) data.vezesErradoTec = Number(count);
+        }
         const thought = getStoredThought(id);
         if (thought) data.pensamentoAluno = thought;
         collected.push(data);
