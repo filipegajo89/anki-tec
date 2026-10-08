@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.19.5
+// @version      1.21.0
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.19.3';
+  const SCRIPT_VERSION = '1.21.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -230,6 +230,9 @@
     #tec-export-overlay label { display: block; margin: 14px 0 5px; font-weight: 600; }
     #tec-export-overlay select { width: 100%; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font: inherit; }
     #tec-export-overlay .tec-export-note { color: #667085; font-size: 12px; line-height: 1.5; margin: 16px 0; }
+    #tec-export-overlay input[type="datetime-local"] { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font: inherit; }
+    #tec-export-overlay .tec-export-schedule-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    #tec-export-schedule-info { margin-bottom: 0 !important; }
     #tec-export-progress { margin-bottom: 0; color: #344054; line-height: 1.5; }
     #tec-export-overlay .tec-modal-footer { flex-shrink: 0; flex-wrap: wrap; padding: 12px 20px; }
     #tec-export-overlay .tec-btn { padding: 9px 12px; font-size: 12px; }
@@ -5573,8 +5576,188 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 
-  async function waitTecExportAction(min = 600, max = 1200, shouldContinue = () => true) {
-    const end = Date.now() + min + Math.random() * (max - min);
+  const TEC_SPREADSHEET_BATCH_PREFIX = 'tecSpreadsheetBatch:v1:';
+
+  function getTecSpreadsheetBatchState(context, forumOrder = 'votos') {
+    const key = TEC_SPREADSHEET_BATCH_PREFIX + context.key;
+    const saved = GM_getValue(key, null);
+    const state = saved?.version === 1 && saved.context === context.key
+      ? {...saved, records: Array.isArray(saved.records) ? saved.records : []}
+      : {version: 1, context: context.key, forumOrder, total: context.total, nextNumber: 1, active: null, records: []};
+    if (state.total !== context.total) {
+      state.total = context.total;
+      state.active = null;
+      state.nextNumber = Math.min(Number.isInteger(state.nextNumber) ? state.nextNumber : 1, context.total + 1);
+    }
+    return {key, state};
+  }
+
+  function prepareTecSpreadsheetBatch(context, batchSize = 20, forumOrder = 'votos') {
+    if (!/^caderno:\d+$/.test(context.key) || !Number.isInteger(context.total) || context.total < 1) {
+      return {state: null, targets: [], start: 0, end: 0, finished: true};
+    }
+    const {key, state} = getTecSpreadsheetBatchState(context, forumOrder);
+    if (!state.active) {
+      const start = Math.max(1, Number.isInteger(state.nextNumber) ? state.nextNumber : 1);
+      if (start > context.total) {
+        GM_setValue(key, state);
+        return {state, targets: [], start, end: context.total, finished: true};
+      }
+      const end = Math.min(context.total, start + Math.max(1, Math.min(30, batchSize)) - 1);
+      const entries = loadQuestionMap(context).entries || {};
+      state.active = {
+        start, end, size: end - start + 1,
+        targets: Array.from({length: end - start + 1}, (_, index) => {
+          const number = start + index;
+          return {number, id: entries[number]?.id || null};
+        }),
+      };
+    }
+    GM_setValue(key, state);
+    return {...state.active, state, targets: [...state.active.targets], finished: false};
+  }
+
+  function mergeTecSpreadsheetBatchRecords(existing, incoming) {
+    const records = Array.isArray(existing) ? [...existing] : [];
+    for (const record of incoming || []) {
+      const id = String(record?.idQuestao || '');
+      const index = records.findIndex(previous => {
+        const previousId = String(previous?.idQuestao || '');
+        return (id && previousId && id === previousId)
+          || ((!id || !previousId) && Number(previous?.numero) === Number(record?.numero));
+      });
+      if (index < 0) records.push(record);
+      else records[index] = record;
+    }
+    return records.sort((a, b) => Number(a.numero) - Number(b.numero));
+  }
+
+  function saveTecSpreadsheetBatch(context, forumOrder, batch, incoming, advance = false) {
+    const {key, state} = getTecSpreadsheetBatchState(context, forumOrder);
+    state.records = mergeTecSpreadsheetBatchRecords(state.records, incoming);
+    if (advance && state.active && state.active.start === batch?.start && state.active.end === batch?.end) {
+      state.nextNumber = state.active.end + 1;
+      state.active = null;
+    }
+    state.updatedAt = new Date().toISOString();
+    GM_setValue(key, state);
+    return state;
+  }
+
+  const TEC_SPREADSHEET_SCHEDULE_PREFIX = 'tecSpreadsheetSchedule:v1:';
+  const TEC_SPREADSHEET_SCHEDULE_GRACE_MS = 10 * 60 * 1000;
+  let spreadsheetScheduleMonitorStarted = false;
+
+  function getTecSpreadsheetScheduleKey(contextKey) {
+    return TEC_SPREADSHEET_SCHEDULE_PREFIX + contextKey;
+  }
+
+  function scheduleTecSpreadsheetBatch(context, batchSize, forumOrder, scheduledAt) {
+    if (!/^caderno:\d+$/.test(context.key) || !Number.isFinite(scheduledAt) || scheduledAt <= Date.now()) {
+      return {ok:false, error:'Escolha um horário futuro para um caderno válido.'};
+    }
+    const key = getTecSpreadsheetScheduleKey(context.key);
+    const previous = GM_getValue(key, null);
+    if (previous && ['pending', 'running'].includes(previous.status)) {
+      return {ok:false, error:'Já existe um lote agendado para este caderno.'};
+    }
+    const batch = prepareTecSpreadsheetBatch(context, batchSize, forumOrder);
+    if (batch.finished || !batch.targets.length) return {ok:false, error:'Este caderno já foi concluído.'};
+    const schedule = {
+      version:1, context:context.key, total:context.total, batchSize:Number(batchSize), forumOrder,
+      start:batch.start, end:batch.end, scheduledAt, status:'pending', createdAt:Date.now(),
+    };
+    GM_setValue(key, schedule);
+    return {ok:true, schedule};
+  }
+
+  function updateTecSpreadsheetSchedule(contextKey, status, extra = {}) {
+    const key = getTecSpreadsheetScheduleKey(contextKey);
+    const schedule = GM_getValue(key, null);
+    if (!schedule || schedule.version !== 1) return null;
+    const updated = {...schedule, ...extra, status, updatedAt:Date.now()};
+    GM_setValue(key, updated);
+    return updated;
+  }
+
+  function cancelTecSpreadsheetSchedule(contextKey) {
+    const key = getTecSpreadsheetScheduleKey(contextKey);
+    const schedule = GM_getValue(key, null);
+    if (!schedule || schedule.status !== 'pending') return false;
+    GM_setValue(key, null);
+    return true;
+  }
+
+  function checkTecSpreadsheetSchedule() {
+    const context = getQuestionMapContext();
+    if (!context.key || !/^caderno:\d+$/.test(context.key) || !context.currentId || !context.currentNumber) return;
+    const key = getTecSpreadsheetScheduleKey(context.key);
+    const schedule = GM_getValue(key, null);
+    if (!schedule || schedule.version !== 1 || schedule.status !== 'pending') return;
+    const now = Date.now();
+    if (now < schedule.scheduledAt) return;
+    if (now - schedule.scheduledAt > TEC_SPREADSHEET_SCHEDULE_GRACE_MS) {
+      updateTecSpreadsheetSchedule(context.key, 'missed');
+      return;
+    }
+    if (batchBusy || isProcessing) return;
+    const existing = document.getElementById('tec-export-overlay');
+    if (existing && existing.dataset.cadernoKey !== context.key) return;
+    const updated = updateTecSpreadsheetSchedule(context.key, 'running', {startedAt:now});
+    if (!existing) {
+      showSpreadsheetExportPanel({scheduledRun:updated});
+      if (!document.getElementById('tec-export-overlay')) {
+        updateTecSpreadsheetSchedule(context.key, 'needs_attention', {message:'Abra uma questão do caderno para iniciar a coleta.'});
+      }
+      return;
+    }
+    const overlay = document.getElementById('tec-export-overlay');
+    if (!overlay) {
+      updateTecSpreadsheetSchedule(context.key, 'needs_attention', {message:'Não foi possível abrir a exportação.'});
+      return;
+    }
+    overlay.dispatchEvent(new window.CustomEvent('tec-export-scheduled-due', {detail:updated}));
+  }
+
+  function startTecSpreadsheetScheduleMonitor() {
+    if (spreadsheetScheduleMonitorStarted) return;
+    spreadsheetScheduleMonitorStarted = true;
+    checkTecSpreadsheetSchedule();
+    setInterval(checkTecSpreadsheetSchedule, 30000);
+  }
+
+  async function saveTecSpreadsheetFile(records, context) {
+    const suffix = context.key.replace(':', '_');
+    const filename = 'tec_' + suffix + '_questoes.csv';
+    const data = buildTecSpreadsheetCsv(records);
+    if (typeof window.showSaveFilePicker === 'function') {
+      let handle;
+      try {
+        handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{description: 'Planilha CSV', accept: {'text/csv': ['.csv']}}],
+        });
+      } catch (error) {
+        if (error?.name === 'AbortError') return {cancelled: true, method: 'picker'};
+        throw error;
+      }
+      let writable;
+      try {
+        writable = await handle.createWritable();
+        await writable.write(data);
+        await writable.close();
+      } catch (error) {
+        try { await writable?.abort(); } catch (_) {}
+        throw error;
+      }
+      return {cancelled: false, method: 'picker'};
+    }
+    downloadTecExport(records, context, 'csv');
+    return {cancelled: false, method: 'download'};
+  }
+
+  async function waitTecExportAction(durationMs = 3500, _unusedMax = durationMs, shouldContinue = () => true) {
+    const end = Date.now() + durationMs;
     while (Date.now() < end) {
       if (!shouldContinue()) return false;
       await delay(Math.min(100, end - Date.now()));
@@ -5596,7 +5779,13 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       try {json=JSON.parse(text);} catch (_) {return {ok:false,status:response.status,sessionExpired:response.status===200,error:response.status===200 ? 'Resposta não JSON; confira sua sessão no TEC.' : 'O TEC retornou uma resposta não JSON.'};}
       const message = json?.error || json?.mensagem || json?.message;
       const expired = response.redirected && /login|entrar/i.test(response.url);
-      return {ok:response.ok && !message && !expired, status:response.status, json, error:expired ? 'Sessão expirada' : undefined};
+      const retryHeader = response.headers?.get?.('Retry-After');
+      const retrySeconds = Number(retryHeader);
+      const retryDate = retryHeader && !Number.isFinite(retrySeconds) ? Date.parse(retryHeader) : NaN;
+      const retryAfterMs = Number.isFinite(retrySeconds) && retrySeconds > 0
+        ? retrySeconds * 1000
+        : Number.isFinite(retryDate) ? Math.max(0, retryDate - Date.now()) : null;
+      return {ok:response.ok && !message && !expired, status:response.status, json, retryAfterMs, error:expired ? 'Sessão expirada' : undefined};
     } catch (err) {return {ok:false,status:0,cancelled:!shouldContinue(),error:shouldContinue() ? 'Falha de conexão ou tempo esgotado' : 'Coleta interrompida'};}
     finally {clearTimeout(timeout);clearInterval(cancelled);}
   }
@@ -5613,7 +5802,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     const keep = record => {const at=records.findIndex(q=>q.numero===record.numero);if(at<0)records.push(record);else records[at]=record;records.sort((a,b)=>a.numero-b.numero);checkpoint();};
     const request = async (path, label, fallbackPath = null) => {
       onProgress({label, records:[...records]});
-      if (!await waitTecExportAction(600,1200,shouldContinue)) return {ok:false,status:0,cancelled:true};
+      if (!await waitTecExportAction(3500,3500,shouldContinue)) return {ok:false,status:0,cancelled:true};
       let r = await fetchTecExportJson(path,shouldContinue);
       if (!r.ok && !r.cancelled && r.status===500 && fallbackPath && shouldContinue()) {
         const recovered = await request(fallbackPath, `Questão: fórum por data (ordenação por votos indisponível)`);
@@ -5622,9 +5811,15 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       }
       if (!r.ok && !r.cancelled && (r.status===0 || r.status===408 || r.status===425 || r.status>=500) && shouldContinue()) {
         onProgress({label:'Aguardando para tentar novamente…',records:[...records]});
-        if (await waitTecExportAction(4000,7000,shouldContinue)) r=await fetchTecExportJson(path,shouldContinue);
+        if (await waitTecExportAction(5000,5000,shouldContinue)) r=await fetchTecExportJson(path,shouldContinue);
       }
-      if (!r.ok && !r.cancelled && (r.status===0 || r.status===401 || r.status===402 || r.status===429 || r.status===408 || r.status===425 || r.status>=500 || r.sessionExpired || /sessão expirada/i.test(r.error || ''))) {paused=true;reason=tecExportFailure(r);}
+      if (!r.ok && !r.cancelled && (r.status===0 || r.status===401 || r.status===402 || r.status===403 || r.status===429 || r.status===408 || r.status===425 || r.status>=500 || r.sessionExpired || /sessão expirada/i.test(r.error || ''))) {
+        paused=true;
+        reason=tecExportFailure(r);
+        if (r.status===429 && Number.isFinite(r.retryAfterMs) && r.retryAfterMs > 0) {
+          reason += ' · o TEC pediu nova tentativa em aproximadamente ' + Math.ceil(r.retryAfterMs / 60000) + ' min';
+        }
+      }
       return r;
     };
     for (const target of targets) {
@@ -5669,18 +5864,19 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
       }
       keep(buildTecExportRecord(q,target,context,sections,forumOrder));
       if (!shouldContinue() || paused) break;
-      const remaining=targets.some(t=>t.number>target.number);
-      if (remaining && !await waitTecExportAction(2500,4500,shouldContinue)) break;
-      if (remaining && (targets.indexOf(target)+1)%40===0) {
-        onProgress({label:'Pausa entre lotes; a coleta será retomada…',records:[...records]});
-        if (!await waitTecExportAction(45000,75000,shouldContinue)) break;
+      const targetIndex = targets.indexOf(target);
+      const remaining = targetIndex < targets.length - 1;
+      if (remaining && !await waitTecExportAction(15000,15000,shouldContinue)) break;
+      if (remaining && (targetIndex+1)%15===0) {
+        onProgress({label:'Pausa de 1 minuto após 15 questões; a coleta será retomada…',records:[...records]});
+        if (!await waitTecExportAction(60000,60000,shouldContinue)) break;
       }
     }
     checkpoint();
     return {records,completed:!paused && shouldContinue(),cancelled:!shouldContinue(),paused,reason};
   }
 
-  function showSpreadsheetExportPanel() {
+  function showSpreadsheetExportPanel({scheduledRun = null} = {}) {
     if (batchBusy || isProcessing) {showToast('Aguarde a operação atual terminar.', 'warning');return;}
     syncQuestionMap();
     const context=getQuestionMapContext();
@@ -5690,35 +5886,207 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     const overlay=document.createElement('div'); overlay.id='tec-export-overlay';overlay.className='tec-modal-overlay';
     overlay.innerHTML=`<div class="tec-modal tec-export-modal" role="dialog" aria-modal="true" aria-labelledby="tec-export-title"><div class="tec-modal-header"><h2 id="tec-export-title">Exportar para planilha</h2><button class="tec-modal-close" aria-label="Fechar exportação">×</button></div><div class="tec-modal-body"><p>Questão completa, comentário do professor, desempenho e dois comentários do fórum.</p><label for="tec-export-scope">Quais questões?</label><select id="tec-export-scope"><option value="current">Questão atual (${context.currentNumber})</option><option value="selected" ${!selected.length?'disabled':''} ${selected.length?'selected':''}>Marcadas (${selected.length})</option><option value="all" ${context.total<=1?'disabled':''}>Caderno inteiro (${context.total})</option></select><label for="tec-export-forum-order">Comentários do fórum</label><select id="tec-export-forum-order"><option value="votos">Dois mais votados</option><option value="data">Dois primeiros na ordem por data</option></select><label class="tec-export-resume"><input type="checkbox" id="tec-export-resume"> Continuar a coleta salva, sem refazer os dados prontos</label><p class="tec-export-note">A planilha CSV abre no Excel. Textos, links de imagens e dados completos ficam preservados. A coleta usa sua sessão do TEC e não movimenta a questão aberta.</p><p id="tec-export-progress" role="status" aria-live="polite">Pronto para coletar.</p></div><div class="tec-modal-footer"><button class="tec-btn tec-btn-cancel" id="tec-export-json" hidden>Dados completos (JSON)</button><button class="tec-btn tec-btn-cancel" id="tec-export-download" hidden>Baixar planilha</button><button class="tec-btn tec-btn-cancel" id="tec-export-stop" hidden>Parar</button><button class="tec-btn tec-btn-save" id="tec-export-start">Coletar e baixar</button></div></div>`;
     document.body.appendChild(overlay);
-    let running=false, lastRecords=[];
+    let running=false, lastRecords=[], activeSchedule=scheduledRun;
     const start=overlay.querySelector('#tec-export-start'), stop=overlay.querySelector('#tec-export-stop'), progress=overlay.querySelector('#tec-export-progress');
     const scope=overlay.querySelector('#tec-export-scope'), order=overlay.querySelector('#tec-export-forum-order');
+    let lastRecordsCumulative=false;
+    const download=overlay.querySelector('#tec-export-download'), json=overlay.querySelector('#tec-export-json');
+    const batchAvailable=/^caderno:\d+$/.test(context.key) && Number.isInteger(context.total) && context.total>1;
+    const batchOption=document.createElement('option');
+    batchOption.value='batch';batchOption.textContent='Próximo lote do caderno';batchOption.disabled=!batchAvailable;
+    scope.insertBefore(batchOption,scope.querySelector('option[value="all"]'));
+    scope.value=batchAvailable?'batch':selected.length?'selected':'current';
+    const batchSizeLabel=document.createElement('label');
+    batchSizeLabel.htmlFor='tec-export-batch-size';batchSizeLabel.textContent='Questões por lote';
+    const batchSize=document.createElement('select');
+    batchSize.id='tec-export-batch-size';
+    for (const size of [15,20,30]) {
+      const option=document.createElement('option');
+      option.value=String(size);option.textContent=size+' questões';batchSize.appendChild(option);
+    }
+    batchSize.value='20';
+    const batchInfo=document.createElement('p');
+    batchInfo.id='tec-export-batch-info';batchInfo.className='tec-export-note';
+    const batchNote=document.createElement('p');
+    batchNote.className='tec-export-note';
+    batchNote.textContent='Cada salvamento inclui os lotes anteriores. Selecione o mesmo arquivo no seletor para atualizar sua planilha acumulada.';
+    const scheduleControls=document.createElement('div');
+    scheduleControls.id='tec-export-schedule-controls';
+    const scheduleLabel=document.createElement('label');
+    scheduleLabel.htmlFor='tec-export-schedule-at';scheduleLabel.textContent='Agendar este lote';
+    const scheduleAt=document.createElement('input');
+    scheduleAt.id='tec-export-schedule-at';scheduleAt.type='datetime-local';
+    const scheduleActions=document.createElement('div');
+    scheduleActions.className='tec-export-schedule-actions';
+    const scheduleButton=document.createElement('button');
+    scheduleButton.type='button';scheduleButton.className='tec-btn tec-btn-cancel';scheduleButton.textContent='Agendar lote';
+    const cancelScheduleButton=document.createElement('button');
+    cancelScheduleButton.type='button';cancelScheduleButton.className='tec-btn tec-btn-cancel';cancelScheduleButton.textContent='Cancelar agendamento';cancelScheduleButton.hidden=true;
+    scheduleActions.append(scheduleButton,cancelScheduleButton);
+    const scheduleInfo=document.createElement('p');
+    scheduleInfo.id='tec-export-schedule-info';scheduleInfo.className='tec-export-note';
+    scheduleInfo.textContent='Agendamento único. Deixe o caderno aberto no TEC e conectado; a aba pode atrasar o horário se o navegador a suspender.';
+    scheduleControls.append(scheduleLabel,scheduleAt,scheduleActions,scheduleInfo);
+    const batchResume=overlay.querySelector('.tec-export-resume');
+    scope.after(batchSizeLabel,batchSize,batchInfo,batchNote,scheduleControls);
+    overlay.dataset.cadernoKey=context.key;
+    const showBatchStatus=()=>{
+      const state=getTecSpreadsheetBatchState(context,order.value).state;
+      lastRecords=state.records;lastRecordsCumulative=true;
+      if (state.active) batchInfo.textContent='Lote pendente: questões '+state.active.start+'–'+state.active.end+'. Ele será retomado antes de começar outro.';
+      else if (state.nextNumber>context.total) batchInfo.textContent='Caderno concluído · '+state.records.length+' questões na planilha acumulada.';
+      else {
+        const end=Math.min(context.total,state.nextNumber+Number(batchSize.value)-1);
+        batchInfo.textContent='Próximo lote: questões '+state.nextNumber+'–'+end+' de '+context.total+' · '+state.records.length+' já acumuladas.';
+      }
+      download.textContent='Salvar planilha acumulada';
+      download.hidden=!lastRecords.length;json.hidden=!lastRecords.length;
+    };
+    const refreshScopeControls=()=>{
+      const isBatch=scope.value==='batch';
+      batchSizeLabel.hidden=!isBatch;batchSize.hidden=!isBatch;batchInfo.hidden=!isBatch;batchNote.hidden=!isBatch;
+      scheduleControls.hidden=!isBatch;
+      batchResume.hidden=isBatch;
+      start.textContent=isBatch?'Coletar próximo lote':'Coletar e baixar';
+      if (isBatch) showBatchStatus();
+      else if (lastRecordsCumulative) {lastRecords=[];lastRecordsCumulative=false;download.hidden=true;json.hidden=true;}
+      if (!isBatch) download.textContent='Baixar planilha';
+    };
+    const refreshScheduleStatus=()=>{
+      const saved=GM_getValue(getTecSpreadsheetScheduleKey(context.key),null);
+      const pending=saved?.status==='pending';
+      scheduleAt.disabled=pending;
+      scheduleButton.hidden=pending;
+      cancelScheduleButton.hidden=!pending;
+      batchSize.disabled=pending || running;
+      order.disabled=pending || running;
+      scope.disabled=pending || running;
+      start.disabled=pending || running;
+      if (pending) {
+        scheduleInfo.textContent='Lote '+saved.start+'–'+saved.end+' agendado para '+new Date(saved.scheduledAt).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+'. Mantenha o caderno aberto e conectado no TEC.';
+      } else if (saved?.status==='running') {
+        scheduleInfo.textContent='Executando o lote agendado '+saved.start+'–'+saved.end+'…';
+      } else if (saved?.status==='completed') {
+        scheduleInfo.textContent='Lote agendado concluído. O CSV acumulado foi baixado; para atualizar o mesmo arquivo, use “Salvar planilha acumulada”.';
+      } else if (saved?.status==='missed') {
+        scheduleInfo.textContent='O horário passou enquanto o caderno não estava disponível. Agende novamente.';
+      } else if (saved?.status==='needs_attention') {
+        scheduleInfo.textContent='A coleta agendada precisa de atenção. Retome o lote manualmente e agende outro horário se desejar.';
+      } else {
+        scheduleInfo.textContent='Agendamento único. Deixe o caderno aberto no TEC e conectado; a aba pode atrasar o horário se o navegador a suspender.';
+      }
+    };
+    scope.addEventListener('change',()=>{refreshScopeControls();refreshScheduleStatus();});
+    batchSize.addEventListener('change',refreshScopeControls);
+    order.addEventListener('change',()=>{if(scope.value==='batch')showBatchStatus();});
+    scheduleButton.addEventListener('click',()=>{
+      const scheduledAt=new Date(scheduleAt.value).getTime();
+      if (!Number.isFinite(scheduledAt) || scheduledAt < Date.now()+2*60*1000 || scheduledAt > Date.now()+30*24*60*60*1000) {
+        scheduleInfo.textContent='Escolha um horário entre 2 minutos e 30 dias a partir de agora.';
+        return;
+      }
+      const result=scheduleTecSpreadsheetBatch(context,Number(batchSize.value),order.value,scheduledAt);
+      if (!result.ok) {scheduleInfo.textContent=result.error;return;}
+      refreshScopeControls();refreshScheduleStatus();showBatchStatus();
+    });
+    cancelScheduleButton.addEventListener('click',()=>{
+      cancelTecSpreadsheetSchedule(context.key);
+      refreshScopeControls();refreshScheduleStatus();
+    });
+    overlay.addEventListener('tec-export-scheduled-due',event=>{
+      activeSchedule=event.detail;
+      scope.value='batch';batchSize.value=String(activeSchedule.batchSize);order.value=activeSchedule.forumOrder;
+      scope.disabled=false;batchSize.disabled=false;order.disabled=false;start.disabled=false;
+      refreshScopeControls();
+      progress.textContent='O horário agendado chegou; iniciando o lote '+activeSchedule.start+'–'+activeSchedule.end+'…';
+      start.click();
+    });
+    refreshScopeControls();
+    refreshScheduleStatus();
     const close=()=>{if(running){batchRunning=false;return;}overlay.remove();document.getElementById('tec-btn-more')?.focus();};
     overlay.querySelector('.tec-modal-close').addEventListener('click',close);
     overlay.addEventListener('keydown',event=>{if(event.key==='Escape'){event.stopPropagation();close();}});
     stop.addEventListener('click',()=>{batchRunning=false;progress.textContent='Interrompendo; os dados já coletados serão preservados…';});
-    overlay.querySelector('#tec-export-download').addEventListener('click',()=>downloadTecExport(lastRecords,context));
     overlay.querySelector('#tec-export-json').addEventListener('click',()=>downloadTecExport(lastRecords,context,'json'));
-    start.addEventListener('click',async()=>{
-      if(running || batchBusy || isProcessing)return;
-      const targets=scope.value==='all' ? Array.from({length:context.total},(_,i)=>({number:i+1,id:loadQuestionMap(context).entries[i+1]?.id || null})) : scope.value==='selected' ? selected : [{number:context.currentNumber,id:context.currentId}];
-      running=true;start.disabled=true;scope.disabled=true;order.disabled=true;overlay.querySelector('#tec-export-resume').disabled=true;stop.hidden=false;
-      overlay.querySelector('#tec-export-download').hidden=true;overlay.querySelector('#tec-export-json').hidden=true;
+    download.addEventListener('click',async event=>{
+      if (!lastRecordsCumulative) {downloadTecExport(lastRecords,context);return;}
+      event.preventDefault();event.stopImmediatePropagation();
+      if (!lastRecords.length) return;
+      try {
+        const saved=await saveTecSpreadsheetFile(lastRecords,context);
+        if (!saved.cancelled) progress.textContent=saved.method==='picker'
+          ? 'Planilha acumulada atualizada. Use esse mesmo arquivo nos próximos lotes.'
+          : 'Planilha acumulada baixada. O arquivo contém todos os lotes salvos até agora.';
+      } catch(error) {progress.textContent='Não foi possível salvar a planilha: '+error.message;}
+    });
+    start.addEventListener('click',async event=>{
+      event.preventDefault();event.stopImmediatePropagation();
+      if (running || batchBusy || isProcessing) return;
+      const isBatch=scope.value==='batch';
+      const batch=isBatch?prepareTecSpreadsheetBatch(context,Number(batchSize.value),order.value):null;
+      const targets=isBatch?batch.targets:scope.value==='all' ? Array.from({length:context.total},(_,i)=>({number:i+1,id:loadQuestionMap(context).entries[i+1]?.id || null})) : scope.value==='selected' ? selected : [{number:context.currentNumber,id:context.currentId}];
+      if (isBatch && !targets.length) {
+        lastRecords=batch.state?.records || [];lastRecordsCumulative=true;
+        progress.textContent='Todos os lotes deste caderno já foram concluídos.';
+        download.hidden=!lastRecords.length;json.hidden=!lastRecords.length;showBatchStatus();
+        return;
+      }
+      running=true;start.disabled=true;scope.disabled=true;order.disabled=true;batchSize.disabled=true;batchResume.querySelector('input').disabled=true;stop.hidden=false;
+      download.hidden=true;json.hidden=true;
       try {
         await runBatchOperation(async()=>{
-          const result=await collectTecSpreadsheet(context,targets,{forumOrder:order.value,resume:overlay.querySelector('#tec-export-resume').checked,shouldContinue:()=>batchRunning && getQuestionMapContext().key===context.key,onProgress:state=>{lastRecords=state.records;progress.textContent=`${state.label} · ${state.records.length}/${targets.length}`;}});
-          lastRecords=result.records;
+          const result=await collectTecSpreadsheet(context,targets,{
+            forumOrder:order.value,
+            resume:isBatch?true:batchResume.querySelector('input').checked,
+            shouldContinue:()=>batchRunning && getQuestionMapContext().key===context.key,
+            onProgress:state=>{
+              if (isBatch) {
+                const saved=saveTecSpreadsheetBatch(context,order.value,batch,state.records,false);
+                lastRecords=saved.records;lastRecordsCumulative=true;
+              } else lastRecords=state.records;
+              progress.textContent=state.label+' · '+state.records.length+'/'+targets.length;
+            },
+          });
           const gaps=result.records.filter(q=>Object.values(q.status).some(s=>s!=='OK')).length;
           const forumFallbacks=result.records.filter(q=>q.forumOrdem==='votos' && q.forumOrdemEfetiva==='data' && q.status.forum==='OK').length;
-          progress.textContent=`${result.paused?'Pausada: '+result.reason:result.cancelled?'Coleta interrompida':'Coleta concluída'} · ${lastRecords.length}/${targets.length} questões${gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':''}${forumFallbacks?' · '+forumFallbacks+' com fórum por data; votos indisponíveis (veja Observações)':''}.`;
-          if(result.completed && lastRecords.length)downloadTecExport(lastRecords,context);
+          if (isBatch) {
+            const questionsConfirmed=targets.every(target=>result.records.some(record=>record.numero===target.number && (!target.id || String(record.idQuestao)===String(target.id)) && record.status.questao==='OK'));
+            const advance=result.completed && !result.cancelled && questionsConfirmed;
+            const saved=saveTecSpreadsheetBatch(context,order.value,batch,result.records,advance);
+            lastRecords=saved.records;lastRecordsCumulative=true;
+            const status=result.paused?'Pausada: '+result.reason:result.cancelled?'Interrompida; este lote pode ser retomado':advance?'Lote '+batch.start+'–'+batch.end+' concluído':'Questões não confirmadas; o lote permanece pendente para retomada';
+            progress.textContent=status+' · '+saved.records.length+' questões acumuladas'+(gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':'')+(forumFallbacks?' · '+forumFallbacks+' com fórum por data; votos indisponíveis (veja Observações)':'')+'.';
+            showBatchStatus();
+            if (activeSchedule) {
+              if (advance) {
+                updateTecSpreadsheetSchedule(context.key,'completed',{completedAt:Date.now()});
+                downloadTecExport(saved.records,context);
+                progress.textContent+=' CSV acumulado baixado automaticamente.';
+              } else updateTecSpreadsheetSchedule(context.key,'needs_attention',{message:status});
+              activeSchedule=null;
+            }
+          } else {
+            lastRecords=result.records;lastRecordsCumulative=false;
+            progress.textContent=(result.paused?'Pausada: '+result.reason:result.cancelled?'Coleta interrompida':'Coleta concluída')+' · '+lastRecords.length+'/'+targets.length+' questões'+(gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':'')+(forumFallbacks?' · '+forumFallbacks+' com fórum por data; votos indisponíveis (veja Observações)':'')+'.';
+            if(result.completed && lastRecords.length)downloadTecExport(lastRecords,context);
+          }
         });
-      } catch(err){progress.textContent=`Coleta interrompida: ${err.message}. Os dados parciais foram mantidos.`;}
+      } catch(error) {
+        progress.textContent='Coleta interrompida: '+error.message+'. Os dados parciais foram mantidos.';
+        if (activeSchedule) {updateTecSpreadsheetSchedule(context.key,'needs_attention',{message:error.message});activeSchedule=null;}
+      }
       finally {
-        running=false;start.disabled=false;scope.disabled=false;order.disabled=false;overlay.querySelector('#tec-export-resume').disabled=false;overlay.querySelector('#tec-export-resume').checked=true;stop.hidden=true;start.textContent='Continuar coleta';
-        overlay.querySelector('#tec-export-download').hidden=!lastRecords.length;overlay.querySelector('#tec-export-json').hidden=!lastRecords.length;
+        running=false;start.disabled=false;scope.disabled=false;order.disabled=false;batchSize.disabled=false;batchResume.querySelector('input').disabled=false;batchResume.querySelector('input').checked=true;stop.hidden=true;
+        if(scope.value==='batch') {showBatchStatus();download.hidden=!lastRecords.length;json.hidden=!lastRecords.length;}
+        else {download.hidden=!lastRecords.length;json.hidden=!lastRecords.length;}
+        refreshScopeControls();
+        refreshScheduleStatus();
       }
     });
+    if (scheduledRun) {
+      scope.value='batch';batchSize.value=String(scheduledRun.batchSize);order.value=scheduledRun.forumOrder;
+      refreshScopeControls();start.click();
+    }
     scope.focus();
   }
 
@@ -7326,6 +7694,7 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     // Always inject the toolbar (it's small and non-intrusive)
     injectToolbar();
     syncQuestionMap();
+    startTecSpreadsheetScheduleMonitor();
 
     // Log init
     console.log(`\uD83D\uDE80 TEC\u2192Anki+Obsidian v${SCRIPT_VERSION} carregado em:`, window.location.href);

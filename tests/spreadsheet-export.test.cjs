@@ -108,6 +108,11 @@ function parseCsv(csv) {
   return rows;
 }
 
+function toDateTimeLocal(date) {
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 test('API export preserves zero performance values, raw history, accents and missing answer key', t => {
   const h = harness(t);
   const q = apiQuestion();
@@ -623,12 +628,12 @@ test('date fallback preference is scoped to one collection rather than leaking i
 });
 
 test('authentication errors and rate limits do not trigger a forum ordering fallback', async t => {
-  for (const status of [401, 429]) {
+  for (const status of [401, 403, 429]) {
     await t.test(`HTTP ${status}`, async t => {
       const h = harness(t);
       const fake = stubCollector(h, {
         reply: (requestPath, response) => requestPath.includes('ordenarPor=pontos&')
-          ? failed(status, status === 401 ? 'Sessão expirada' : 'Limite de requisições') : response,
+          ? failed(status, status === 401 ? 'Sessão expirada' : status === 403 ? 'Acesso negado' : 'Limite de requisições') : response,
       });
       const result = await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, [{ number: 1, id: '500001' }], { forumOrder: 'votos', shouldContinue: () => true });
       assert.equal(result.paused, true);
@@ -640,4 +645,248 @@ test('authentication errors and rate limits do not trigger a forum ordering fall
       assert.notEqual(result.records[0].status.forum, 'OK');
     });
   }
+});
+
+test('next spreadsheet batches resume their active range and accumulate one row per TEC question', t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', total: 52 };
+  const first = h.run('prepareTecSpreadsheetBatch', context, 20, 'votos');
+  assert.equal(first.start, 1);
+  assert.equal(first.end, 20);
+  assert.equal(first.targets.length, 20);
+  assert.equal(first.targets[0].number, 1);
+  assert.equal(first.targets[19].number, 20);
+
+  h.run('saveTecSpreadsheetBatch', context, 'votos', first, [
+    { numero: 1, idQuestao: '500001' },
+    { numero: 2, idQuestao: '500002' },
+  ], false);
+  const resumed = h.run('prepareTecSpreadsheetBatch', context, 30, 'votos');
+  assert.equal(resumed.start, 1, 'an unfinished batch resumes before honoring a new size');
+  assert.equal(resumed.end, 20);
+  assert.equal(resumed.targets.length, 20);
+
+  h.run('saveTecSpreadsheetBatch', context, 'votos', resumed, resumed.targets.map(target => ({
+    numero: target.number, idQuestao: String(500000 + target.number),
+  })), true);
+  const second = h.run('prepareTecSpreadsheetBatch', context, 20, 'votos');
+  assert.equal(second.start, 21);
+  assert.equal(second.end, 40);
+  h.run('saveTecSpreadsheetBatch', context, 'votos', second, second.targets.map(target => ({
+    numero: target.number, idQuestao: String(500000 + target.number),
+  })), true);
+  const final = h.run('prepareTecSpreadsheetBatch', context, 30, 'votos');
+  assert.equal(final.start, 41);
+  assert.equal(final.end, 52);
+  assert.equal(final.targets.length, 12);
+
+  const archive = h.run('getTecSpreadsheetBatchState', context, 'votos').state.records;
+  assert.equal(archive.length, 40);
+  assert.equal(new Set(archive.map(row => row.idQuestao)).size, 40);
+  const replaced = h.run('mergeTecSpreadsheetBatchRecords', archive, [{ numero: 21, idQuestao: '500021', atualizado: true }]);
+  assert.equal(replaced.length, 40, 'the same TEC ID updates its row instead of creating a duplicate');
+  assert.equal(replaced.find(row => row.idQuestao === '500021').atualizado, true);
+});
+
+test('spreadsheet batch sizes are capped at 15, 20 and 30, with the final batch shortened to the caderno', t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', total: 19 };
+  assert.equal(h.run('prepareTecSpreadsheetBatch', context, 15, 'votos').targets.length, 15);
+  const active = h.run('prepareTecSpreadsheetBatch', context, 30, 'votos');
+  assert.equal(active.targets.length, 15, 'the pending range is resumed unchanged');
+  h.run('saveTecSpreadsheetBatch', context, 'votos', active, active.targets.map(target => ({
+    numero: target.number, idQuestao: String(500000 + target.number),
+  })), true);
+  const final = h.run('prepareTecSpreadsheetBatch', context, 30, 'votos');
+  assert.equal(final.targets.length, 4);
+  h.run('saveTecSpreadsheetBatch', context, 'votos', final, final.targets.map(target => ({
+    numero: target.number, idQuestao: String(500000 + target.number),
+  })), true);
+  assert.equal(h.run('prepareTecSpreadsheetBatch', context, 15, 'votos').finished, true);
+});
+
+test('a caderno can hold one cancellable one-time batch schedule', t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', total: 32 };
+  const scheduledAt = Date.now() + 5 * 60 * 1000;
+  const scheduled = h.run('scheduleTecSpreadsheetBatch', context, 15, 'data', scheduledAt);
+  assert.equal(scheduled.ok, true);
+  assert.equal(scheduled.schedule.start, 1);
+  assert.equal(scheduled.schedule.end, 15);
+  assert.equal(scheduled.schedule.forumOrder, 'data');
+  assert.equal(scheduled.schedule.status, 'pending');
+  const duplicate = h.run('scheduleTecSpreadsheetBatch', context, 20, 'votos', scheduledAt + 60_000);
+  assert.equal(duplicate.ok, false, 'a second schedule cannot silently replace the first');
+  assert.equal(h.run('cancelTecSpreadsheetSchedule', context.key), true);
+  assert.equal(h.storage.get('tecSpreadsheetSchedule:v1:caderno:111'), null);
+  assert.equal(h.run('prepareTecSpreadsheetBatch', context, 20, 'votos').start, 1, 'canceling keeps the reserved range available for manual collection');
+});
+
+test('a due schedule starts the reserved batch on the matching open caderno and downloads the cumulative CSV', async t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', currentId: '500001', currentNumber: 1, total: 2 };
+  h.override('getQuestionMapContext', () => context);
+  h.override('syncQuestionMap', () => {});
+  h.override('getMarkedQuestions', () => []);
+  const batch = h.run('prepareTecSpreadsheetBatch', context, 15, 'votos');
+  h.storage.set('tecSpreadsheetSchedule:v1:caderno:111', {
+    version: 1, context: context.key, total: context.total, batchSize: 15, forumOrder: 'votos',
+    start: batch.start, end: batch.end, scheduledAt: Date.now() - 1000, status: 'pending',
+  });
+  h.override('runBatchOperation', async operation => {
+    batchBusy = true;batchRunning = true;
+    try { await operation(); }
+    finally { batchBusy = false;batchRunning = false; }
+  });
+  const collected = [];
+  h.override('collectTecSpreadsheet', async (_context, targets, options) => {
+    collected.push(...targets.map(target => target.number));
+    const records = targets.map(target => ({
+      numero: target.number, idQuestao: String(500000 + target.number),
+      status: { questao: 'OK', comentario: 'OK', desempenho: 'OK', forum: 'OK' },
+    }));
+    options.onProgress({ label: 'Coletando lote agendado', records });
+    return { records, completed: true, cancelled: false, paused: false, reason: '' };
+  });
+  let downloads = 0;
+  h.override('downloadTecExport', () => { downloads++; });
+  h.run('showSpreadsheetExportPanel');
+  assert.equal(h.window.document.querySelector('#tec-export-start').disabled, true, 'a pending schedule blocks an accidental manual start');
+  h.run('checkTecSpreadsheetSchedule');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(collected, [1, 2]);
+  assert.equal(h.storage.get('tecSpreadsheetSchedule:v1:caderno:111').status, 'completed');
+  assert.equal(h.storage.get('tecSpreadsheetBatch:v1:caderno:111').nextNumber, 3);
+  assert.equal(downloads, 1, 'the scheduled run downloads the cumulative CSV automatically');
+});
+
+test('the export panel schedules a batch at the chosen local date and time', t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', currentId: '500001', currentNumber: 1, total: 31 };
+  h.override('getQuestionMapContext', () => context);
+  h.override('syncQuestionMap', () => {});
+  h.override('getMarkedQuestions', () => []);
+  h.run('showSpreadsheetExportPanel');
+  const overlay = h.window.document.querySelector('#tec-export-overlay');
+  overlay.querySelector('#tec-export-batch-size').value = '15';
+  overlay.querySelector('#tec-export-schedule-at').value = toDateTimeLocal(new Date(Date.now() + 5 * 60 * 1000));
+  overlay.querySelector('#tec-export-schedule-at').dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  overlay.querySelector('#tec-export-schedule-at').dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  overlay.querySelector('.tec-export-schedule-actions button').click();
+  const saved = h.storage.get('tecSpreadsheetSchedule:v1:caderno:111');
+  assert.equal(saved.status, 'pending');
+  assert.equal(saved.batchSize, 15);
+  assert.equal(saved.start, 1);
+  assert.equal(saved.end, 15);
+  assert.equal(overlay.querySelector('#tec-export-start').disabled, true);
+  assert.equal(overlay.querySelector('#tec-export-schedule-info').textContent.includes('agendado'), true);
+});
+
+test('the cumulative CSV save picker overwrites the user-selected spreadsheet with all accumulated rows', async t => {
+  const h = harness(t);
+  const records = [
+    record(h, apiQuestion(500001), { number: 1, id: '500001' }),
+    record(h, apiQuestion(500002), { number: 2, id: '500002' }),
+  ];
+  let optionsSeen;
+  let csvWritten = '';
+  let closed = false;
+  h.window.showSaveFilePicker = async options => {
+    optionsSeen = options;
+    return {
+      createWritable: async () => ({
+        write: async data => { csvWritten = data; },
+        close: async () => { closed = true; },
+      }),
+    };
+  };
+  const saved = await h.run('saveTecSpreadsheetFile', records, { key: 'caderno:111' });
+  assert.equal(saved.method, 'picker');
+  assert.equal(optionsSeen.suggestedName, 'tec_caderno_111_questoes.csv');
+  assert.equal(closed, true);
+  assert.ok(csvWritten.includes('500001'));
+  assert.ok(csvWritten.includes('500002'));
+});
+
+test('spreadsheet request pacing is sequential with a 15-second pause between questions', async t => {
+  const h = harness(t);
+  const delays = [];
+  stubCollector(h);
+  h.override('waitTecExportAction', async (duration, _max, shouldContinue = () => true) => {
+    delays.push(duration);
+    return shouldContinue();
+  });
+  await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, [
+    { number: 1, id: '500001' }, { number: 2, id: '500002' },
+  ], { shouldContinue: () => true });
+  assert.deepEqual(delays, [3500, 3500, 3500, 3500, 15000, 3500, 3500, 3500, 3500]);
+});
+
+test('spreadsheet export pauses for one minute after every 15 questions', async t => {
+  const h = harness(t);
+  const delays = [];
+  stubCollector(h);
+  h.override('waitTecExportAction', async (duration, _max, shouldContinue = () => true) => {
+    delays.push(duration);
+    return shouldContinue();
+  });
+  const targets = Array.from({ length: 16 }, (_, index) => ({ number: index + 1, id: String(500001 + index) }));
+  await h.run('collectTecSpreadsheet', { key: 'caderno:111' }, targets, { shouldContinue: () => true });
+  assert.equal(delays.filter(duration => duration === 60000).length, 1);
+  assert.equal(delays.filter(duration => duration === 15000).length, 15);
+});
+
+test('spreadsheet panel offers next batches of 15, 20 or 30 and saves later batches into one cumulative archive', async t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', currentId: '500001', currentNumber: 1, total: 31 };
+  const collectedRanges = [];
+  h.override('getQuestionMapContext', () => context);
+  h.override('syncQuestionMap', () => {});
+  h.override('getMarkedQuestions', () => []);
+  h.override('runBatchOperation', async operation => {
+    batchBusy = true;batchRunning = true;
+    try { await operation(); }
+    finally { batchBusy = false;batchRunning = false; }
+  });
+  h.override('collectTecSpreadsheet', async (_context, targets, options) => {
+    collectedRanges.push(Array.from(targets, target => target.number));
+    const records = targets.map(target => ({
+      numero: target.number, idQuestao: String(500000 + target.number),
+      status: { questao: 'OK', comentario: 'OK', desempenho: 'OK', forum: 'OK' },
+    }));
+    options.onProgress({ label: 'Coletando lote', records });
+    return { records, completed: true, cancelled: false, paused: false, reason: '' };
+  });
+  h.run('showSpreadsheetExportPanel');
+  const overlay = h.window.document.querySelector('#tec-export-overlay');
+  assert.ok(overlay);
+  assert.equal(overlay.querySelector('#tec-export-scope').value, 'batch');
+  assert.deepEqual([...overlay.querySelector('#tec-export-batch-size').options].map(option => option.value), ['15', '20', '30']);
+  assert.equal(overlay.querySelector('#tec-export-batch-size').value, '20');
+
+  const size = overlay.querySelector('#tec-export-batch-size');
+  size.value = '15';
+  size.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  const start = overlay.querySelector('#tec-export-start');
+  for (let batchNumber = 0; batchNumber < 2; batchNumber++) {
+    start.dispatchEvent(new h.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  assert.deepEqual(collectedRanges[0], Array.from({ length: 15 }, (_, index) => index + 1));
+  assert.deepEqual(collectedRanges[1], Array.from({ length: 15 }, (_, index) => index + 16));
+  const saved = h.storage.get('tecSpreadsheetBatch:v1:caderno:111');
+  assert.equal(saved.records.length, 30);
+  assert.equal(saved.nextNumber, 31);
+  overlay.remove();
+});
+
+test('spreadsheet export pauses on HTTP 403 and retains the TEC Retry-After value on HTTP 429', async t => {
+  const h = harness(t);
+  h.window.fetch = async () => ({
+    ok: false, status: 429, headers: { get: name => name === 'Retry-After' ? '120' : null },
+    text: async () => JSON.stringify({ error: 'Limite temporário' }),
+  });
+  const result = await h.run('fetchTecExportJson', '/api/questoes/500001/desempenho', () => true);
+  assert.equal(result.status, 429);
+  assert.equal(result.retryAfterMs, 120000);
 });
