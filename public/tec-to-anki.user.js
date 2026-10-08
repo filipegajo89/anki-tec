@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.21.0
+// @version      1.22.0
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.21.0';
+  const SCRIPT_VERSION = '1.22.0';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -224,21 +224,71 @@
     .tec-btn-cancel { background: #e9ecef; color: #495057; }
     .tec-btn-cancel:hover { background: #dee2e6; }
     #tec-export-overlay { z-index: 2147483647; padding: 16px; box-sizing: border-box; }
-    .tec-export-modal { width: 540px; font-size: 13px; display: flex; flex-direction: column; max-height: calc(100dvh - 32px); overflow: hidden; }
-    #tec-export-overlay .tec-modal-header { flex-shrink: 0; padding: 16px 20px; }
-    #tec-export-overlay .tec-modal-body { min-height: 0; overflow-y: auto; padding: 16px 20px; }
-    #tec-export-overlay label { display: block; margin: 14px 0 5px; font-weight: 600; }
-    #tec-export-overlay select { width: 100%; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font: inherit; }
-    #tec-export-overlay .tec-export-note { color: #667085; font-size: 12px; line-height: 1.5; margin: 16px 0; }
-    #tec-export-overlay input[type="datetime-local"] { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #344054; font: inherit; }
-    #tec-export-overlay .tec-export-schedule-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-    #tec-export-schedule-info { margin-bottom: 0 !important; }
-    #tec-export-progress { margin-bottom: 0; color: #344054; line-height: 1.5; }
-    #tec-export-overlay .tec-modal-footer { flex-shrink: 0; flex-wrap: wrap; padding: 12px 20px; }
+    .tec-export-modal { width: 620px; max-width: calc(100vw - 32px); font-size: 13px; display: flex; flex-direction: column; max-height: calc(100dvh - 32px); overflow: hidden; color: #26324c; }
+    #tec-export-overlay .tec-modal-header { flex-shrink: 0; gap: 16px; padding: 20px 24px 16px; border: 0; }
+    #tec-export-overlay .tec-modal-header h2 { font-size: 20px; letter-spacing: -.3px; }
+    #tec-export-overlay .tec-export-subtitle { margin: 5px 0 0; color: #768197; font-size: 12px; line-height: 1.5; }
+    #tec-export-overlay .tec-modal-close { align-self: flex-start; color: #768197; }
+    #tec-export-overlay .tec-export-tabs { display: flex; gap: 4px; padding: 4px; margin: 0 24px 4px; border-radius: 10px; background: #f1f3f8; flex-shrink: 0; }
+    #tec-export-overlay .tec-export-tabs button { flex: 1; border: 0; padding: 10px 12px; border-radius: 7px; color: #768197; background: transparent; font: inherit; font-weight: 600; cursor: pointer; }
+    #tec-export-overlay .tec-export-tabs button[aria-selected="true"] { color: #3648cc; background: #fff; box-shadow: 0 1px 4px #26324c12; }
+    #tec-export-agenda-count { background: #e7ebfa; color: #4659cd; border-radius: 5px; padding: 1px 5px; margin-left: 5px; font-size: 11px; }
+    #tec-export-overlay .tec-modal-body { min-height: 0; overflow-y: auto; padding: 18px 24px; }
+    #tec-export-overlay label { display: block; margin: 14px 0 6px; font-weight: 600; color: #43506a; font-size: 12px; }
+    #tec-export-overlay section > label:first-child { margin-top: 0; }
+    #tec-export-overlay select, #tec-export-overlay input:not([type="checkbox"]) { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px 11px; border: 1px solid #d7ddea; border-radius: 8px; background: #fff; color: #26324c; font: inherit; }
+    #tec-export-overlay button:focus-visible, #tec-export-overlay input:focus-visible, #tec-export-overlay select:focus-visible { outline: 2px solid #6677e6; outline-offset: 2px; }
+    #tec-export-overlay .tec-export-note { color: #768197; font-size: 12px; line-height: 1.5; margin: 14px 0 0; }
+    #tec-export-overlay .tec-export-batch-info { padding: 12px; border-radius: 8px; background: #f3f5fc; color: #536180; line-height: 1.5; margin: 12px 0; }
+    #tec-export-overlay .tec-export-agenda-heading, #tec-export-overlay .tec-export-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    #tec-export-overlay h3 { margin: 0; font-size: 14px; font-weight: 650; }
+    #tec-export-schedule-summary { color: #768197; font-size: 11px; white-space: nowrap; }
+    #tec-export-overlay .tec-export-schedule-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+    #tec-export-overlay .tec-export-schedule-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; border: 1px solid #e0e5ef; border-radius: 10px; padding: 12px 14px; background: #fff; }
+    #tec-export-overlay .tec-export-job-description { display: flex; flex-direction: column; gap: 5px; min-width: 0; grid-row: span 2; justify-content: center; }
+    #tec-export-overlay .tec-export-job-description strong { font-size: 13px; font-weight: 650; }
+    #tec-export-overlay .tec-export-job-time { font-size: 11px; color: #768197; line-height: 1.5; }
+    #tec-export-overlay .tec-export-job-status { justify-self: end; align-self: center; color: #5268ca; background: #eff2ff; border-radius: 5px; font-size: 10px; font-weight: 600; padding: 3px 7px; white-space: nowrap; }
+    #tec-export-overlay .tec-export-job-status[data-status="completed"] { color: #28755b; background: #edf8f1; }
+    #tec-export-overlay .tec-export-job-status[data-status="running"] { color: #5268ca; background: #e8edff; }
+    #tec-export-overlay .tec-export-job-status[data-status="missed"], #tec-export-overlay .tec-export-job-status[data-status="needs_attention"] { color: #926319; background: #fff7e6; }
+    #tec-export-overlay .tec-export-job-status[data-status="cancelled"] { color: #8791a1; background: #f2f4f7; }
+    #tec-export-overlay .tec-export-job-actions { display: flex; justify-content: flex-end; gap: 12px; grid-column: 2; }
+    #tec-export-overlay .tec-export-job-actions button { padding: 2px 0; font: inherit; font-size: 11px; border: 0; background: transparent; color: #536180; cursor: pointer; }
+    #tec-export-overlay .tec-export-job-actions button:hover { color: #3648cc; text-decoration: underline; }
+    #tec-export-overlay .tec-export-agenda-empty { padding: 18px; border: 1px dashed #d7ddea; border-radius: 10px; color: #8791a1; font-size: 12px; text-align: center; line-height: 1.5; }
+    #tec-export-overlay .tec-export-schedule-editor { background: #f7f8fc; border: 1px solid #e6eaf3; border-radius: 12px; padding: 16px; margin-top: 18px; }
+    #tec-export-overlay .tec-export-editor-heading { margin-bottom: 2px; }
+    #tec-export-overlay .tec-export-editor-heading select { width: 135px; padding: 7px 9px; font-size: 11px; background: #fff; }
+    #tec-export-overlay .tec-export-field-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+    #tec-export-overlay .tec-export-range-count { font-size: 11px; color: #8791a1; margin: 6px 0 0; }
+    #tec-export-overlay .tec-export-schedule-options { margin-top: 14px; font-size: 11px; color: #768197; }
+    #tec-export-overlay summary { cursor: pointer; }
+    #tec-export-overlay .tec-export-history { margin-top: 12px; color: #768197; font-size: 11px; }
+    #tec-export-overlay .tec-export-history > ul { margin-top: 10px; }
+    #tec-export-overlay .tec-export-inline-error { color: #a23e46; background: #fff0f1; border-radius: 6px; padding: 9px; margin: 12px 0 0; font-size: 12px; line-height: 1.5; }
+    #tec-export-overlay .tec-export-queue-paused { padding: 12px; margin-bottom: 12px; border-radius: 8px; background: #fff8e9; color: #926319; font-size: 12px; }
+    #tec-export-overlay .tec-export-queue-paused p { margin: 5px 0 10px; line-height: 1.5; }
+    #tec-export-overlay .tec-export-schedule-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    #tec-export-overlay .tec-export-bottom { border-top: 1px solid #e6eaf3; flex-shrink: 0; padding: 12px 24px 16px; }
+    #tec-export-progress { margin: 0; color: #768197; font-size: 11px; line-height: 1.5; }
+    #tec-export-overlay .tec-modal-footer { border: 0; padding: 10px 0 0; flex-wrap: wrap; }
+    #tec-export-overlay .tec-modal-footer:has(> button:not([hidden])) { min-height: 32px; }
     #tec-export-overlay .tec-btn { padding: 9px 12px; font-size: 12px; }
+    #tec-export-overlay button:disabled, #tec-export-overlay input:disabled, #tec-export-overlay select:disabled { opacity: .5; cursor: default; }
     #tec-export-overlay [hidden] { display: none !important; }
     #tec-export-overlay label.tec-export-resume { display: flex; align-items: center; gap: 7px; font-weight: 400; }
     #tec-export-resume { margin: 0; }
+    @media (max-width: 480px) {
+      #tec-export-overlay .tec-modal-header { padding: 16px; }
+      #tec-export-overlay .tec-export-tabs { margin: 0 16px 4px; }
+      #tec-export-overlay .tec-modal-body { padding: 16px; }
+      #tec-export-overlay .tec-export-bottom { padding: 12px 16px; }
+      #tec-export-overlay .tec-export-schedule-editor { padding: 12px; }
+      #tec-export-overlay .tec-export-agenda-heading { align-items: flex-start; }
+      #tec-export-schedule-summary { white-space: normal; text-align: right; }
+      #tec-export-overlay .tec-export-schedule-row { padding: 10px; gap: 4px 8px; }
+    }
 
     /* \u2500\u2500 Modal Content \u2500\u2500 */
     .tec-meta-grid {
@@ -5635,10 +5685,17 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
   function saveTecSpreadsheetBatch(context, forumOrder, batch, incoming, advance = false) {
     const {key, state} = getTecSpreadsheetBatchState(context, forumOrder);
     state.records = mergeTecSpreadsheetBatchRecords(state.records, incoming);
-    if (advance && state.active && state.active.start === batch?.start && state.active.end === batch?.end) {
-      state.nextNumber = state.active.end + 1;
+    const confirmed = target => state.records.some(record => Number(record.numero) === Number(target.number)
+      && (!target.id || String(record.idQuestao) === String(target.id))
+      && (!record.status || record.status.questao === 'OK'));
+    const complete = advance && Array.isArray(batch?.targets) && batch.targets.length > 0 && batch.targets.every(confirmed);
+    if (complete && state.active && state.active.start === batch?.start && state.active.end === batch?.end) {
       state.active = null;
     }
+    const confirmedNumbers = new Set(state.records.filter(record => !record.status || record.status.questao === 'OK').map(record => Number(record.numero)));
+    state.nextNumber = 1;
+    while (state.nextNumber <= context.total && confirmedNumbers.has(state.nextNumber)) state.nextNumber++;
+    state.forumOrder = forumOrder;
     state.updatedAt = new Date().toISOString();
     GM_setValue(key, state);
     return state;
@@ -5646,77 +5703,218 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
 
   const TEC_SPREADSHEET_SCHEDULE_PREFIX = 'tecSpreadsheetSchedule:v1:';
   const TEC_SPREADSHEET_SCHEDULE_GRACE_MS = 10 * 60 * 1000;
+  const TEC_SPREADSHEET_SCHEDULE_LEASE_MS = 2 * 60 * 1000;
+  const spreadsheetScheduleOwner = Date.now() + '-' + Math.random().toString(36).slice(2);
   let spreadsheetScheduleMonitorStarted = false;
+  let spreadsheetScheduleSequence = 0;
 
   function getTecSpreadsheetScheduleKey(contextKey) {
     return TEC_SPREADSHEET_SCHEDULE_PREFIX + contextKey;
   }
 
-  function scheduleTecSpreadsheetBatch(context, batchSize, forumOrder, scheduledAt) {
+  function storeTecSpreadsheetSchedules(contextKey, state) {
+    GM_setValue(getTecSpreadsheetScheduleKey(contextKey), state);
+    document.dispatchEvent(new window.CustomEvent('tec-export-schedules-changed', {detail:{context:contextKey, state}}));
+    return state;
+  }
+
+  function getTecSpreadsheetScheduleState(contextKey) {
+    const saved = GM_getValue(getTecSpreadsheetScheduleKey(contextKey), null);
+    if (saved?.version === 2 && saved.context === contextKey && Array.isArray(saved.schedules)) return saved;
+    const state = {version:2, context:contextKey, schedules:[]};
+    if (saved?.version === 1 && saved.context === contextKey) {
+      const context = getQuestionMapContext();
+      const map = context.key === contextKey ? loadQuestionMap(context).entries || {} : {};
+      const batchState = GM_getValue(TEC_SPREADSHEET_BATCH_PREFIX + contextKey, null);
+      const active = batchState?.active;
+      const count = Number(saved.end) - Number(saved.start) + 1;
+      const validRange = Number.isInteger(saved.start) && Number.isInteger(saved.end) && saved.start >= 1 && count > 0 && count <= 30;
+      const targets = Array.isArray(saved.targets) ? saved.targets : active?.start === saved.start && active?.end === saved.end && Array.isArray(active.targets)
+        ? active.targets : validRange ? Array.from({length:count}, (_, index) => {
+          const number = saved.start + index;
+          return {number, id:map[number]?.id || null};
+        }) : [];
+      state.schedules.push({...saved, version:2, id:saved.id || 'migrated-' + String(saved.createdAt || saved.scheduledAt || Date.now()), targets});
+      if (!validRange) {
+        state.schedules[0].status = 'needs_attention';
+        state.schedules[0].message = 'O intervalo do agendamento antigo precisa ser revisado.';
+        state.pausedReason = state.schedules[0].message;
+      } else if (saved.status === 'running') {
+        state.schedules[0].status = 'needs_attention';
+        state.schedules[0].message = 'A execução anterior foi interrompida. Confira os dados salvos antes de reagendar.';
+        state.pausedReason = state.schedules[0].message;
+      }
+      storeTecSpreadsheetSchedules(contextKey, state);
+    }
+    return state;
+  }
+
+  function getTecSpreadsheetSchedules(contextKey) {
+    return [...getTecSpreadsheetScheduleState(contextKey).schedules].sort((a, b) => a.scheduledAt - b.scheduledAt || a.createdAt - b.createdAt);
+  }
+
+  function createTecSpreadsheetRangeBatch(context, start, end, targets = null) {
+    const valid = /^caderno:\d+$/.test(context.key) && Number.isInteger(context.total)
+      && Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start && end <= context.total && end - start < 30;
+    if (!valid) return {start, end, targets:[], state:null, size:0, finished:true, error:'Escolha um intervalo válido de até 30 questões deste caderno.'};
+    const entries = loadQuestionMap(context).entries || {};
+    const count = end - start + 1;
+    const exactTargets = targets == null ? Array.from({length:count}, (_, index) => {
+      const number = start + index;
+      return {number, id:entries[number]?.id || null};
+    }) : targets;
+    if (!Array.isArray(exactTargets) || exactTargets.length !== count
+      || !exactTargets.every((target, index) => Number(target?.number) === start + index
+        && (target.id == null || /^\d+$/.test(String(target.id))))) {
+      return {start, end, targets:[], state:null, size:0, finished:true, error:'As questões salvas para este agendamento precisam ser revisadas.'};
+    }
+    const state = getTecSpreadsheetBatchState(context).state;
+    return {start, end, targets:exactTargets.map(target => ({number:Number(target.number), id:target.id == null ? null : String(target.id)})), state, size:count, finished:false};
+  }
+
+  function getNextTecSpreadsheetScheduleRange(context, batchSize = 20) {
+    if (!/^caderno:\d+$/.test(context.key) || !Number.isInteger(context.total) || context.total < 1) return {start:0, end:0};
+    const size = Math.max(1, Math.min(30, Math.floor(Number(batchSize) || 20)));
+    const state = getTecSpreadsheetBatchState(context).state;
+    const confirmed = new Set(state.records.filter(record => !record.status || record.status.questao === 'OK').map(record => Number(record.numero)));
+    const jobs = getTecSpreadsheetSchedules(context.key).filter(job => ['pending','running'].includes(job.status));
+    const unavailable = number => confirmed.has(number) || jobs.some(job => number >= job.start && number <= job.end);
+    let start = 1;
+    while (start <= context.total && unavailable(start)) start++;
+    if (start > context.total) return {start:0, end:0};
+    let end = start;
+    while (end < context.total && end - start + 1 < size && !unavailable(end + 1)) end++;
+    return {start, end};
+  }
+
+  function scheduleTecSpreadsheetBatch(context, batchSize, forumOrder, scheduledAt, {start, end, id} = {}) {
     if (!/^caderno:\d+$/.test(context.key) || !Number.isFinite(scheduledAt) || scheduledAt <= Date.now()) {
       return {ok:false, error:'Escolha um horário futuro para um caderno válido.'};
     }
-    const key = getTecSpreadsheetScheduleKey(context.key);
-    const previous = GM_getValue(key, null);
-    if (previous && ['pending', 'running'].includes(previous.status)) {
-      return {ok:false, error:'Já existe um lote agendado para este caderno.'};
-    }
-    const batch = prepareTecSpreadsheetBatch(context, batchSize, forumOrder);
-    if (batch.finished || !batch.targets.length) return {ok:false, error:'Este caderno já foi concluído.'};
+    const state = getTecSpreadsheetScheduleState(context.key);
+    const previous = id ? state.schedules.find(job => job.id === id) : null;
+    if (id && !previous) return {ok:false, error:'Este agendamento não está mais disponível.'};
+    if (previous?.status === 'running') return {ok:false, error:'Aguarde este lote terminar para alterar o agendamento.'};
+    if (previous && previous.status !== 'pending') return {ok:false, error:'Adicione um novo agendamento para este intervalo.'};
+    const range = start == null && end == null
+      ? previous ? {start:previous.start, end:previous.end} : getNextTecSpreadsheetScheduleRange(context, batchSize)
+      : {start:Number(start), end:Number(end)};
+    if (!range.start) return {ok:false, error:'Não há questões disponíveis para um novo lote.'};
+    const batch = createTecSpreadsheetRangeBatch(context, range.start, range.end);
+    if (batch.error) return {ok:false, error:batch.error};
+    const overlap = state.schedules.find(job => job.id !== id && ['pending','running'].includes(job.status)
+      && batch.start <= job.end && batch.end >= job.start);
+    if (overlap) return {ok:false, error:'Este intervalo coincide com o lote ' + overlap.start + '–' + overlap.end + ' já agendado.'};
+    const now = Date.now();
     const schedule = {
-      version:1, context:context.key, total:context.total, batchSize:Number(batchSize), forumOrder,
-      start:batch.start, end:batch.end, scheduledAt, status:'pending', createdAt:Date.now(),
+      version:2, id:previous?.id || 'lot-' + now + '-' + (++spreadsheetScheduleSequence) + '-' + Math.random().toString(36).slice(2, 9),
+      context:context.key, total:context.total, batchSize:batch.size, forumOrder:forumOrder === 'data' ? 'data' : 'votos',
+      start:batch.start, end:batch.end, targets:batch.targets, scheduledAt, status:'pending',
+      createdAt:previous?.createdAt || now, updatedAt:now,
     };
-    GM_setValue(key, schedule);
+    if (previous) state.schedules[state.schedules.findIndex(job => job.id === id)] = schedule;
+    else state.schedules.push(schedule);
+    storeTecSpreadsheetSchedules(context.key, state);
     return {ok:true, schedule};
   }
 
-  function updateTecSpreadsheetSchedule(contextKey, status, extra = {}) {
-    const key = getTecSpreadsheetScheduleKey(contextKey);
-    const schedule = GM_getValue(key, null);
-    if (!schedule || schedule.version !== 1) return null;
-    const updated = {...schedule, ...extra, status, updatedAt:Date.now()};
-    GM_setValue(key, updated);
+  function updateTecSpreadsheetSchedule(contextKey, status, extra = {}, scheduleId = null) {
+    const state = getTecSpreadsheetScheduleState(contextKey);
+    const id = scheduleId || extra.id;
+    const job = id ? state.schedules.find(schedule => schedule.id === id)
+      : state.schedules.find(schedule => schedule.status === 'running')
+        || (state.schedules.length === 1 ? state.schedules[0] : null);
+    if (!job) return null;
+    const updated = {...job, ...extra, id:job.id, context:contextKey, status, updatedAt:Date.now()};
+    state.schedules[state.schedules.findIndex(schedule => schedule.id === job.id)] = updated;
+    storeTecSpreadsheetSchedules(contextKey, state);
     return updated;
   }
 
-  function cancelTecSpreadsheetSchedule(contextKey) {
-    const key = getTecSpreadsheetScheduleKey(contextKey);
-    const schedule = GM_getValue(key, null);
-    if (!schedule || schedule.status !== 'pending') return false;
-    GM_setValue(key, null);
+  function cancelTecSpreadsheetSchedule(contextKey, id = null) {
+    const jobs = getTecSpreadsheetSchedules(contextKey);
+    const job = id ? jobs.find(schedule => schedule.id === id)
+      : jobs.filter(schedule => schedule.status === 'pending').length === 1 ? jobs.find(schedule => schedule.status === 'pending') : null;
+    if (!job || job.status !== 'pending') return false;
+    updateTecSpreadsheetSchedule(contextKey, 'cancelled', {cancelledAt:Date.now()}, job.id);
     return true;
+  }
+
+  function pauseTecSpreadsheetSchedules(contextKey, reason) {
+    const state = getTecSpreadsheetScheduleState(contextKey);
+    state.pausedReason = String(reason || 'A fila precisa de atenção antes de continuar.');
+    return storeTecSpreadsheetSchedules(contextKey, state);
+  }
+
+  function resumeTecSpreadsheetSchedules(contextKey) {
+    const state = getTecSpreadsheetScheduleState(contextKey);
+    delete state.pausedReason;
+    return storeTecSpreadsheetSchedules(contextKey, state);
   }
 
   function checkTecSpreadsheetSchedule() {
     const context = getQuestionMapContext();
     if (!context.key || !/^caderno:\d+$/.test(context.key) || !context.currentId || !context.currentNumber) return;
-    const key = getTecSpreadsheetScheduleKey(context.key);
-    const schedule = GM_getValue(key, null);
-    if (!schedule || schedule.version !== 1 || schedule.status !== 'pending') return;
+    const state = getTecSpreadsheetScheduleState(context.key);
+    if (state.pausedReason) return;
     const now = Date.now();
-    if (now < schedule.scheduledAt) return;
-    if (now - schedule.scheduledAt > TEC_SPREADSHEET_SCHEDULE_GRACE_MS) {
-      updateTecSpreadsheetSchedule(context.key, 'missed');
+    const runningSchedule = state.schedules.find(job => job.status === 'running');
+    if (runningSchedule) {
+      if (runningSchedule.runOwner === spreadsheetScheduleOwner && batchBusy) {
+        runningSchedule.leaseUntil = now + TEC_SPREADSHEET_SCHEDULE_LEASE_MS;
+        storeTecSpreadsheetSchedules(context.key, state);
+      } else if (!runningSchedule.runOwner || !Number.isFinite(runningSchedule.leaseUntil) || runningSchedule.leaseUntil <= now) {
+        const message = 'A execução anterior foi interrompida. Confira os dados salvos antes de reagendar.';
+        updateTecSpreadsheetSchedule(context.key, 'needs_attention', {message}, runningSchedule.id);
+        pauseTecSpreadsheetSchedules(context.key, message);
+        return;
+      }
+    }
+    const schedule = getTecSpreadsheetSchedules(context.key).find(job => job.status === 'pending' && job.scheduledAt <= now);
+    if (!schedule) return;
+    const existing = document.getElementById('tec-export-overlay');
+    if (!schedule.waitingForOperation && now - schedule.scheduledAt > TEC_SPREADSHEET_SCHEDULE_GRACE_MS) {
+      updateTecSpreadsheetSchedule(context.key, 'missed', {message:'O horário passou enquanto o caderno não estava disponível.'}, schedule.id);
       return;
     }
-    if (batchBusy || isProcessing) return;
-    const existing = document.getElementById('tec-export-overlay');
-    if (existing && existing.dataset.cadernoKey !== context.key) return;
-    const updated = updateTecSpreadsheetSchedule(context.key, 'running', {startedAt:now});
+    if (batchBusy || isProcessing || state.schedules.some(job => job.status === 'running')
+      || (existing && existing.dataset.cadernoKey !== context.key)) {
+      let changed = false;
+      for (const job of state.schedules) {
+        if (job.status === 'pending' && job.scheduledAt <= now && !job.waitingForOperation
+          && now - job.scheduledAt <= TEC_SPREADSHEET_SCHEDULE_GRACE_MS) {
+          job.waitingForOperation = true;
+          job.updatedAt = now;
+          changed = true;
+        }
+      }
+      if (changed) storeTecSpreadsheetSchedules(context.key, state);
+      return;
+    }
+    const batch = createTecSpreadsheetRangeBatch(context, schedule.start, schedule.end, schedule.targets);
+    const entries = loadQuestionMap(context).entries || {};
+    const changedQuestion = batch.targets.some(target => target.id && entries[target.number]?.id
+      && String(target.id) !== String(entries[target.number].id));
+    if (schedule.context !== context.key || batch.error || changedQuestion) {
+      const message = batch.error || 'O conteúdo do caderno mudou; confira o intervalo antes de agendar novamente.';
+      updateTecSpreadsheetSchedule(context.key, 'needs_attention', {message}, schedule.id);
+      pauseTecSpreadsheetSchedules(context.key, message);
+      return;
+    }
+    const updated = updateTecSpreadsheetSchedule(context.key, 'running', {
+      startedAt:now, waitingForOperation:false, runOwner:spreadsheetScheduleOwner,
+      leaseUntil:now + TEC_SPREADSHEET_SCHEDULE_LEASE_MS,
+    }, schedule.id);
     if (!existing) {
       showSpreadsheetExportPanel({scheduledRun:updated});
       if (!document.getElementById('tec-export-overlay')) {
-        updateTecSpreadsheetSchedule(context.key, 'needs_attention', {message:'Abra uma questão do caderno para iniciar a coleta.'});
+        const message = 'Abra uma questão do caderno para iniciar a coleta.';
+        updateTecSpreadsheetSchedule(context.key, 'needs_attention', {message}, schedule.id);
+        pauseTecSpreadsheetSchedules(context.key, message);
       }
       return;
     }
-    const overlay = document.getElementById('tec-export-overlay');
-    if (!overlay) {
-      updateTecSpreadsheetSchedule(context.key, 'needs_attention', {message:'Não foi possível abrir a exportação.'});
-      return;
-    }
-    overlay.dispatchEvent(new window.CustomEvent('tec-export-scheduled-due', {detail:updated}));
+    existing.dispatchEvent(new window.CustomEvent('tec-export-scheduled-due', {detail:updated}));
   }
 
   function startTecSpreadsheetScheduleMonitor() {
@@ -5879,215 +6077,292 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
   function showSpreadsheetExportPanel({scheduledRun = null} = {}) {
     if (batchBusy || isProcessing) {showToast('Aguarde a operação atual terminar.', 'warning');return;}
     syncQuestionMap();
-    const context=getQuestionMapContext();
+    const context = getQuestionMapContext();
     if (!context.key || !context.currentId || !context.currentNumber) {showToast('Abra uma questão e aguarde carregar.', 'warning');return;}
-    document.getElementById('tec-export-overlay')?.remove();
-    const selected=getMarkedQuestions(context);
-    const overlay=document.createElement('div'); overlay.id='tec-export-overlay';overlay.className='tec-modal-overlay';
-    overlay.innerHTML=`<div class="tec-modal tec-export-modal" role="dialog" aria-modal="true" aria-labelledby="tec-export-title"><div class="tec-modal-header"><h2 id="tec-export-title">Exportar para planilha</h2><button class="tec-modal-close" aria-label="Fechar exportação">×</button></div><div class="tec-modal-body"><p>Questão completa, comentário do professor, desempenho e dois comentários do fórum.</p><label for="tec-export-scope">Quais questões?</label><select id="tec-export-scope"><option value="current">Questão atual (${context.currentNumber})</option><option value="selected" ${!selected.length?'disabled':''} ${selected.length?'selected':''}>Marcadas (${selected.length})</option><option value="all" ${context.total<=1?'disabled':''}>Caderno inteiro (${context.total})</option></select><label for="tec-export-forum-order">Comentários do fórum</label><select id="tec-export-forum-order"><option value="votos">Dois mais votados</option><option value="data">Dois primeiros na ordem por data</option></select><label class="tec-export-resume"><input type="checkbox" id="tec-export-resume"> Continuar a coleta salva, sem refazer os dados prontos</label><p class="tec-export-note">A planilha CSV abre no Excel. Textos, links de imagens e dados completos ficam preservados. A coleta usa sua sessão do TEC e não movimenta a questão aberta.</p><p id="tec-export-progress" role="status" aria-live="polite">Pronto para coletar.</p></div><div class="tec-modal-footer"><button class="tec-btn tec-btn-cancel" id="tec-export-json" hidden>Dados completos (JSON)</button><button class="tec-btn tec-btn-cancel" id="tec-export-download" hidden>Baixar planilha</button><button class="tec-btn tec-btn-cancel" id="tec-export-stop" hidden>Parar</button><button class="tec-btn tec-btn-save" id="tec-export-start">Coletar e baixar</button></div></div>`;
+    const previous = document.getElementById('tec-export-overlay');
+    previous?.dispatchEvent(new window.Event('tec-export-panel-dispose'));
+    previous?.remove();
+    const selected = getMarkedQuestions(context);
+    const batchAvailable = /^caderno:\d+$/.test(context.key) && context.total > 1;
+    const overlay = document.createElement('div');
+    overlay.id = 'tec-export-overlay';overlay.className = 'tec-modal-overlay';overlay.dataset.cadernoKey = context.key;
+    overlay.innerHTML = [
+      '<div class="tec-modal tec-export-modal" role="dialog" aria-modal="true" aria-labelledby="tec-export-title">',
+      '<div class="tec-modal-header"><div><h2 id="tec-export-title">Exportar para planilha</h2><p class="tec-export-subtitle">Questão, professor, desempenho e dois comentários do fórum.</p></div><button class="tec-modal-close" aria-label="Fechar exportação">×</button></div>',
+      '<div class="tec-export-tabs" role="tablist" aria-label="Exportação"><button id="tec-export-tab-collect" role="tab" aria-controls="tec-export-collect-pane">Coletar agora</button><button id="tec-export-tab-schedule" role="tab" aria-controls="tec-export-schedule-pane">Agendamentos <span id="tec-export-agenda-count">0</span></button></div>',
+      '<div class="tec-modal-body">',
+      '<section id="tec-export-collect-pane" role="tabpanel" aria-labelledby="tec-export-tab-collect">',
+      '<label for="tec-export-scope">Quais questões?</label><select id="tec-export-scope"><option value="current">Questão atual (' + context.currentNumber + ')</option><option value="selected"' + (!selected.length ? ' disabled' : '') + '>Marcadas (' + selected.length + ')</option><option value="batch"' + (!batchAvailable ? ' disabled' : '') + '>Próximo lote do caderno</option><option value="all"' + (context.total <= 1 ? ' disabled' : '') + '>Caderno inteiro (' + context.total + ')</option></select>',
+      '<div id="tec-export-batch-controls"><label for="tec-export-batch-size">Questões por lote</label><select id="tec-export-batch-size"><option value="15">15 questões</option><option value="20" selected>20 questões</option><option value="30">30 questões</option></select><p id="tec-export-batch-info" class="tec-export-batch-info"></p></div>',
+      '<label for="tec-export-forum-order">Comentários do fórum</label><select id="tec-export-forum-order"><option value="votos">Dois mais votados</option><option value="data">Dois primeiros por data</option></select>',
+      '<label class="tec-export-resume"><input type="checkbox" id="tec-export-resume"> Continuar a coleta salva</label>',
+      '<p class="tec-export-note">Os lotes se acumulam na mesma planilha, sem duplicar questões. A coleta preserva a questão aberta no TEC.</p>',
+      '</section>',
+      '<section id="tec-export-schedule-pane" role="tabpanel" aria-labelledby="tec-export-tab-schedule" hidden>',
+      '<div class="tec-export-agenda-heading"><h3>Agenda do caderno</h3><span id="tec-export-schedule-summary"></span></div>',
+      '<div id="tec-export-queue-paused" class="tec-export-queue-paused" hidden><strong>Agenda pausada</strong><p id="tec-export-queue-reason"></p><button id="tec-export-queue-resume" class="tec-btn tec-btn-cancel">Retomar agenda</button></div>',
+      '<ul id="tec-export-schedule-list" class="tec-export-schedule-list" aria-label="Lotes agendados"></ul>',
+      '<details id="tec-export-schedule-history" class="tec-export-history" hidden><summary>Histórico</summary><ul class="tec-export-schedule-list"></ul></details>',
+      '<div class="tec-export-schedule-editor"><div class="tec-export-editor-heading"><h3 id="tec-export-schedule-editor-title">Novo agendamento</h3><select id="tec-export-schedule-batch-size" aria-label="Tamanho sugerido do lote"><option value="15">15 questões</option><option value="20" selected>20 questões</option><option value="30">30 questões</option></select></div>',
+      '<div class="tec-export-field-grid"><div><label for="tec-export-schedule-start">Da questão</label><input id="tec-export-schedule-start" type="number" min="1" max="' + context.total + '" step="1"></div><div><label for="tec-export-schedule-end">Até a questão</label><input id="tec-export-schedule-end" type="number" min="1" max="' + context.total + '" step="1"></div></div>',
+      '<p id="tec-export-range-count" class="tec-export-range-count"></p>',
+      '<div class="tec-export-field-grid"><div><label for="tec-export-schedule-date">Data</label><input id="tec-export-schedule-date" type="date"></div><div><label for="tec-export-schedule-time">Horário</label><input id="tec-export-schedule-time" type="time" step="60"></div></div>',
+      '<details class="tec-export-schedule-options"><summary>Comentários do fórum</summary><label for="tec-export-schedule-forum-order">Quais comentários incluir?</label><select id="tec-export-schedule-forum-order"><option value="votos">Dois mais votados</option><option value="data">Dois primeiros por data</option></select></details>',
+      '<p id="tec-export-schedule-error" class="tec-export-inline-error" role="alert" hidden></p>',
+      '<div class="tec-export-schedule-actions"><button id="tec-export-schedule-add" class="tec-btn tec-btn-save">Adicionar agendamento</button><button id="tec-export-schedule-edit-cancel" class="tec-btn tec-btn-cancel" hidden>Sair da edição</button></div>',
+      '</div><p class="tec-export-note">Deixe este caderno aberto e a sessão do TEC válida. Os lotes são coletados um de cada vez; cada download contém a planilha acumulada.</p>',
+      '</section></div>',
+      '<div class="tec-export-bottom"><p id="tec-export-progress" role="status" aria-live="polite">Pronto para coletar.</p><div class="tec-modal-footer"><button class="tec-btn tec-btn-cancel" id="tec-export-json" hidden>Dados completos</button><button class="tec-btn tec-btn-cancel" id="tec-export-download" hidden>Salvar planilha acumulada</button><button class="tec-btn tec-btn-cancel" id="tec-export-stop" hidden>Parar</button><button class="tec-btn tec-btn-save" id="tec-export-start">Coletar próximo lote</button></div></div></div>',
+    ].join('');
     document.body.appendChild(overlay);
-    let running=false, lastRecords=[], activeSchedule=scheduledRun;
-    const start=overlay.querySelector('#tec-export-start'), stop=overlay.querySelector('#tec-export-stop'), progress=overlay.querySelector('#tec-export-progress');
-    const scope=overlay.querySelector('#tec-export-scope'), order=overlay.querySelector('#tec-export-forum-order');
-    let lastRecordsCumulative=false;
-    const download=overlay.querySelector('#tec-export-download'), json=overlay.querySelector('#tec-export-json');
-    const batchAvailable=/^caderno:\d+$/.test(context.key) && Number.isInteger(context.total) && context.total>1;
-    const batchOption=document.createElement('option');
-    batchOption.value='batch';batchOption.textContent='Próximo lote do caderno';batchOption.disabled=!batchAvailable;
-    scope.insertBefore(batchOption,scope.querySelector('option[value="all"]'));
-    scope.value=batchAvailable?'batch':selected.length?'selected':'current';
-    const batchSizeLabel=document.createElement('label');
-    batchSizeLabel.htmlFor='tec-export-batch-size';batchSizeLabel.textContent='Questões por lote';
-    const batchSize=document.createElement('select');
-    batchSize.id='tec-export-batch-size';
-    for (const size of [15,20,30]) {
-      const option=document.createElement('option');
-      option.value=String(size);option.textContent=size+' questões';batchSize.appendChild(option);
-    }
-    batchSize.value='20';
-    const batchInfo=document.createElement('p');
-    batchInfo.id='tec-export-batch-info';batchInfo.className='tec-export-note';
-    const batchNote=document.createElement('p');
-    batchNote.className='tec-export-note';
-    batchNote.textContent='Cada salvamento inclui os lotes anteriores. Selecione o mesmo arquivo no seletor para atualizar sua planilha acumulada.';
-    const scheduleControls=document.createElement('div');
-    scheduleControls.id='tec-export-schedule-controls';
-    const scheduleLabel=document.createElement('label');
-    scheduleLabel.htmlFor='tec-export-schedule-at';scheduleLabel.textContent='Agendar este lote';
-    const scheduleAt=document.createElement('input');
-    scheduleAt.id='tec-export-schedule-at';scheduleAt.type='datetime-local';
-    const scheduleActions=document.createElement('div');
-    scheduleActions.className='tec-export-schedule-actions';
-    const scheduleButton=document.createElement('button');
-    scheduleButton.type='button';scheduleButton.className='tec-btn tec-btn-cancel';scheduleButton.textContent='Agendar lote';
-    const cancelScheduleButton=document.createElement('button');
-    cancelScheduleButton.type='button';cancelScheduleButton.className='tec-btn tec-btn-cancel';cancelScheduleButton.textContent='Cancelar agendamento';cancelScheduleButton.hidden=true;
-    scheduleActions.append(scheduleButton,cancelScheduleButton);
-    const scheduleInfo=document.createElement('p');
-    scheduleInfo.id='tec-export-schedule-info';scheduleInfo.className='tec-export-note';
-    scheduleInfo.textContent='Agendamento único. Deixe o caderno aberto no TEC e conectado; a aba pode atrasar o horário se o navegador a suspender.';
-    scheduleControls.append(scheduleLabel,scheduleAt,scheduleActions,scheduleInfo);
-    const batchResume=overlay.querySelector('.tec-export-resume');
-    scope.after(batchSizeLabel,batchSize,batchInfo,batchNote,scheduleControls);
-    overlay.dataset.cadernoKey=context.key;
-    const showBatchStatus=()=>{
-      const state=getTecSpreadsheetBatchState(context,order.value).state;
-      lastRecords=state.records;lastRecordsCumulative=true;
-      if (state.active) batchInfo.textContent='Lote pendente: questões '+state.active.start+'–'+state.active.end+'. Ele será retomado antes de começar outro.';
-      else if (state.nextNumber>context.total) batchInfo.textContent='Caderno concluído · '+state.records.length+' questões na planilha acumulada.';
+    const find = selector => overlay.querySelector(selector);
+    const scope = find('#tec-export-scope'), order = find('#tec-export-forum-order'), batchSize = find('#tec-export-batch-size');
+    const start = find('#tec-export-start'), stop = find('#tec-export-stop'), progress = find('#tec-export-progress');
+    const download = find('#tec-export-download'), json = find('#tec-export-json'), resume = find('#tec-export-resume');
+    const collectTab = find('#tec-export-tab-collect'), scheduleTab = find('#tec-export-tab-schedule');
+    const scheduleStart = find('#tec-export-schedule-start'), scheduleEnd = find('#tec-export-schedule-end');
+    const scheduleDate = find('#tec-export-schedule-date'), scheduleTime = find('#tec-export-schedule-time');
+    const scheduleSize = find('#tec-export-schedule-batch-size'), scheduleOrder = find('#tec-export-schedule-forum-order');
+    const add = find('#tec-export-schedule-add'), cancelEdit = find('#tec-export-schedule-edit-cancel'), error = find('#tec-export-schedule-error');
+    let running = false, lastRecords = [], lastRecordsCumulative = false, editingId = null, activeTab = 'collect';
+    scope.value = batchAvailable ? 'batch' : selected.length ? 'selected' : 'current';
+    const setTab = name => {
+      activeTab = name;
+      const agenda = name === 'schedule';
+      find('#tec-export-collect-pane').hidden = agenda;find('#tec-export-schedule-pane').hidden = !agenda;
+      collectTab.setAttribute('aria-selected', String(!agenda));scheduleTab.setAttribute('aria-selected', String(agenda));
+      collectTab.tabIndex = agenda ? -1 : 0;scheduleTab.tabIndex = agenda ? 0 : -1;
+      start.hidden = agenda;
+    };
+    scheduleTab.disabled = !batchAvailable;
+    collectTab.addEventListener('click', () => setTab('collect'));
+    scheduleTab.addEventListener('click', () => setTab('schedule'));
+    for (const tab of [collectTab, scheduleTab]) tab.addEventListener('keydown', event => {
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();setTab(activeTab === 'collect' ? 'schedule' : 'collect');
+        (activeTab === 'collect' ? collectTab : scheduleTab).focus();
+      }
+    });
+    const localDate = date => {
+      const pad = value => String(value).padStart(2, '0');
+      return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+    };
+    const fillTime = at => {
+      const date = new Date(at);
+      scheduleDate.value = localDate(date);
+      scheduleTime.value = String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
+    };
+    scheduleDate.min = localDate(new Date());
+    const showRangeCount = () => {
+      const count = Number(scheduleEnd.value) - Number(scheduleStart.value) + 1;
+      find('#tec-export-range-count').textContent = count > 0 ? count + ' questões · caderno com ' + context.total : 'Escolha o intervalo de questões.';
+    };
+    const resetDraft = () => {
+      editingId = null;error.hidden = true;cancelEdit.hidden = true;add.textContent = 'Adicionar agendamento';
+      find('#tec-export-schedule-editor-title').textContent = 'Novo agendamento';
+      const range = getNextTecSpreadsheetScheduleRange(context, Number(scheduleSize.value));
+      scheduleStart.value = range.start || '';scheduleEnd.value = range.end || '';
+      const pending = getTecSpreadsheetSchedules(context.key).filter(job => job.status === 'pending');
+      const lastTime = pending.length ? Math.max(...pending.map(job => job.scheduledAt)) : 0;
+      const suggestedAt = Math.ceil(Math.max(Date.now() + 30 * 60 * 1000, lastTime + 30 * 60 * 1000) / (5 * 60 * 1000)) * (5 * 60 * 1000);
+      fillTime(suggestedAt);showRangeCount();
+    };
+    scheduleSize.addEventListener('change', () => {
+      const first = Number(scheduleStart.value);
+      if (first > 0) scheduleEnd.value = Math.min(context.total, first + Number(scheduleSize.value) - 1);
       else {
-        const end=Math.min(context.total,state.nextNumber+Number(batchSize.value)-1);
-        batchInfo.textContent='Próximo lote: questões '+state.nextNumber+'–'+end+' de '+context.total+' · '+state.records.length+' já acumuladas.';
+        const range = getNextTecSpreadsheetScheduleRange(context, Number(scheduleSize.value));
+        scheduleStart.value = range.start || '';scheduleEnd.value = range.end || '';
       }
-      download.textContent='Salvar planilha acumulada';
-      download.hidden=!lastRecords.length;json.hidden=!lastRecords.length;
+      showRangeCount();
+    });
+    scheduleStart.addEventListener('change', () => {
+      const first = Number(scheduleStart.value);
+      if (first > 0) scheduleEnd.value = Math.min(context.total, first + Number(scheduleSize.value) - 1);
+      showRangeCount();
+    });
+    scheduleStart.addEventListener('input', showRangeCount);scheduleEnd.addEventListener('input', showRangeCount);
+    const renderSchedules = () => {
+      const queue = getTecSpreadsheetScheduleState(context.key);
+      const jobs = getTecSpreadsheetSchedules(context.key);
+      const upcoming = jobs.filter(job => !['completed','cancelled'].includes(job.status));
+      const history = jobs.filter(job => ['completed','cancelled'].includes(job.status));
+      const pending = jobs.filter(job => ['pending','running'].includes(job.status));
+      find('#tec-export-agenda-count').textContent = String(pending.length);
+      find('#tec-export-schedule-summary').textContent = pending.length + ' lote' + (pending.length === 1 ? '' : 's') + ' · ' + pending.reduce((sum, job) => sum + job.end - job.start + 1, 0) + ' questões';
+      find('#tec-export-queue-paused').hidden = !queue.pausedReason;
+      find('#tec-export-queue-reason').textContent = queue.pausedReason || '';
+      const labels = {pending:'Agendado', running:'Coletando', completed:'Concluído', missed:'Horário vencido', needs_attention:'Interrompido', cancelled:'Cancelado'};
+      const renderRows = (container, rows) => {
+        container.replaceChildren();
+        for (const job of rows) {
+          const row = document.createElement('li');row.className = 'tec-export-schedule-row';row.dataset.scheduleId = job.id;
+          const description = document.createElement('div');description.className = 'tec-export-job-description';
+          const title = document.createElement('strong');title.textContent = 'Questões ' + job.start + '–' + job.end;
+          const when = document.createElement('span');when.className = 'tec-export-job-time';
+          when.textContent = new Date(job.scheduledAt).toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric'}) + ' às ' + new Date(job.scheduledAt).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}) + ' · ' + (job.end - job.start + 1) + ' questões';
+          description.append(title, when);
+          const badge = document.createElement('span');badge.className = 'tec-export-job-status';badge.dataset.status = job.status;
+          badge.textContent = job.waitingForOperation && job.status === 'pending' ? 'Na fila' : labels[job.status] || job.status;
+          const actions = document.createElement('div');actions.className = 'tec-export-job-actions';
+          const action = (name, label) => {
+            const button = document.createElement('button');button.type = 'button';button.dataset.scheduleAction = name;
+            button.textContent = label;button.setAttribute('aria-label', label + ' lote das questões ' + job.start + ' a ' + job.end);
+            actions.appendChild(button);
+          };
+          if (job.status === 'pending') {action('edit', 'Editar');action('cancel', 'Cancelar');}
+          else if (['missed','needs_attention'].includes(job.status)) action('reschedule', 'Reagendar');
+          row.append(description,badge,actions);container.appendChild(row);
+        }
+        if (!rows.length) {
+          const empty = document.createElement('li');empty.className = 'tec-export-agenda-empty';
+          empty.textContent = 'Nenhum lote agendado. Escolha as questões e o horário abaixo.';container.appendChild(empty);
+        }
+      };
+      renderRows(find('#tec-export-schedule-list'), upcoming);
+      const historyPanel = find('#tec-export-schedule-history');
+      historyPanel.hidden = !history.length;
+      historyPanel.querySelector('summary').textContent = 'Concluídos e cancelados (' + history.length + ')';
+      renderRows(historyPanel.querySelector('ul'), history);
     };
-    const refreshScopeControls=()=>{
-      const isBatch=scope.value==='batch';
-      batchSizeLabel.hidden=!isBatch;batchSize.hidden=!isBatch;batchInfo.hidden=!isBatch;batchNote.hidden=!isBatch;
-      scheduleControls.hidden=!isBatch;
-      batchResume.hidden=isBatch;
-      start.textContent=isBatch?'Coletar próximo lote':'Coletar e baixar';
-      if (isBatch) showBatchStatus();
-      else if (lastRecordsCumulative) {lastRecords=[];lastRecordsCumulative=false;download.hidden=true;json.hidden=true;}
-      if (!isBatch) download.textContent='Baixar planilha';
-    };
-    const refreshScheduleStatus=()=>{
-      const saved=GM_getValue(getTecSpreadsheetScheduleKey(context.key),null);
-      const pending=saved?.status==='pending';
-      scheduleAt.disabled=pending;
-      scheduleButton.hidden=pending;
-      cancelScheduleButton.hidden=!pending;
-      batchSize.disabled=pending || running;
-      order.disabled=pending || running;
-      scope.disabled=pending || running;
-      start.disabled=pending || running;
-      if (pending) {
-        scheduleInfo.textContent='Lote '+saved.start+'–'+saved.end+' agendado para '+new Date(saved.scheduledAt).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+'. Mantenha o caderno aberto e conectado no TEC.';
-      } else if (saved?.status==='running') {
-        scheduleInfo.textContent='Executando o lote agendado '+saved.start+'–'+saved.end+'…';
-      } else if (saved?.status==='completed') {
-        scheduleInfo.textContent='Lote agendado concluído. O CSV acumulado foi baixado; para atualizar o mesmo arquivo, use “Salvar planilha acumulada”.';
-      } else if (saved?.status==='missed') {
-        scheduleInfo.textContent='O horário passou enquanto o caderno não estava disponível. Agende novamente.';
-      } else if (saved?.status==='needs_attention') {
-        scheduleInfo.textContent='A coleta agendada precisa de atenção. Retome o lote manualmente e agende outro horário se desejar.';
-      } else {
-        scheduleInfo.textContent='Agendamento único. Deixe o caderno aberto no TEC e conectado; a aba pode atrasar o horário se o navegador a suspender.';
+    const refreshCollection = () => {
+      const isBatch = scope.value === 'batch';
+      find('#tec-export-batch-controls').hidden = !isBatch;resume.closest('label').hidden = isBatch;
+      start.textContent = isBatch ? 'Coletar próximo lote' : 'Coletar e baixar';
+      scope.disabled = running;order.disabled = running;batchSize.disabled = running;resume.disabled = running;
+      let reserved = false;
+      if (isBatch && !running) {
+        const state = getTecSpreadsheetBatchState(context,order.value).state;
+        lastRecords = state.records;lastRecordsCumulative = true;
+        const first = state.active?.start || state.nextNumber;
+        const last = state.active?.end || Math.min(context.total, first + Number(batchSize.value) - 1);
+        const job = getTecSpreadsheetSchedules(context.key).find(job => ['pending','running'].includes(job.status) && first <= job.end && last >= job.start);
+        reserved = Boolean(job);
+        find('#tec-export-batch-info').textContent = first > context.total ? 'Caderno concluído · ' + state.records.length + ' questões acumuladas.'
+          : 'Questões ' + first + '–' + last + ' · ' + state.records.length + ' já acumuladas' + (job ? ' · este intervalo está na agenda.' : state.active ? ' · lote em andamento.' : '.');
       }
+      start.disabled = running || reserved;
+      download.textContent = lastRecordsCumulative ? 'Salvar planilha acumulada' : 'Baixar planilha';
+      download.hidden = running || !lastRecords.length;json.hidden = running || !lastRecords.length;
     };
-    scope.addEventListener('change',()=>{refreshScopeControls();refreshScheduleStatus();});
-    batchSize.addEventListener('change',refreshScopeControls);
-    order.addEventListener('change',()=>{if(scope.value==='batch')showBatchStatus();});
-    scheduleButton.addEventListener('click',()=>{
-      const scheduledAt=new Date(scheduleAt.value).getTime();
-      if (!Number.isFinite(scheduledAt) || scheduledAt < Date.now()+2*60*1000 || scheduledAt > Date.now()+30*24*60*60*1000) {
-        scheduleInfo.textContent='Escolha um horário entre 2 minutos e 30 dias a partir de agora.';
+    const onQueueChanged = event => {
+      if (event.detail?.context !== context.key) return;
+      renderSchedules();refreshCollection();
+    };
+    document.addEventListener('tec-export-schedules-changed', onQueueChanged);
+    overlay.addEventListener('tec-export-panel-dispose', () => document.removeEventListener('tec-export-schedules-changed', onQueueChanged), {once:true});
+    overlay.addEventListener('click', event => {
+      const button = event.target.closest('[data-schedule-action]');
+      if (!button) return;
+      const job = getTecSpreadsheetSchedules(context.key).find(job => job.id === button.closest('[data-schedule-id]')?.dataset.scheduleId);
+      if (!job) return;
+      if (button.dataset.scheduleAction === 'cancel') {
+        cancelTecSpreadsheetSchedule(context.key,job.id);
+        if (editingId === job.id) resetDraft();
         return;
       }
-      const result=scheduleTecSpreadsheetBatch(context,Number(batchSize.value),order.value,scheduledAt);
-      if (!result.ok) {scheduleInfo.textContent=result.error;return;}
-      refreshScopeControls();refreshScheduleStatus();showBatchStatus();
+      editingId = button.dataset.scheduleAction === 'edit' ? job.id : null;
+      scheduleStart.value = job.start;scheduleEnd.value = job.end;scheduleOrder.value = job.forumOrder;
+      if ([15,20,30].includes(job.end - job.start + 1)) scheduleSize.value = String(job.end - job.start + 1);
+      fillTime(editingId ? job.scheduledAt : Math.max(job.scheduledAt,Date.now() + 30 * 60 * 1000));
+      error.hidden = true;cancelEdit.hidden = !editingId;add.textContent = editingId ? 'Salvar alterações' : 'Adicionar agendamento';
+      find('#tec-export-schedule-editor-title').textContent = editingId ? 'Editar questões ' + job.start + '–' + job.end : 'Reagendar questões ' + job.start + '–' + job.end;
+      showRangeCount();scheduleStart.focus();
     });
-    cancelScheduleButton.addEventListener('click',()=>{
-      cancelTecSpreadsheetSchedule(context.key);
-      refreshScopeControls();refreshScheduleStatus();
+    add.addEventListener('click', () => {
+      const scheduledAt = new Date(scheduleDate.value + 'T' + scheduleTime.value).getTime();
+      if (!Number.isFinite(scheduledAt) || scheduledAt < Date.now() + 2 * 60 * 1000 || scheduledAt > Date.now() + 30 * 24 * 60 * 60 * 1000) {
+        error.textContent = 'Escolha data e horário entre 2 minutos e 30 dias a partir de agora.';error.hidden = false;return;
+      }
+      const result = scheduleTecSpreadsheetBatch(context,Number(scheduleSize.value),scheduleOrder.value,scheduledAt,{start:Number(scheduleStart.value),end:Number(scheduleEnd.value),id:editingId || undefined});
+      if (!result.ok) {error.textContent = result.error;error.hidden = false;return;}
+      progress.textContent = 'Questões ' + result.schedule.start + '–' + result.schedule.end + ' agendadas para ' + new Date(scheduledAt).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}) + '.';
+      resetDraft();renderSchedules();refreshCollection();
     });
-    overlay.addEventListener('tec-export-scheduled-due',event=>{
-      activeSchedule=event.detail;
-      scope.value='batch';batchSize.value=String(activeSchedule.batchSize);order.value=activeSchedule.forumOrder;
-      scope.disabled=false;batchSize.disabled=false;order.disabled=false;start.disabled=false;
-      refreshScopeControls();
-      progress.textContent='O horário agendado chegou; iniciando o lote '+activeSchedule.start+'–'+activeSchedule.end+'…';
-      start.click();
+    cancelEdit.addEventListener('click', resetDraft);
+    find('#tec-export-queue-resume').addEventListener('click', () => {
+      resumeTecSpreadsheetSchedules(context.key);
+      setTimeout(checkTecSpreadsheetSchedule, 0);
     });
-    refreshScopeControls();
-    refreshScheduleStatus();
-    const close=()=>{if(running){batchRunning=false;return;}overlay.remove();document.getElementById('tec-btn-more')?.focus();};
-    overlay.querySelector('.tec-modal-close').addEventListener('click',close);
-    overlay.addEventListener('keydown',event=>{if(event.key==='Escape'){event.stopPropagation();close();}});
-    stop.addEventListener('click',()=>{batchRunning=false;progress.textContent='Interrompendo; os dados já coletados serão preservados…';});
-    overlay.querySelector('#tec-export-json').addEventListener('click',()=>downloadTecExport(lastRecords,context,'json'));
-    download.addEventListener('click',async event=>{
-      if (!lastRecordsCumulative) {downloadTecExport(lastRecords,context);return;}
-      event.preventDefault();event.stopImmediatePropagation();
+    const close = () => {
+      if (running) {batchRunning = false;progress.textContent = 'Interrompendo; os dados coletados serão preservados…';return;}
+      overlay.dispatchEvent(new window.Event('tec-export-panel-dispose'));overlay.remove();document.getElementById('tec-btn-more')?.focus();
+    };
+    find('.tec-modal-close').addEventListener('click', close);
+    overlay.addEventListener('keydown', event => {if (event.key === 'Escape') {event.stopPropagation();close();}});
+    stop.addEventListener('click', () => {batchRunning = false;progress.textContent = 'Interrompendo; os dados coletados serão preservados…';});
+    json.addEventListener('click', () => downloadTecExport(lastRecords,context,'json'));
+    download.addEventListener('click', async () => {
       if (!lastRecords.length) return;
+      if (!lastRecordsCumulative) {downloadTecExport(lastRecords,context);return;}
       try {
-        const saved=await saveTecSpreadsheetFile(lastRecords,context);
-        if (!saved.cancelled) progress.textContent=saved.method==='picker'
-          ? 'Planilha acumulada atualizada. Use esse mesmo arquivo nos próximos lotes.'
-          : 'Planilha acumulada baixada. O arquivo contém todos os lotes salvos até agora.';
-      } catch(error) {progress.textContent='Não foi possível salvar a planilha: '+error.message;}
+        const saved = await saveTecSpreadsheetFile(lastRecords,context);
+        if (!saved.cancelled) progress.textContent = saved.method === 'picker' ? 'Planilha acumulada atualizada.' : 'Planilha acumulada baixada.';
+      } catch (failure) {progress.textContent = 'Não foi possível salvar a planilha: ' + failure.message;}
     });
-    start.addEventListener('click',async event=>{
-      event.preventDefault();event.stopImmediatePropagation();
+    const runCollection = async (schedule = null) => {
       if (running || batchBusy || isProcessing) return;
-      const isBatch=scope.value==='batch';
-      const batch=isBatch?prepareTecSpreadsheetBatch(context,Number(batchSize.value),order.value):null;
-      const targets=isBatch?batch.targets:scope.value==='all' ? Array.from({length:context.total},(_,i)=>({number:i+1,id:loadQuestionMap(context).entries[i+1]?.id || null})) : scope.value==='selected' ? selected : [{number:context.currentNumber,id:context.currentId}];
-      if (isBatch && !targets.length) {
-        lastRecords=batch.state?.records || [];lastRecordsCumulative=true;
-        progress.textContent='Todos os lotes deste caderno já foram concluídos.';
-        download.hidden=!lastRecords.length;json.hidden=!lastRecords.length;showBatchStatus();
-        return;
+      const isBatch = Boolean(schedule) || scope.value === 'batch';
+      const forumOrder = schedule?.forumOrder || order.value;
+      const batch = schedule ? createTecSpreadsheetRangeBatch(context,schedule.start,schedule.end,schedule.targets) : isBatch ? prepareTecSpreadsheetBatch(context,Number(batchSize.value),forumOrder) : null;
+      const targets = isBatch ? batch.targets : scope.value === 'all' ? Array.from({length:context.total},(_,i) => ({number:i+1,id:loadQuestionMap(context).entries[i+1]?.id || null})) : scope.value === 'selected' ? selected : [{number:context.currentNumber,id:context.currentId}];
+      if (!targets.length) {
+        const message = batch?.error || 'Todos os lotes deste caderno já foram concluídos.';
+        progress.textContent = message;
+        if (schedule) {
+          updateTecSpreadsheetSchedule(context.key,'needs_attention',{message},schedule.id);pauseTecSpreadsheetSchedules(context.key,message);
+        }
+        refreshCollection();return;
       }
-      running=true;start.disabled=true;scope.disabled=true;order.disabled=true;batchSize.disabled=true;batchResume.querySelector('input').disabled=true;stop.hidden=false;
-      download.hidden=true;json.hidden=true;
+      running = true;lastRecordsCumulative = isBatch;stop.hidden = false;
+      refreshCollection();
+      if (schedule) progress.textContent = 'Iniciando lote agendado: questões ' + batch.start + '–' + batch.end + '…';
       try {
-        await runBatchOperation(async()=>{
-          const result=await collectTecSpreadsheet(context,targets,{
-            forumOrder:order.value,
-            resume:isBatch?true:batchResume.querySelector('input').checked,
-            shouldContinue:()=>batchRunning && getQuestionMapContext().key===context.key,
-            onProgress:state=>{
-              if (isBatch) {
-                const saved=saveTecSpreadsheetBatch(context,order.value,batch,state.records,false);
-                lastRecords=saved.records;lastRecordsCumulative=true;
-              } else lastRecords=state.records;
-              progress.textContent=state.label+' · '+state.records.length+'/'+targets.length;
+        await runBatchOperation(async () => {
+          const result = await collectTecSpreadsheet(context,targets,{
+            forumOrder,resume:isBatch || resume.checked,
+            shouldContinue:() => batchRunning && getQuestionMapContext().key === context.key,
+            onProgress:state => {
+              lastRecords = isBatch ? saveTecSpreadsheetBatch(context,forumOrder,batch,state.records,false).records : state.records;
+              progress.textContent = state.label + ' · ' + state.records.length + '/' + targets.length;
             },
           });
-          const gaps=result.records.filter(q=>Object.values(q.status).some(s=>s!=='OK')).length;
-          const forumFallbacks=result.records.filter(q=>q.forumOrdem==='votos' && q.forumOrdemEfetiva==='data' && q.status.forum==='OK').length;
+          const gaps = result.records.filter(q => Object.values(q.status).some(status => status !== 'OK')).length;
+          const fallbacks = result.records.filter(q => q.forumOrdem === 'votos' && q.forumOrdemEfetiva === 'data' && q.status.forum === 'OK').length;
+          let complete = result.completed && !result.cancelled;
           if (isBatch) {
-            const questionsConfirmed=targets.every(target=>result.records.some(record=>record.numero===target.number && (!target.id || String(record.idQuestao)===String(target.id)) && record.status.questao==='OK'));
-            const advance=result.completed && !result.cancelled && questionsConfirmed;
-            const saved=saveTecSpreadsheetBatch(context,order.value,batch,result.records,advance);
-            lastRecords=saved.records;lastRecordsCumulative=true;
-            const status=result.paused?'Pausada: '+result.reason:result.cancelled?'Interrompida; este lote pode ser retomado':advance?'Lote '+batch.start+'–'+batch.end+' concluído':'Questões não confirmadas; o lote permanece pendente para retomada';
-            progress.textContent=status+' · '+saved.records.length+' questões acumuladas'+(gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':'')+(forumFallbacks?' · '+forumFallbacks+' com fórum por data; votos indisponíveis (veja Observações)':'')+'.';
-            showBatchStatus();
-            if (activeSchedule) {
-              if (advance) {
-                updateTecSpreadsheetSchedule(context.key,'completed',{completedAt:Date.now()});
-                downloadTecExport(saved.records,context);
-                progress.textContent+=' CSV acumulado baixado automaticamente.';
-              } else updateTecSpreadsheetSchedule(context.key,'needs_attention',{message:status});
-              activeSchedule=null;
+            complete = complete && targets.every(target => result.records.some(record => Number(record.numero) === target.number && (!target.id || String(record.idQuestao) === String(target.id)) && record.status.questao === 'OK'));
+            lastRecords = saveTecSpreadsheetBatch(context,forumOrder,batch,result.records,complete).records;
+          } else lastRecords = result.records;
+          const status = result.paused ? 'Pausada: ' + result.reason : result.cancelled ? 'Coleta interrompida; os dados foram preservados' : complete ? (isBatch ? 'Lote ' + batch.start + '–' + batch.end + ' concluído' : 'Coleta concluída') : 'Questões não confirmadas; retome este lote';
+          progress.textContent = status + ' · ' + lastRecords.length + (isBatch ? ' questões acumuladas' : '/' + targets.length + ' questões') + (gaps ? ' · ' + gaps + ' com dados indisponíveis (veja Status e Observações)' : '') + (fallbacks ? ' · ' + fallbacks + ' com fórum por data; votos indisponíveis (veja Observações)' : '') + '.';
+          if (schedule) {
+            updateTecSpreadsheetSchedule(context.key,complete ? 'completed' : 'needs_attention',{message:status,completedAt:complete ? Date.now() : null},schedule.id);
+            if (!complete) pauseTecSpreadsheetSchedules(context.key,status);
+            else {
+              try {downloadTecExport(lastRecords,context);progress.textContent += ' CSV acumulado baixado.';}
+              catch (failure) {progress.textContent += ' Não foi possível baixar automaticamente: ' + failure.message + '. Use Salvar planilha acumulada.';}
             }
-          } else {
-            lastRecords=result.records;lastRecordsCumulative=false;
-            progress.textContent=(result.paused?'Pausada: '+result.reason:result.cancelled?'Coleta interrompida':'Coleta concluída')+' · '+lastRecords.length+'/'+targets.length+' questões'+(gaps?' · '+gaps+' com dados indisponíveis (veja Status e Observações)':'')+(forumFallbacks?' · '+forumFallbacks+' com fórum por data; votos indisponíveis (veja Observações)':'')+'.';
-            if(result.completed && lastRecords.length)downloadTecExport(lastRecords,context);
-          }
-        });
-      } catch(error) {
-        progress.textContent='Coleta interrompida: '+error.message+'. Os dados parciais foram mantidos.';
-        if (activeSchedule) {updateTecSpreadsheetSchedule(context.key,'needs_attention',{message:error.message});activeSchedule=null;}
+          } else if (!isBatch && complete && lastRecords.length) downloadTecExport(lastRecords,context);
+        }, {propagateError:true});
+      } catch (failure) {
+        progress.textContent = 'Coleta interrompida: ' + failure.message + '. Os dados parciais foram mantidos.';
+        if (schedule) {
+          updateTecSpreadsheetSchedule(context.key,'needs_attention',{message:failure.message},schedule.id);pauseTecSpreadsheetSchedules(context.key,failure.message);
+        }
+      } finally {
+        running = false;stop.hidden = true;resume.checked = true;
+        renderSchedules();refreshCollection();
+        if (schedule) setTimeout(checkTecSpreadsheetSchedule,0);
       }
-      finally {
-        running=false;start.disabled=false;scope.disabled=false;order.disabled=false;batchSize.disabled=false;batchResume.querySelector('input').disabled=false;batchResume.querySelector('input').checked=true;stop.hidden=true;
-        if(scope.value==='batch') {showBatchStatus();download.hidden=!lastRecords.length;json.hidden=!lastRecords.length;}
-        else {download.hidden=!lastRecords.length;json.hidden=!lastRecords.length;}
-        refreshScopeControls();
-        refreshScheduleStatus();
-      }
-    });
-    if (scheduledRun) {
-      scope.value='batch';batchSize.value=String(scheduledRun.batchSize);order.value=scheduledRun.forumOrder;
-      refreshScopeControls();start.click();
-    }
-    scope.focus();
+    };
+    start.addEventListener('click', () => runCollection());
+    overlay.addEventListener('tec-export-scheduled-due', event => runCollection(event.detail));
+    scope.addEventListener('change', () => {lastRecords = [];lastRecordsCumulative = false;refreshCollection();});batchSize.addEventListener('change', refreshCollection);
+    renderSchedules();resetDraft();refreshCollection();
+    setTab(!scheduledRun && getTecSpreadsheetSchedules(context.key).some(job => !['completed','cancelled'].includes(job.status)) ? 'schedule' : 'collect');
+    if (scheduledRun) runCollection(scheduledRun);
+    else (activeTab === 'schedule' ? scheduleTab : scope).focus();
   }
 
   const uiSvg = body => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
@@ -7093,13 +7368,17 @@ Responda SOMENTE com JSON v\u00E1lido: ${isCloze ? '{ "text": "string", "back_ex
     return { totalErros, totalQuestoes, currentQ, method };
   }
 
-  async function runBatchOperation(operation) {
+  async function runBatchOperation(operation, {propagateError = false} = {}) {
     if (batchBusy || isProcessing) { showToast('Já há uma geração em andamento.', 'warning'); return; }
     batchBusy = true;
     batchRunning = true;
     renderQuestionMap();
     try { await operation(); }
-    catch (err) { console.error('TEC: geração em lote:', err); showToast(escapeHtml(err.message), 'error', 8000); }
+    catch (err) {
+      console.error('TEC: geração em lote:', err);
+      if (propagateError) throw err;
+      showToast(escapeHtml(err.message), 'error', 8000);
+    }
     finally {
       batchBusy = false;
       batchRunning = false;

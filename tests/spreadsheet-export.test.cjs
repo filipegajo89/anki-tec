@@ -113,6 +113,44 @@ function toDateTimeLocal(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function completeBatchRecords(targets) {
+  return Array.from(targets, target => ({
+    numero: target.number, idQuestao: String(500000 + target.number),
+    status: { questao: 'OK', comentario: 'OK', desempenho: 'OK', forum: 'OK' },
+  }));
+}
+
+function schedulePanelHarness(t, total = 80) {
+  const h = harness(t);
+  const context = { key: 'caderno:111', currentId: '500001', currentNumber: 1, total };
+  h.override('getQuestionMapContext', () => context);
+  h.override('syncQuestionMap', () => {});
+  h.override('getMarkedQuestions', () => []);
+  h.override('runBatchOperation', async operation => {
+    h.override('batchBusy', true);
+    h.override('batchRunning', true);
+    try { await operation(); }
+    finally {
+      h.override('batchBusy', false);
+      h.override('batchRunning', false);
+    }
+  });
+  const collected = [];
+  h.override('collectTecSpreadsheet', async (_context, targets, options) => {
+    collected.push(Array.from(targets, target => target.number));
+    const records = completeBatchRecords(targets);
+    options.onProgress({ label: 'Coletando lote agendado', records });
+    return { records, completed: true, cancelled: false, paused: false, reason: '' };
+  });
+  const downloads = [];
+  h.override('downloadTecExport', records => downloads.push(clone(records)));
+  return { ...h, context, collected, downloads };
+}
+
+async function settleScheduleRun() {
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+
 test('API export preserves zero performance values, raw history, accents and missing answer key', t => {
   const h = harness(t);
   const q = apiQuestion();
@@ -705,81 +743,464 @@ test('spreadsheet batch sizes are capped at 15, 20 and 30, with the final batch 
   assert.equal(h.run('prepareTecSpreadsheetBatch', context, 15, 'votos').finished, true);
 });
 
-test('a caderno can hold one cancellable one-time batch schedule', t => {
+test('a caderno queues independent ranges and suggests the next unreserved range', t => {
   const h = harness(t);
-  const context = { key: 'caderno:111', total: 32 };
+  const context = { key: 'caderno:111', total: 80 };
   const scheduledAt = Date.now() + 5 * 60 * 1000;
-  const scheduled = h.run('scheduleTecSpreadsheetBatch', context, 15, 'data', scheduledAt);
-  assert.equal(scheduled.ok, true);
-  assert.equal(scheduled.schedule.start, 1);
-  assert.equal(scheduled.schedule.end, 15);
-  assert.equal(scheduled.schedule.forumOrder, 'data');
-  assert.equal(scheduled.schedule.status, 'pending');
-  const duplicate = h.run('scheduleTecSpreadsheetBatch', context, 20, 'votos', scheduledAt + 60_000);
-  assert.equal(duplicate.ok, false, 'a second schedule cannot silently replace the first');
-  assert.equal(h.run('cancelTecSpreadsheetSchedule', context.key), true);
-  assert.equal(h.storage.get('tecSpreadsheetSchedule:v1:caderno:111'), null);
-  assert.equal(h.run('prepareTecSpreadsheetBatch', context, 20, 'votos').start, 1, 'canceling keeps the reserved range available for manual collection');
+  const active = h.run('prepareTecSpreadsheetBatch', context, 20, 'votos');
+  const first = h.run('scheduleTecSpreadsheetBatch', context, 20, 'data', scheduledAt, { start: 1, end: 20 });
+  const second = h.run('scheduleTecSpreadsheetBatch', context, 15, 'votos', scheduledAt + 60_000, { start: 21, end: 35 });
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true, 'an existing pending job must not block adding a different range');
+  assert.notEqual(first.schedule.id, second.schedule.id);
+  assert.deepEqual(clone(h.run('getTecSpreadsheetSchedules', context.key)).map(job => [job.start, job.end, job.forumOrder]), [
+    [1, 20, 'data'], [21, 35, 'votos'],
+  ]);
+  const suggested = h.run('getNextTecSpreadsheetScheduleRange', context, 20);
+  assert.equal(suggested.start, 36);
+  assert.equal(suggested.end, 55);
+  const archive = h.run('getTecSpreadsheetBatchState', context, 'votos').state;
+  assert.equal(archive.active.start, active.start, 'reserving more jobs cannot overwrite an unfinished manual batch');
+  assert.equal(archive.active.end, active.end);
+  assert.equal(archive.nextNumber, 1, 'scheduling cannot claim that any question was collected');
+  const saved = h.storage.get('tecSpreadsheetSchedule:v1:caderno:111');
+  assert.equal(saved.version, 2);
+  assert.equal(saved.schedules.length, 2);
 });
 
-test('a due schedule starts the reserved batch on the matching open caderno and downloads the cumulative CSV', async t => {
+test('schedule validation rejects overlap, invalid bounds and ranges longer than 30 questions without losing jobs', t => {
   const h = harness(t);
-  const context = { key: 'caderno:111', currentId: '500001', currentNumber: 1, total: 2 };
-  h.override('getQuestionMapContext', () => context);
-  h.override('syncQuestionMap', () => {});
-  h.override('getMarkedQuestions', () => []);
-  const batch = h.run('prepareTecSpreadsheetBatch', context, 15, 'votos');
+  const context = { key: 'caderno:111', total: 80 };
+  const scheduledAt = Date.now() + 10 * 60_000;
+  const original = h.run('scheduleTecSpreadsheetBatch', context, 20, 'votos', scheduledAt, { start: 1, end: 20 });
+  assert.equal(original.ok, true);
+  for (const range of [
+    { start: 19, end: 30 }, { start: 0, end: 15 }, { start: 70, end: 81 },
+    { start: 40, end: 39 }, { start: 21, end: 51 }, { start: 21.5, end: 35 },
+  ]) {
+    const result = h.run('scheduleTecSpreadsheetBatch', context, 15, 'votos', scheduledAt + 60_000, range);
+    assert.equal(result.ok, false, 'invalid or overlapping range must be rejected: ' + JSON.stringify(range));
+    assert.ok(result.error);
+  }
+  assert.equal(h.run('scheduleTecSpreadsheetBatch', context, 15, 'votos', Date.now() - 1000, { start: 21, end: 35 }).ok, false);
+  assert.equal(h.run('getTecSpreadsheetSchedules', context.key).length, 1);
+  assert.equal(h.run('getTecSpreadsheetSchedules', context.key)[0].id, original.schedule.id);
+});
+
+test('legacy single schedules migrate in place and remain alongside newly queued ranges', t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', total: 80 };
+  const scheduledAt = Date.now() + 10 * 60_000;
   h.storage.set('tecSpreadsheetSchedule:v1:caderno:111', {
     version: 1, context: context.key, total: context.total, batchSize: 15, forumOrder: 'votos',
-    start: batch.start, end: batch.end, scheduledAt: Date.now() - 1000, status: 'pending',
+    start: 1, end: 15, scheduledAt, status: 'pending', createdAt: scheduledAt - 60_000,
   });
-  h.override('runBatchOperation', async operation => {
-    batchBusy = true;batchRunning = true;
-    try { await operation(); }
-    finally { batchBusy = false;batchRunning = false; }
-  });
-  const collected = [];
-  h.override('collectTecSpreadsheet', async (_context, targets, options) => {
-    collected.push(...targets.map(target => target.number));
-    const records = targets.map(target => ({
-      numero: target.number, idQuestao: String(500000 + target.number),
-      status: { questao: 'OK', comentario: 'OK', desempenho: 'OK', forum: 'OK' },
-    }));
-    options.onProgress({ label: 'Coletando lote agendado', records });
-    return { records, completed: true, cancelled: false, paused: false, reason: '' };
-  });
-  let downloads = 0;
-  h.override('downloadTecExport', () => { downloads++; });
-  h.run('showSpreadsheetExportPanel');
-  assert.equal(h.window.document.querySelector('#tec-export-start').disabled, true, 'a pending schedule blocks an accidental manual start');
-  h.run('checkTecSpreadsheetSchedule');
-  await new Promise(resolve => setTimeout(resolve, 5));
-  assert.deepEqual(collected, [1, 2]);
-  assert.equal(h.storage.get('tecSpreadsheetSchedule:v1:caderno:111').status, 'completed');
-  assert.equal(h.storage.get('tecSpreadsheetBatch:v1:caderno:111').nextNumber, 3);
-  assert.equal(downloads, 1, 'the scheduled run downloads the cumulative CSV automatically');
+  const migrated = h.run('getTecSpreadsheetScheduleState', context.key);
+  assert.equal(migrated.version, 2);
+  assert.equal(migrated.schedules.length, 1);
+  assert.ok(migrated.schedules[0].id);
+  assert.equal(migrated.schedules[0].scheduledAt, scheduledAt);
+  const added = h.run('scheduleTecSpreadsheetBatch', context, 15, 'data', scheduledAt + 60_000, { start: 16, end: 30 });
+  assert.equal(added.ok, true);
+  const jobs = clone(h.run('getTecSpreadsheetSchedules', context.key));
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].start, 1);
+  assert.equal(jobs[0].end, 15);
+  assert.equal(jobs[0].scheduledAt, scheduledAt);
+  assert.equal(jobs[0].id, migrated.schedules[0].id, 'migration IDs stay stable across subsequent reads');
+  assert.equal(h.storage.get('tecSpreadsheetSchedule:v1:caderno:111').version, 2);
 });
 
-test('the export panel schedules a batch at the chosen local date and time', t => {
+test('an interrupted legacy running job migrates to attention and pauses later automatic jobs', t => {
   const h = harness(t);
-  const context = { key: 'caderno:111', currentId: '500001', currentNumber: 1, total: 31 };
+  const context = { key: 'caderno:111', total: 80 };
+  h.storage.set('tecSpreadsheetSchedule:v1:caderno:111', {
+    version: 1, context: context.key, total: context.total, batchSize: 20, forumOrder: 'votos',
+    start: 1, end: 20, scheduledAt: Date.now() - 60_000, startedAt: Date.now() - 50_000, status: 'running',
+  });
+  const state = h.run('getTecSpreadsheetScheduleState', context.key);
+  assert.equal(state.version, 2);
+  assert.equal(state.schedules.length, 1);
+  assert.equal(state.schedules[0].status, 'needs_attention', 'a reload cannot pretend the interrupted collection is still running');
+  assert.ok(state.pausedReason);
+  const next = h.run('scheduleTecSpreadsheetBatch', context, 15, 'votos', Date.now() + 60_000, { start: 21, end: 35 });
+  assert.equal(next.ok, true, 'queue recovery should still allow adding another future job');
+  assert.ok(h.run('getTecSpreadsheetScheduleState', context.key).pausedReason, 'adding a new job must not silently clear the pause');
+});
+
+test('an abandoned running job with an expired lease is recovered before another due job can run', async t => {
+  const h = schedulePanelHarness(t);
+  const first = h.run('scheduleTecSpreadsheetBatch', h.context, 20, 'votos', Date.now() + 60_000, { start: 1, end: 20 }).schedule;
+  const second = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 120_000, { start: 21, end: 35 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'running', {
+    scheduledAt: Date.now() - 3 * 60_000, startedAt: Date.now() - 3 * 60_000,
+    leaseUntil: Date.now() - 60_000, runOwner: 'previous-page',
+  }, first.id);
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 1000 }, second.id);
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.collected.length, 0, 'recovering an abandoned run must not immediately advance into later jobs');
+  const state = h.run('getTecSpreadsheetScheduleState', h.context.key);
+  assert.equal(state.schedules.find(job => job.id === first.id).status, 'needs_attention');
+  assert.equal(state.schedules.find(job => job.id === second.id).status, 'pending');
+  assert.ok(state.pausedReason);
+});
+
+test('editing, canceling and updating a scheduled job changes only the selected job', t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', total: 80 };
+  const scheduledAt = Date.now() + 10 * 60_000;
+  const first = h.run('scheduleTecSpreadsheetBatch', context, 20, 'votos', scheduledAt, { start: 1, end: 20 }).schedule;
+  const second = h.run('scheduleTecSpreadsheetBatch', context, 15, 'votos', scheduledAt + 60_000, { start: 21, end: 35 }).schedule;
+  const edited = h.run('scheduleTecSpreadsheetBatch', context, 15, 'data', scheduledAt + 120_000, { start: 21, end: 35, id: second.id });
+  assert.equal(edited.ok, true, 'editing the same range must exclude the job itself from overlap checks');
+  assert.equal(edited.schedule.id, second.id);
+  assert.equal(edited.schedule.forumOrder, 'data');
+  assert.equal(h.run('getTecSpreadsheetSchedules', context.key).length, 2);
+  const conflictingEdit = h.run('scheduleTecSpreadsheetBatch', context, 15, 'data', scheduledAt + 180_000, { start: 15, end: 29, id: second.id });
+  assert.equal(conflictingEdit.ok, false);
+  assert.equal(h.run('getTecSpreadsheetSchedules', context.key).find(job => job.id === second.id).start, 21);
+  h.run('updateTecSpreadsheetSchedule', context.key, 'needs_attention', { message: 'Sessão expirada' }, second.id);
+  assert.equal(h.run('getTecSpreadsheetSchedules', context.key).find(job => job.id === first.id).status, 'pending');
+  assert.equal(h.run('cancelTecSpreadsheetSchedule', context.key, first.id), true);
+  const jobs = clone(h.run('getTecSpreadsheetSchedules', context.key));
+  assert.equal(jobs.find(job => job.id === first.id).status, 'cancelled');
+  assert.equal(jobs.find(job => job.id === second.id).status, 'needs_attention');
+  assert.equal(jobs.find(job => job.id === second.id).message, 'Sessão expirada');
+});
+
+test('an explicit later range preserves the pending earlier batch and advances only across collected questions', t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', total: 80 };
+  const earlier = h.run('prepareTecSpreadsheetBatch', context, 20, 'votos');
+  const later = h.run('createTecSpreadsheetRangeBatch', context, 21, 35);
+  assert.equal(later.start, 21);
+  assert.equal(later.end, 35);
+  assert.deepEqual(Array.from(later.targets, target => target.number), Array.from({ length: 15 }, (_, index) => index + 21));
+  h.run('saveTecSpreadsheetBatch', context, 'votos', later, completeBatchRecords(later.targets), true);
+  const afterLater = h.run('getTecSpreadsheetBatchState', context, 'votos').state;
+  assert.equal(afterLater.nextNumber, 1, 'later completed jobs cannot skip uncollected earlier questions');
+  assert.equal(afterLater.active.start, 1);
+  assert.equal(afterLater.active.end, 20);
+  h.run('saveTecSpreadsheetBatch', context, 'votos', earlier, completeBatchRecords(earlier.targets), true);
+  const afterEarlier = h.run('getTecSpreadsheetBatchState', context, 'votos').state;
+  assert.equal(afterEarlier.nextNumber, 36, 'the cursor reaches the first missing ordinal after both ranges finish');
+  assert.equal(afterEarlier.active, null);
+  assert.equal(afterEarlier.records.length, 35);
+  h.run('saveTecSpreadsheetBatch', context, 'votos', later, completeBatchRecords(later.targets), true);
+  assert.equal(h.run('getTecSpreadsheetBatchState', context, 'votos').state.records.length, 35, 'rerunning a range must not duplicate accumulated rows');
+});
+
+test('a due job exports its exact range despite another active batch and downloads cumulative rows', async t => {
+  const h = schedulePanelHarness(t);
+  h.run('prepareTecSpreadsheetBatch', h.context, 20, 'votos');
+  const scheduled = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 60_000, { start: 21, end: 35 });
+  assert.equal(scheduled.ok, true);
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 1000 }, scheduled.schedule.id);
+  h.run('showSpreadsheetExportPanel');
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.deepEqual(h.collected, [Array.from({ length: 15 }, (_, index) => index + 21)]);
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === scheduled.schedule.id).status, 'completed');
+  assert.equal(h.storage.get('tecSpreadsheetBatch:v1:caderno:111').nextNumber, 1);
+  assert.equal(h.storage.get('tecSpreadsheetBatch:v1:caderno:111').active.start, 1);
+  assert.equal(h.downloads.length, 1, 'scheduled collection downloads the cumulative CSV');
+  assert.equal(h.downloads[0].length, 15);
+});
+
+test('schedule monitor executes only the earliest due job and serializes jobs behind a busy collection', async t => {
+  const h = schedulePanelHarness(t);
+  const first = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 60_000, { start: 1, end: 15 }).schedule;
+  const second = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 120_000, { start: 16, end: 30 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 2000 }, first.id);
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 1000 }, second.id);
+  let releaseFirst;
+  const firstFinished = new Promise(resolve => { releaseFirst = resolve; });
+  let active = 0, maxActive = 0;
+  h.override('collectTecSpreadsheet', async (_context, targets, options) => {
+    h.collected.push(Array.from(targets, target => target.number));
+    active++;
+    maxActive = Math.max(maxActive, active);
+    if (targets[0].number === 1) await firstFinished;
+    const records = completeBatchRecords(targets);
+    options.onProgress({ label: 'Coletando lote agendado', records });
+    active--;
+    return { records, completed: true, cancelled: false, paused: false, reason: '' };
+  });
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  h.run('checkTecSpreadsheetSchedule');
+  assert.equal(h.collected.length, 1);
+  assert.equal(h.collected[0][0], 1);
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === second.id).status, 'pending');
+  releaseFirst();
+  await settleScheduleRun();
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.collected.length, 2);
+  assert.equal(h.collected[1][0], 16);
+  assert.equal(maxActive, 1);
+  assert.equal(h.downloads.length, 2);
+  assert.equal(h.downloads[1].length, 30);
+  assert.ok(h.run('getTecSpreadsheetSchedules', h.context.key).every(job => job.status === 'completed'));
+});
+
+test('a due job waits for an existing operation and an expired offline slot becomes missed', async t => {
+  const h = schedulePanelHarness(t);
+  const scheduled = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 60_000, { start: 1, end: 15 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 1000 }, scheduled.id);
+  h.override('batchBusy', true);
+  h.run('checkTecSpreadsheetSchedule');
+  assert.equal(h.collected.length, 0);
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key)[0].status, 'pending');
+  h.override('batchBusy', false);
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.collected.length, 1);
+  const missed = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 60_000, { start: 16, end: 30 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 11 * 60_000 }, missed.id);
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.collected.length, 1, 'an old missed slot must not unexpectedly start when the page is reopened');
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === missed.id).status, 'missed');
+});
+
+test('a job already waiting behind an active operation may run after the offline grace period', async t => {
+  const h = schedulePanelHarness(t);
+  let now = Date.now();
+  h.window.Date.now = () => now;
+  const scheduled = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', now + 60_000, { start: 1, end: 15 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: now - 1000 }, scheduled.id);
+  h.override('batchBusy', true);
+  h.run('checkTecSpreadsheetSchedule');
+  assert.equal(h.collected.length, 0);
+  now += 11 * 60_000;
+  h.override('batchBusy', false);
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.collected.length, 1, 'time spent behind a running operation must not be mistaken for an offline missed slot');
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === scheduled.id).status, 'completed');
+});
+
+test('a failed scheduled collection pauses later jobs until the queue is explicitly resumed', async t => {
+  const h = schedulePanelHarness(t);
+  const first = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 60_000, { start: 1, end: 15 }).schedule;
+  const second = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 120_000, { start: 16, end: 30 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 2000 }, first.id);
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 1000 }, second.id);
+  h.override('collectTecSpreadsheet', async (_context, targets) => {
+    h.collected.push(Array.from(targets, target => target.number));
+    return { records: [], completed: false, paused: true, cancelled: false, reason: 'Sessão expirada' };
+  });
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === first.id).status, 'needs_attention');
+  assert.ok(h.run('getTecSpreadsheetScheduleState', h.context.key).pausedReason);
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.collected.length, 1);
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === second.id).status, 'pending');
+  h.run('resumeTecSpreadsheetSchedules', h.context.key);
+  h.override('collectTecSpreadsheet', async (_context, targets, options) => {
+    h.collected.push(Array.from(targets, target => target.number));
+    const records = completeBatchRecords(targets);
+    options.onProgress({ label: 'Coletando', records });
+    return { records, completed: true, cancelled: false, paused: false, reason: '' };
+  });
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.collected.length, 2);
+  assert.equal(h.collected[1][0], 16);
+});
+
+test('an unexpected collector exception propagates through the production batch wrapper and pauses the queue', async t => {
+  const h = harness(t);
+  const context = { key: 'caderno:111', currentId: '500001', currentNumber: 1, total: 80 };
   h.override('getQuestionMapContext', () => context);
   h.override('syncQuestionMap', () => {});
+  h.override('renderQuestionMap', () => {});
   h.override('getMarkedQuestions', () => []);
+  let collections = 0;
+  h.override('collectTecSpreadsheet', async () => {
+    collections++;
+    throw new Error('Falha inesperada na coleta');
+  });
+  const first = h.run('scheduleTecSpreadsheetBatch', context, 15, 'votos', Date.now() + 60_000, { start: 1, end: 15 }).schedule;
+  const second = h.run('scheduleTecSpreadsheetBatch', context, 15, 'votos', Date.now() + 120_000, { start: 16, end: 30 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', context.key, 'pending', { scheduledAt: Date.now() - 2000 }, first.id);
+  h.run('updateTecSpreadsheetSchedule', context.key, 'pending', { scheduledAt: Date.now() - 1000 }, second.id);
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  const state = h.run('getTecSpreadsheetScheduleState', context.key);
+  assert.equal(state.schedules.find(job => job.id === first.id).status, 'needs_attention');
+  assert.ok(state.pausedReason);
+  assert.equal(state.schedules.find(job => job.id === second.id).status, 'pending');
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(collections, 1, 'the real wrapper must not swallow the exception and allow a later collection');
+});
+
+test('an automatic download failure keeps the job completed and its cumulative spreadsheet available for manual saving', async t => {
+  const h = schedulePanelHarness(t);
+  const scheduled = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 60_000, { start: 21, end: 35 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 1000 }, scheduled.id);
+  h.override('downloadTecExport', () => { throw new Error('Download bloqueado'); });
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  const state = h.run('getTecSpreadsheetScheduleState', h.context.key);
+  assert.equal(state.schedules.find(job => job.id === scheduled.id).status, 'completed', 'download failure cannot undo a successful capture');
+  assert.ok(!state.pausedReason);
+  assert.equal(h.storage.get('tecSpreadsheetBatch:v1:caderno:111').records.length, 15);
+  const save = h.window.document.querySelector('#tec-export-download');
+  assert.equal(save.hidden, false, 'the completed archive must remain reachable after the automatic download fails');
+  let savedRecords;
+  h.override('saveTecSpreadsheetFile', async records => {
+    savedRecords = clone(records);
+    return { cancelled: false, method: 'picker' };
+  });
+  save.click();
+  await settleScheduleRun();
+  assert.equal(savedRecords.length, 15);
+  assert.deepEqual(savedRecords.map(row => row.numero), Array.from({ length: 15 }, (_, index) => index + 21));
+});
+
+test('a scheduled range whose saved question IDs changed is stopped before collection and pauses the queue', async t => {
+  const h = schedulePanelHarness(t);
+  h.override('loadQuestionMap', () => ({ entries: { 21: { id: '500021' } } }));
+  const first = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 60_000, { start: 21, end: 35 }).schedule;
+  const second = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', Date.now() + 120_000, { start: 36, end: 50 }).schedule;
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 2000 }, first.id);
+  h.run('updateTecSpreadsheetSchedule', h.context.key, 'pending', { scheduledAt: Date.now() - 1000 }, second.id);
+  h.override('loadQuestionMap', () => ({ entries: { 21: { id: '900021' } } }));
+  h.run('checkTecSpreadsheetSchedule');
+  await settleScheduleRun();
+  assert.equal(h.collected.length, 0, 'a reordered caderno must not collect another question under the saved schedule');
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === first.id).status, 'needs_attention');
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === second.id).status, 'pending');
+  assert.ok(h.run('getTecSpreadsheetScheduleState', h.context.key).pausedReason);
+});
+
+test('the scheduling tab adds and displays multiple explicit ranges with independent edit and cancel actions', t => {
+  const h = schedulePanelHarness(t);
+  const existing = h.run('scheduleTecSpreadsheetBatch', h.context, 20, 'votos', Date.now() + 10 * 60_000, { start: 1, end: 20 }).schedule;
   h.run('showSpreadsheetExportPanel');
   const overlay = h.window.document.querySelector('#tec-export-overlay');
-  overlay.querySelector('#tec-export-batch-size').value = '15';
-  overlay.querySelector('#tec-export-schedule-at').value = toDateTimeLocal(new Date(Date.now() + 5 * 60 * 1000));
-  overlay.querySelector('#tec-export-schedule-at').dispatchEvent(new h.window.Event('input', { bubbles: true }));
-  overlay.querySelector('#tec-export-schedule-at').dispatchEvent(new h.window.Event('change', { bubbles: true }));
-  overlay.querySelector('.tec-export-schedule-actions button').click();
-  const saved = h.storage.get('tecSpreadsheetSchedule:v1:caderno:111');
-  assert.equal(saved.status, 'pending');
-  assert.equal(saved.batchSize, 15);
-  assert.equal(saved.start, 1);
-  assert.equal(saved.end, 15);
-  assert.equal(overlay.querySelector('#tec-export-start').disabled, true);
-  assert.equal(overlay.querySelector('#tec-export-schedule-info').textContent.includes('agendado'), true);
+  overlay.querySelector('#tec-export-tab-schedule').click();
+  const start = overlay.querySelector('#tec-export-schedule-start');
+  const end = overlay.querySelector('#tec-export-schedule-end');
+  const size = overlay.querySelector('#tec-export-schedule-batch-size');
+  const add = overlay.querySelector('#tec-export-schedule-add');
+  assert.equal(Number(start.value), 21, 'the form proposes a range after the pending 1–20 job');
+  assert.equal(add.disabled, false, 'an existing job must not disable adding a new job');
+  assert.deepEqual(Array.from(size.options, option => option.value), ['15', '20', '30']);
+  size.value = '15';
+  size.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  start.value = '21';
+  end.value = '35';
+  start.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  end.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  const chosen = toDateTimeLocal(new Date(Date.now() + 30 * 60_000));
+  const [date, time] = chosen.split('T');
+  overlay.querySelector('#tec-export-schedule-date').value = date;
+  overlay.querySelector('#tec-export-schedule-time').value = time;
+  overlay.querySelector('#tec-export-schedule-forum-order').value = 'data';
+  add.click();
+  const jobs = clone(h.run('getTecSpreadsheetSchedules', h.context.key));
+  assert.equal(jobs.length, 2);
+  const added = jobs.find(job => job.id !== existing.id);
+  assert.deepEqual([added.start, added.end], [21, 35]);
+  assert.equal(added.scheduledAt, new Date(chosen).getTime());
+  assert.equal(added.forumOrder, 'data');
+  const rows = [...overlay.querySelectorAll('#tec-export-schedule-list [data-schedule-id]')];
+  assert.equal(rows.length, 2);
+  const existingRow = rows.find(row => row.dataset.scheduleId === existing.id);
+  const addedRow = rows.find(row => row.dataset.scheduleId === added.id);
+  assert.ok(/1\s*[–—-]\s*20/.test(existingRow.textContent));
+  assert.ok(/21\s*[–—-]\s*35/.test(addedRow.textContent));
+  assert.ok(addedRow.textContent.includes(time));
+  for (const row of rows) {
+    assert.ok(row.querySelector('[data-schedule-action="edit"]'));
+    assert.ok(row.querySelector('[data-schedule-action="cancel"]'));
+  }
+  addedRow.querySelector('[data-schedule-action="edit"]').click();
+  assert.equal(Number(start.value), 21);
+  assert.equal(Number(end.value), 35);
+  const editedAt = toDateTimeLocal(new Date(Date.now() + 45 * 60_000));
+  const [editedDate, editedTime] = editedAt.split('T');
+  overlay.querySelector('#tec-export-schedule-date').value = editedDate;
+  overlay.querySelector('#tec-export-schedule-time').value = editedTime;
+  add.click();
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).length, 2, 'editing does not append another job');
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === added.id).scheduledAt, new Date(editedAt).getTime());
+  const rowToCancel = [...overlay.querySelectorAll('#tec-export-schedule-list [data-schedule-id]')]
+    .find(row => row.dataset.scheduleId === existing.id);
+  rowToCancel.querySelector('[data-schedule-action="cancel"]').click();
+  const afterCancel = clone(h.run('getTecSpreadsheetSchedules', h.context.key));
+  assert.equal(afterCancel.find(job => job.id === existing.id).status, 'cancelled');
+  assert.equal(afterCancel.find(job => job.id === added.id).status, 'pending');
+  assert.equal(add.disabled, false);
+  overlay.querySelector('#tec-export-tab-collect').click();
+  assert.ok(overlay.querySelector('#tec-export-scope'), 'manual collection remains available from its own tab');
+});
+
+test('scheduling form shows range errors and preserves existing jobs after an invalid add', t => {
+  const h = schedulePanelHarness(t);
+  const existing = h.run('scheduleTecSpreadsheetBatch', h.context, 20, 'votos', Date.now() + 10 * 60_000, { start: 1, end: 20 }).schedule;
+  h.run('showSpreadsheetExportPanel');
+  const overlay = h.window.document.querySelector('#tec-export-overlay');
+  overlay.querySelector('#tec-export-tab-schedule').click();
+  const chosen = toDateTimeLocal(new Date(Date.now() + 30 * 60_000));
+  const [date, time] = chosen.split('T');
+  overlay.querySelector('#tec-export-schedule-date').value = date;
+  overlay.querySelector('#tec-export-schedule-time').value = time;
+  overlay.querySelector('#tec-export-schedule-start').value = '15';
+  overlay.querySelector('#tec-export-schedule-end').value = '29';
+  overlay.querySelector('#tec-export-schedule-add').click();
+  assert.ok(overlay.querySelector('#tec-export-schedule-error').textContent.trim(), 'overlap feedback should be visible beside the form');
+  const jobs = clone(h.run('getTecSpreadsheetSchedules', h.context.key));
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].id, existing.id);
+  assert.equal(jobs[0].status, 'pending');
+});
+
+test('editing a still-valid upcoming job preserves its chosen date and time until the user changes them', t => {
+  const h = schedulePanelHarness(t);
+  const chosen = toDateTimeLocal(new Date(Date.now() + 10 * 60_000));
+  const scheduledAt = new Date(chosen).getTime();
+  const existing = h.run('scheduleTecSpreadsheetBatch', h.context, 15, 'votos', scheduledAt, { start: 21, end: 35 }).schedule;
+  h.run('showSpreadsheetExportPanel');
+  const overlay = h.window.document.querySelector('#tec-export-overlay');
+  const row = [...overlay.querySelectorAll('#tec-export-schedule-list [data-schedule-id]')]
+    .find(element => element.dataset.scheduleId === existing.id);
+  row.querySelector('[data-schedule-action="edit"]').click();
+  const [date, time] = chosen.split('T');
+  assert.equal(overlay.querySelector('#tec-export-schedule-date').value, date);
+  assert.equal(overlay.querySelector('#tec-export-schedule-time').value, time, 'editing a range cannot silently postpone the scheduled time');
+  overlay.querySelector('#tec-export-schedule-add').click();
+  assert.equal(h.run('getTecSpreadsheetSchedules', h.context.key).find(job => job.id === existing.id).scheduledAt, scheduledAt);
+});
+
+test('closing or replacing the export panel removes its queue listener instead of accumulating stale panels', t => {
+  const h = schedulePanelHarness(t);
+  const document = h.window.document;
+  const originalAdd = document.addEventListener.bind(document);
+  const originalRemove = document.removeEventListener.bind(document);
+  const queueListeners = new Set();
+  document.addEventListener = (type, listener, options) => {
+    if (type === 'tec-export-schedules-changed') queueListeners.add(listener);
+    return originalAdd(type, listener, options);
+  };
+  document.removeEventListener = (type, listener, options) => {
+    if (type === 'tec-export-schedules-changed') queueListeners.delete(listener);
+    return originalRemove(type, listener, options);
+  };
+  h.run('showSpreadsheetExportPanel');
+  assert.equal(queueListeners.size, 1);
+  h.run('showSpreadsheetExportPanel');
+  assert.equal(queueListeners.size, 1, 'replacing the panel disposes the previous listener');
+  document.querySelector('#tec-export-overlay .tec-modal-close').click();
+  assert.equal(queueListeners.size, 0);
+  assert.equal(document.querySelector('#tec-export-overlay'), null);
 });
 
 test('the cumulative CSV save picker overwrites the user-selected spreadsheet with all accumulated rows', async t => {
@@ -844,9 +1265,13 @@ test('spreadsheet panel offers next batches of 15, 20 or 30 and saves later batc
   h.override('syncQuestionMap', () => {});
   h.override('getMarkedQuestions', () => []);
   h.override('runBatchOperation', async operation => {
-    batchBusy = true;batchRunning = true;
+    h.override('batchBusy', true);
+    h.override('batchRunning', true);
     try { await operation(); }
-    finally { batchBusy = false;batchRunning = false; }
+    finally {
+      h.override('batchBusy', false);
+      h.override('batchRunning', false);
+    }
   });
   h.override('collectTecSpreadsheet', async (_context, targets, options) => {
     collectedRanges.push(Array.from(targets, target => target.number));
