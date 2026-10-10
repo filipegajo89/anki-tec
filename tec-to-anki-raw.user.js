@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.22.0
+// @version      1.22.1
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.22.0';
+  const SCRIPT_VERSION = '1.22.1';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2211,12 +2211,20 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     // só "HTTP 410" não diz se o problema é o modelo, a rota ou a conta.
     let message = `Falha da API${status ? ` (HTTP ${status})` : ''}${detail ? `: ${detail}` : ''}`;
     let providerFatal = false;
-    if (/subscription (?:is )?required|active [a-z ]*subscription/.test(haystack)) {
+    if (/trainingnotallowed|trains on request data|allow paid endpoints that train/.test(haystack)) {
+      kind = 'privacy';
+      message = `O modelo ${context.model || 'selecionado'} usa pedidos e respostas para treinamento. O workspace bloqueia esse uso; a permissão é controlada em Settings → Privacy do OpenCode`;
+    } else if (/missing api key/.test(haystack)) {
+      kind = 'request_auth'; message = `A API não recebeu a chave no formato exigido pelo modelo${detail ? `: ${detail}` : ''}`;
+    } else if (/subscription (?:is )?required|active [a-z ]*subscription/.test(haystack)) {
       kind = 'credits'; message = `Assinatura do ${providerName} inativa para esta chave`; providerFatal = true;
     } else if (status === 402 || /insufficient (?:balance|account funds|funds|credits?)|credits?error|billing|saldo/.test(haystack)) {
       kind = 'credits'; message = `Saldo ou créditos do ${providerName} insuficientes`; providerFatal = true;
     } else if (status === 401 || status === 403 || /invalid api key|unauthori|forbidden/.test(haystack)) {
-      kind = 'auth'; message = 'Chave da API inválida, expirada ou sem acesso'; providerFatal = true;
+      kind = 'auth'; message = `Acesso recusado pela API (HTTP ${status})${detail ? `: ${detail}` : ': confira a chave e as permissões'}`;
+      // Uma recusa específica do modelo não prova que a chave de todo o serviço
+      // esteja inválida. Somente um erro explícito de credencial abre esse circuito.
+      providerFatal = /invalid api key|invalid token|expired (?:api key|token)|incorrect api key/.test(haystack);
     } else if (status === 429) {
       // O limite de 5 h/semana/mês do Go também chega como 429; o detalhe diz qual.
       kind = 'rate_limit'; message = `Limite temporário da API atingido${detail ? `: ${detail}` : ''}`;
@@ -2274,6 +2282,12 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
 
   async function callOpenAICompatible(url, apiKey, body, extraHeaders = {}, context = {}) {
     const MAX_RETRIES = 3;
+    // /messages segue o protocolo Anthropic, inclusive a autenticação. Bearer
+    // funciona em /responses e /chat/completions, mas em /messages retorna 401
+    // "Missing API key" mesmo com uma chave Go válida (Haiku, Qwen, MiniMax).
+    const authenticationHeaders = context.provider === 'opencode' && /\/messages(?:\?|$)/.test(url)
+      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+      : { 'Authorization': `Bearer ${apiKey}` };
     // Calculado uma vez: as retentativas continuam a mesma conversa.
     const providerHeaders = context.provider === 'opencode' ? opencodeRequestHeaders() : {};
     const sessionLog = providerHeaders['x-opencode-session'] ? ` · sessão ${providerHeaders['x-opencode-session'].slice(0, 12)}…` : '';
@@ -2286,7 +2300,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
+            ...authenticationHeaders,
             ...providerHeaders,
             ...extraHeaders,
           },
@@ -2403,7 +2417,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
   ];
 
   const OPENCODE_GO_FALLBACK_IDS = [
-    'gpt-6-luna', 'gpt-5.6-luna', 'grok-4.7', 'grok-4.6',
+    'gpt-6-luna', 'gpt-5.6-luna', 'claude-haiku-5-5', 'grok-4.7', 'grok-4.6',
     'muse-spark-1.3-contributor', 'muse-spark-1.2-contributor',
     'glm-5.3-flash', 'glm-5.3', 'glm-5.2',
     'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6', 'longcat-2.0', 'longcat-2.5-preview-free',
@@ -2442,7 +2456,9 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     'deepseek-v4-flash': 'DeepSeek V4 Flash',
     'grok-4.6': 'Grok 4.6',
     'muse-spark-1.2': 'Muse Spark 1.2',
-    'muse-spark-1.2-contributor': 'Muse Spark 1.2 Contributor',
+    'muse-spark-1.3-contributor': 'Muse Spark 1.3 Contributor • usa dados para treino',
+    'muse-spark-1.2-contributor': 'Muse Spark 1.2 Contributor • usa dados para treino',
+    'claude-haiku-5-5': 'Claude Haiku 5.5',
     'glm-5.3-flash': 'GLM 5.3 Flash',
     'glm-5.3': 'GLM 5.3',
     'qwen3.8-max': 'Qwen 3.8 Max',
@@ -2691,19 +2707,20 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       body = {
         model, instructions: 'Retorne JSON válido, sem markdown.', input: prompt,
         reasoning: isLunaModel(model) ? { effort: 'low' } : undefined,
-        max_output_tokens: 512, stream: false, store: false,
+        max_output_tokens: 2048, stream: false, store: false,
       };
     } else if (wire === 'messages') {
-      body = { model, max_tokens: 64, system: 'Retorne JSON válido, sem markdown.', messages: [{ role: 'user', content: prompt }] };
+      body = { model, max_tokens: 2048, system: 'Retorne JSON válido, sem markdown.', messages: [{ role: 'user', content: prompt }] };
     } else {
       body = {
         model, messages: [
           { role: 'system', content: 'Retorne JSON válido, sem markdown.' },
           { role: 'user', content: prompt },
         ],
-        max_tokens: 64, response_format: { type: 'json_object' },
+        max_tokens: 2048, response_format: { type: 'json_object' },
       };
-      if (/^glm-5/i.test(model)) body.thinking = { type: 'disabled' };
+      // O limite inclui o raciocínio. 64 tokens truncavam testes válidos; GLM
+      // servido pelo Go pode exigir thinking, portanto respeitamos seu padrão.
     }
     // `undefined` não é serializado, mas removemos para deixar o diagnóstico claro.
     if (!body.reasoning) delete body.reasoning;
@@ -2725,10 +2742,27 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     if (!catalog.ok) throw new Error(catalog.reason || 'Não foi possível consultar o catálogo do OpenCode.');
     const models = getOpencodeModels(service);
     const defaults = reliableOpencodeDefaults(service);
-    creatorModel = models.some(model => model.id === creatorModel) ? creatorModel : defaults.creator;
-    auditorModel = models.some(model => model.id === auditorModel) ? auditorModel : defaults.auditor;
-    await testOpencodeModelAccess(apiKey, service, creatorModel, 'Creator');
-    if (auditorModel !== creatorModel) await testOpencodeModelAccess(apiKey, service, auditorModel, 'Auditor');
+    creatorModel = creatorModel || defaults.creator;
+    auditorModel = auditorModel || defaults.auditor;
+    for (const [role, model] of [['Creator', creatorModel], ['Auditor', auditorModel]]) {
+      if (!models.some(candidate => candidate.id === model)) {
+        throw new AIRequestError(`${role} ${model} não está no catálogo atual do ${def.label}. Selecione outro modelo.`, {
+          kind: 'model_unavailable', provider: 'opencode', service, model,
+        });
+      }
+      if (role === 'Auditor' && auditorModel === creatorModel) continue;
+      try {
+        await testOpencodeModelAccess(apiKey, service, model, role);
+      } catch (err) {
+        const wrapped = new AIRequestError(`${role} ${model}: ${describeAiError(err)}`, {
+          kind: err?.kind || 'api', status: err?.status || null, code: err?.code || '',
+          detail: err?.detail || '', retryable: Boolean(err?.retryable), providerFatal: Boolean(err?.providerFatal),
+          provider: 'opencode', service, model,
+        });
+        wrapped.cause = err;
+        throw wrapped;
+      }
+    }
     providerCircuitBreakers.delete('opencode');
     creatorCircuitBreakers.delete(creatorModel);
     return { ok: true, creatorModel, auditorModel, catalogCount: catalog.count, service, serviceLabel: def.label };

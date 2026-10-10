@@ -164,6 +164,10 @@ TEC/{Matéria}/{Subtópico}/Q{id}.md
 4. Clique **"🔌 Testar Conexões"** — o teste confirma separadamente o Creator e o Auditor selecionados
 5. Clique **"💾 Salvar"**
 
+Na **v1.22.1**, as rotas `/messages` (Haiku, Qwen e MiniMax no Go) usam a autenticação exigida pelo protocolo Anthropic. Isso corrige o HTTP 401 `Missing API key` que ocorria mesmo com uma chave válida para Luna e DeepSeek. O teste de conexão permite até 2.048 tokens, incluindo raciocínio, e preserva o raciocínio nativo do GLM. Em caso de falha, informa qual etapa e modelo falharam, mantém o motivo do servidor e nunca testa um substituto silenciosamente.
+
+Os modelos **Muse Spark Contributor** usam pedidos e respostas para treinamento. Se o workspace bloquear esse uso, o script informa a restrição de privacidade; a permissão é controlada pelo usuário em **Settings → Privacy** do OpenCode. A documentação oficial descreve os [modelos, protocolos e privacidade do Go](https://opencode.ai/docs/pt-br/go/).
+
 ### 5.2 Verificar o Status
 
 O ponto colorido na toolbar indica:
