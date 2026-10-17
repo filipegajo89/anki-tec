@@ -168,6 +168,8 @@ Na **v1.22.1**, as rotas `/messages` (Haiku, Qwen e MiniMax no Go) usam a autent
 
 Os modelos **Muse Spark Contributor** usam pedidos e respostas para treinamento. Se o workspace bloquear esse uso, o script informa a restrição de privacidade; a permissão é controlada pelo usuário em **Settings → Privacy** do OpenCode. A documentação oficial descreve os [modelos, protocolos e privacidade do Go](https://opencode.ai/docs/pt-br/go/).
 
+Na **v1.22.2**, se o Kimi K3 no Go recusar um pedido com HTTP 400 `Invalid request parameters`, o script repete uma vez com o mesmo modelo e a mesma sessão, retirando apenas `response_format`. O JSON continua exigido no prompt e validado antes da auditoria; erros de credencial, limite ou outros modelos não acionam essa recuperação. O teste de conexão usa a mesma regra.
+
 ### 5.2 Verificar o Status
 
 O ponto colorido na toolbar indica:

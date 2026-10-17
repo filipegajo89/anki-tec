@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEC → Anki + Obsidian
 // @namespace    tec-anki-obsidian
-// @version      1.22.1
+// @version      1.22.2
 // @description  Extrai questões do TEC Concursos, gera flashcards com GPT 5.6 Luna xhigh + revisor via OpenCode Zen ou Go e salva no Anki + Obsidian
 // @author       filipegajo
 // @match        https://www.tecconcursos.com.br/*
@@ -36,7 +36,7 @@
   // \u2551                    1. CONFIGURATION                          \u2551
   // \u255A\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255D
 
-  const SCRIPT_VERSION = '1.22.1';
+  const SCRIPT_VERSION = '1.22.2';
   const UPDATE_URL = 'https://raw.githubusercontent.com/filipegajo89/anki-tec/main/public/tec-to-anki.user.js';
 
   const DEFAULTS = {
@@ -2342,6 +2342,29 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     }
   }
 
+  async function callOpencodeRequest(url, apiKey, body, context) {
+    try {
+      return await callOpenAICompatible(url, apiKey, body, {}, context);
+    } catch (err) {
+      // No Go, Kimi K3 pode recusar JSON mode em um pedido e aceitá-lo no
+      // seguinte. Reproduzido com Q2274897: o MESMO pedido passou sem este
+      // parâmetro. Preservamos o contrato JSON, o parser e o pipeline
+      // configurado, além do modelo, sessão, conteúdo e raciocínio.
+      const canRetryWithoutJsonMode = context.service === 'go'
+        && context.model === 'kimi-k3'
+        && /\/chat\/completions(?:\?|$)/.test(url)
+        && body.response_format?.type === 'json_object'
+        && err?.status === 400 && err?.kind === 'invalid_request'
+        && /invalid request parameters|response[_ -]?format|json_object/i.test(err.detail || err.message || '');
+      if (!canRetryWithoutJsonMode) throw err;
+
+      const compatibleBody = { ...body };
+      delete compatibleBody.response_format;
+      console.warn(`⚠️ ${context.model}: HTTP 400 no pedido JSON; repetindo o mesmo modelo uma vez sem response_format. Mantendo a validação JSON e o pipeline configurado.`);
+      return await callOpenAICompatible(url, apiKey, compatibleBody, {}, context);
+    }
+  }
+
   async function callOpencode(questionData) {
     const model = getSetting('opencodeModel');
     const { result, usage } = await callOpencodeModel(
@@ -2724,7 +2747,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
     }
     // `undefined` não é serializado, mas removemos para deixar o diagnóstico claro.
     if (!body.reasoning) delete body.reasoning;
-    const payload = await callOpenAICompatible(getOpencodeEndpoint(model, service), apiKey, body, {}, {
+    const payload = await callOpencodeRequest(getOpencodeEndpoint(model, service), apiKey, body, {
       provider: 'opencode', service, model,
     });
     const text = extractOpencodeText(payload, wire, model, value => value?.ok === true, service);
@@ -2964,7 +2987,7 @@ Com base nas informa\u00E7\u00F5es acima, identifique ${q.errou ? 'o mecanismo d
       return parsed;
     };
 
-    let json = await callOpenAICompatible(endpoint, apiKey, body, {}, { provider: 'opencode', service, model });
+    let json = await callOpencodeRequest(endpoint, apiKey, body, { provider: 'opencode', service, model });
     let combinedUsage = extractOpencodeUsage(json);
     let result;
     try {

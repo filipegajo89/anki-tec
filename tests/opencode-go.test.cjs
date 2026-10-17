@@ -83,6 +83,94 @@ for (const [model, route] of [['gpt-6-luna', 'responses'], ['deepseek-v4-pro', '
   });
 }
 
+test('Kimi K3 Go recovers a rejected JSON-mode request without changing model, session or prompts', async t => {
+  const h = harness(t);
+  const requests = [];
+  h.override('gmFetch', async (url, options) => {
+    requests.push({ url, ...options, body: JSON.parse(options.body) });
+    if (requests.length === 1) return {
+      ok: false, status: 400,
+      text: async () => JSON.stringify({ error: { message: 'Upstream request failed: Invalid request parameters. Please check your input and try again.' } }),
+    };
+    return jsonResponse({ choices: [{ message: { content: '{"ok":true}' } }] });
+  });
+  const generated = await h.run('callOpencodeModel', 'kimi-k3', 'Return JSON.', 'Return {"ok":true}.');
+  assert.equal(generated.result.ok, true);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].body.response_format.type, 'json_object');
+  const compatible = { ...requests[0].body };
+  delete compatible.response_format;
+  assert.deepEqual(requests[1].body, compatible);
+  assert.equal(requests[1].url, requests[0].url);
+  assert.equal(requests[1].headers['x-opencode-session'], requests[0].headers['x-opencode-session']);
+  assert.equal(requests[1].headers.Authorization, `Bearer ${key}`);
+  assert.ok(h.logs.some(log => /sem response_format/.test(log)));
+  assert.ok(h.logs.every(log => !log.includes(key)));
+});
+
+test('Kimi K3 connection checks use the same JSON-mode recovery', async t => {
+  const h = harness(t);
+  const requests = [];
+  h.override('gmFetch', async (_url, options) => {
+    const body = JSON.parse(options.body);
+    requests.push(body);
+    if (body.response_format) return {
+      ok: false, status: 400, text: async () => '{"error":{"message":"response_format is not supported"}}',
+    };
+    return jsonResponse({ choices: [{ message: { content: '{"ok":true}' } }] });
+  });
+  assert.equal(await h.run('testOpencodeModelAccess', key, 'go', 'kimi-k3', 'Creator'), 'kimi-k3');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].max_tokens, 2048);
+});
+
+test('JSON-mode recovery still rejects a response outside the required contract', async t => {
+  const h = harness(t);
+  let requests = 0;
+  h.override('gmFetch', async (_url, options) => {
+    requests++;
+    if (JSON.parse(options.body).response_format) return {
+      ok: false, status: 400, text: async () => '{"error":{"message":"Invalid request parameters"}}',
+    };
+    return jsonResponse({ choices: [{ message: { content: '{"unexpected":true}' } }] });
+  });
+  await assert.rejects(h.run('callOpencodeModel', 'kimi-k3', 'Return JSON.', 'Return cards.', {
+    expect: value => Array.isArray(value?.cards),
+  }));
+  assert.equal(requests, 2);
+});
+
+for (const [service, model, status, message] of [
+  ['go', 'deepseek-v4-pro', 400, 'Invalid request parameters'],
+  ['zen', 'kimi-k3', 400, 'Invalid request parameters'],
+  ['go', 'kimi-k3', 400, 'Context length exceeded'],
+  ['go', 'kimi-k3', 401, 'Invalid API key'],
+]) {
+  test(`${service}/${model}: JSON recovery does not mask HTTP ${status} ${message}`, async t => {
+    const h = harness(t);
+    let requests = 0;
+    h.override('gmFetch', async () => {
+      requests++;
+      return { ok: false, status, text: async () => JSON.stringify({ error: { message } }) };
+    });
+    await assert.rejects(h.run('callOpencodeRequest', `https://opencode.ai/${service === 'go' ? 'zen/go' : 'zen'}/v1/chat/completions`, key, {
+      model, messages: [{ role: 'user', content: 'Return JSON.' }], response_format: { type: 'json_object' },
+    }, { provider: 'opencode', service, model }), err => err.status === status);
+    assert.equal(requests, 1);
+  });
+}
+
+test('a second Kimi K3 rejection stops recovery after two requests', async t => {
+  const h = harness(t);
+  let requests = 0;
+  h.override('gmFetch', async () => {
+    requests++;
+    return { ok: false, status: 400, text: async () => '{"error":{"message":"Invalid request parameters"}}' };
+  });
+  await assert.rejects(h.run('callOpencodeModel', 'kimi-k3', 'Return JSON.', 'Return cards.'), err => err.status === 400);
+  assert.equal(requests, 2);
+});
+
 test('training policy errors explain privacy and do not block unrelated models', t => {
   const h = harness(t);
   const err = h.run('classifyApiError', 403, 'Account.TrainingNotAllowed', 'This Go model trains on request data.', {
